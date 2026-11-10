@@ -1,5 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { isFormalMode } from '@/lib/dataMode'
+import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
+import { supabaseRepos } from '@/lib/supabaseRepos'
 
 export const inventoryKeys = {
   all: ['inventory'] as const,
@@ -7,11 +10,18 @@ export const inventoryKeys = {
 
 export function useInventory(userId: string | undefined) {
   const queryClient = useQueryClient()
+  const formal = isFormalMode()
 
   const listQuery = useQuery({
     queryKey: inventoryKeys.all,
     enabled: Boolean(userId),
-    queryFn: async () => localDb.getMaterials(),
+    queryFn: async () => {
+      try {
+        return formal ? await supabaseRepos.listMaterials() : localDb.getMaterials()
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入庫存'))
+      }
+    },
   })
 
   const inboundMutation = useMutation({
@@ -19,7 +29,15 @@ export function useInventory(userId: string | undefined) {
       materialId: string
       qty: number
       unitCost: number
-    }) => localDb.inboundMaterial(input),
+    }) => {
+      try {
+        return formal
+          ? await supabaseRepos.inboundMaterial(input)
+          : localDb.inboundMaterial(input)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '入庫失敗'))
+      }
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: inventoryKeys.all })
     },

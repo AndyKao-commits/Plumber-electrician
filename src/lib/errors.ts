@@ -1,0 +1,60 @@
+/** Map unknown errors to Traditional Chinese user messages. */
+
+export function toUserMessage(error: unknown, fallback = '操作失敗，請稍後再試'): string {
+  if (!error) return fallback
+  if (typeof error === 'string' && error.trim()) return error
+
+  const anyErr = error as {
+    message?: string
+    code?: string
+    details?: string
+    hint?: string
+  }
+
+  const msg = anyErr.message ?? ''
+  const code = anyErr.code ?? ''
+
+  if (/JWT|not authenticated|Auth session missing/i.test(msg) || code === '401') {
+    return '尚未登入或登入已過期，請重新登入'
+  }
+  if (/permission denied|row-level security|RLS|42501/i.test(msg) || code === '42501') {
+    return '權限不足，無法存取此資料'
+  }
+  if (/duplicate key|23505/i.test(msg) || code === '23505') {
+    return '資料重複，請勿重複送出'
+  }
+  if (/foreign key|23503/i.test(msg) || code === '23503') {
+    return '關聯資料不存在或已被刪除'
+  }
+  if (/check constraint|23514/i.test(msg) || code === '23514') {
+    return '資料不符合規則，請檢查後再試'
+  }
+  if (/network|Failed to fetch|fetch/i.test(msg)) {
+    return '網路連線失敗，請檢查網路後再試'
+  }
+  if (msg.includes('禁止申請人自行核准')) return msg
+  if (msg.includes('超過緊急')) return msg
+  if (msg.includes('報價')) return msg
+  if (msg.includes('庫存')) return msg
+  if (msg.includes('無權')) return msg
+  if (msg.includes('尚未設定')) return msg
+  if (msg.trim()) return msg
+
+  return fallback
+}
+
+export class AppError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AppError'
+  }
+}
+
+export function requireFormalOrDemo<T>(
+  isFormal: boolean,
+  formalFn: () => Promise<T>,
+  demoFn: () => Promise<T> | T,
+): Promise<T> {
+  if (isFormal) return formalFn()
+  return Promise.resolve(demoFn())
+}
