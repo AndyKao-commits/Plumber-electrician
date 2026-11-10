@@ -19,6 +19,14 @@ import {
   sumIssuedBillingAmount,
 } from '@/domain/billing'
 import {
+  assertAdvanceApplicationFits,
+  assertAllocationFits,
+  assertCanManagePayments,
+  billingDocumentOpenAmount,
+  canRecordPaymentForQuote,
+  sumAllocations,
+} from '@/domain/payments'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   calcChangeOrderTotals,
@@ -41,6 +49,7 @@ import {
   legacyStatusFromWorkflow,
 } from '@/domain/quoteWorkflow'
 import type {
+  AdvanceApplication,
   AppNotice,
   AppUser,
   AttendanceRecord,
@@ -51,7 +60,11 @@ import type {
   ChangeOrderItem,
   ChangeOrderKind,
   ChangeOrderStatus,
+  CustomerAdvance,
+  CustomerPayment,
   MaterialStock,
+  PaymentAllocation,
+  PaymentMethod,
   PurchaseRecord,
   Quotation,
   QuotationItem,
@@ -85,6 +98,10 @@ const KEYS = {
   billingMilestones: 'eg.billingMilestones.v1',
   billingDocuments: 'eg.billingDocuments.v1',
   billingDocumentItems: 'eg.billingDocumentItems.v1',
+  customerPayments: 'eg.customerPayments.v1',
+  paymentAllocations: 'eg.paymentAllocations.v1',
+  customerAdvances: 'eg.customerAdvances.v1',
+  advanceApplications: 'eg.advanceApplications.v1',
   materials: 'eg.materials.v1',
 } as const
 
@@ -113,6 +130,10 @@ const emptyChangeOrderItems: ChangeOrderItem[] = []
 const emptyBillingMilestones: BillingMilestone[] = []
 const emptyBillingDocuments: BillingDocument[] = []
 const emptyBillingDocumentItems: BillingDocumentItem[] = []
+const emptyCustomerPayments: CustomerPayment[] = []
+const emptyPaymentAllocations: PaymentAllocation[] = []
+const emptyCustomerAdvances: CustomerAdvance[] = []
+const emptyAdvanceApplications: AdvanceApplication[] = []
 const emptyMaterials: MaterialStock[] = []
 
 function write<T>(key: string, value: T) {
@@ -311,6 +332,10 @@ function seedIfNeeded() {
   write(KEYS.billingMilestones, emptyBillingMilestones)
   write(KEYS.billingDocuments, emptyBillingDocuments)
   write(KEYS.billingDocumentItems, emptyBillingDocumentItems)
+  write(KEYS.customerPayments, emptyCustomerPayments)
+  write(KEYS.paymentAllocations, emptyPaymentAllocations)
+  write(KEYS.customerAdvances, emptyCustomerAdvances)
+  write(KEYS.advanceApplications, emptyAdvanceApplications)
   write(KEYS.materials, seededMaterials)
   write(KEYS.shortcuts, [
     'clock',
@@ -1411,6 +1436,248 @@ export const localDb = {
     }
     write(KEYS.billingMilestones, milestones)
     return next
+  },
+
+  listCustomerPayments(quotationId: string): CustomerPayment[] {
+    return read(KEYS.customerPayments, emptyCustomerPayments)
+      .filter((p) => p.quotationId === quotationId)
+      .sort((a, b) => b.receivedAt.localeCompare(a.receivedAt))
+  },
+
+  listPaymentAllocations(filters?: {
+    paymentId?: string
+    billingDocumentId?: string
+    quotationId?: string
+  }): PaymentAllocation[] {
+    let rows = read(KEYS.paymentAllocations, emptyPaymentAllocations)
+    if (filters?.paymentId) {
+      rows = rows.filter((a) => a.paymentId === filters.paymentId)
+    }
+    if (filters?.billingDocumentId) {
+      rows = rows.filter((a) => a.billingDocumentId === filters.billingDocumentId)
+    }
+    if (filters?.quotationId) {
+      const payIds = new Set(
+        this.listCustomerPayments(filters.quotationId).map((p) => p.id),
+      )
+      rows = rows.filter((a) => payIds.has(a.paymentId))
+    }
+    return rows
+  },
+
+  listCustomerAdvances(quotationId: string): CustomerAdvance[] {
+    return read(KEYS.customerAdvances, emptyCustomerAdvances)
+      .filter((a) => a.quotationId === quotationId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  },
+
+  listAdvanceApplications(filters?: {
+    advanceId?: string
+    billingDocumentId?: string
+    quotationId?: string
+  }): AdvanceApplication[] {
+    let rows = read(KEYS.advanceApplications, emptyAdvanceApplications)
+    if (filters?.advanceId) {
+      rows = rows.filter((a) => a.advanceId === filters.advanceId)
+    }
+    if (filters?.billingDocumentId) {
+      rows = rows.filter((a) => a.billingDocumentId === filters.billingDocumentId)
+    }
+    if (filters?.quotationId) {
+      const advIds = new Set(
+        this.listCustomerAdvances(filters.quotationId).map((a) => a.id),
+      )
+      rows = rows.filter((a) => advIds.has(a.advanceId))
+    }
+    return rows
+  },
+
+  createCustomerPayment(
+    actor: { id: string; role: string },
+    input: {
+      quotationId: string
+      amount: number
+      method: PaymentMethod
+      notes?: string
+      receivedAt?: string
+    },
+  ): CustomerPayment {
+    assertCanManagePayments(actor.role)
+    const quote = this.getQuotation(input.quotationId)
+    if (!quote) throw new Error('找不到報價')
+    const gate = canRecordPaymentForQuote(quote)
+    if (!gate.ok) throw new Error(gate.reason)
+    const amount = Number(input.amount) || 0
+    if (amount <= 0) throw new Error('收款金額必須大於 0')
+    const now = new Date().toISOString()
+    const id = `pay-${crypto.randomUUID()}`
+    const payment: CustomerPayment = {
+      id,
+      organizationId: ORG_ID,
+      quotationId: quote.id,
+      paymentNumber: `PAY-${now.slice(0, 10).replace(/-/g, '')}-${id.slice(-4).toUpperCase()}`,
+      amount,
+      method: input.method,
+      status: 'confirmed',
+      receivedAt: input.receivedAt || now,
+      notes: input.notes ?? null,
+      createdAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.customerPayments, emptyCustomerPayments)
+    all.unshift(payment)
+    write(KEYS.customerPayments, all)
+    return payment
+  },
+
+  allocatePayment(
+    actor: { id: string; role: string },
+    input: {
+      paymentId: string
+      billingDocumentId: string
+      amount: number
+    },
+  ): PaymentAllocation {
+    assertCanManagePayments(actor.role)
+    const payments = read(KEYS.customerPayments, emptyCustomerPayments)
+    const payment = payments.find((p) => p.id === input.paymentId)
+    if (!payment || payment.status !== 'confirmed') {
+      throw new Error('找不到已確認收款')
+    }
+    const docs = this.listBillingDocuments(payment.quotationId)
+    const doc = docs.find((d) => d.id === input.billingDocumentId)
+    if (!doc || doc.status !== 'issued') {
+      throw new Error('只能分配到已開立的請款單')
+    }
+    const onPayment = this.listPaymentAllocations({ paymentId: payment.id })
+    const onBilling = this.listPaymentAllocations({
+      billingDocumentId: doc.id,
+    })
+    const onBillingAdv = this.listAdvanceApplications({
+      billingDocumentId: doc.id,
+    })
+    const open = billingDocumentOpenAmount({
+      document: doc,
+      allocations: onBilling,
+      advanceApplications: onBillingAdv,
+    })
+    assertAllocationFits({
+      paymentAmount: payment.amount,
+      alreadyAllocatedOnPayment: sumAllocations(onPayment),
+      allocating: input.amount,
+      billingOpenAmount: open,
+    })
+    const now = new Date().toISOString()
+    const row: PaymentAllocation = {
+      id: `pal-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      paymentId: payment.id,
+      billingDocumentId: doc.id,
+      amount: Number(input.amount),
+      createdAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.paymentAllocations, emptyPaymentAllocations)
+    all.push(row)
+    write(KEYS.paymentAllocations, all)
+    return row
+  },
+
+  createCustomerAdvance(
+    actor: { id: string; role: string },
+    input: {
+      quotationId: string
+      amount: number
+      notes?: string
+      receivedAt?: string
+    },
+  ): CustomerAdvance {
+    assertCanManagePayments(actor.role)
+    const quote = this.getQuotation(input.quotationId)
+    if (!quote) throw new Error('找不到報價')
+    const gate = canRecordPaymentForQuote(quote)
+    if (!gate.ok) throw new Error(gate.reason)
+    const amount = Number(input.amount) || 0
+    if (amount <= 0) throw new Error('預收金額必須大於 0')
+    const now = new Date().toISOString()
+    const id = `adv-${crypto.randomUUID()}`
+    const advance: CustomerAdvance = {
+      id,
+      organizationId: ORG_ID,
+      quotationId: quote.id,
+      advanceNumber: `ADV-${now.slice(0, 10).replace(/-/g, '')}-${id.slice(-4).toUpperCase()}`,
+      amount,
+      remainingAmount: amount,
+      status: 'open',
+      receivedAt: input.receivedAt || now,
+      notes: input.notes ?? null,
+      createdAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.customerAdvances, emptyCustomerAdvances)
+    all.unshift(advance)
+    write(KEYS.customerAdvances, all)
+    return advance
+  },
+
+  applyCustomerAdvance(
+    actor: { id: string; role: string },
+    input: {
+      advanceId: string
+      billingDocumentId: string
+      amount: number
+    },
+  ): AdvanceApplication {
+    assertCanManagePayments(actor.role)
+    const advances = read(KEYS.customerAdvances, emptyCustomerAdvances)
+    const aIdx = advances.findIndex((a) => a.id === input.advanceId)
+    if (aIdx < 0) throw new Error('找不到預收款')
+    const advance = advances[aIdx]
+    if (advance.status !== 'open') throw new Error('預收款已關閉或作廢')
+    const docs = this.listBillingDocuments(advance.quotationId)
+    const doc = docs.find((d) => d.id === input.billingDocumentId)
+    if (!doc || doc.status !== 'issued') {
+      throw new Error('只能抵充已開立的請款單')
+    }
+    const onBilling = this.listPaymentAllocations({
+      billingDocumentId: doc.id,
+    })
+    const onBillingAdv = this.listAdvanceApplications({
+      billingDocumentId: doc.id,
+    })
+    const open = billingDocumentOpenAmount({
+      document: doc,
+      allocations: onBilling,
+      advanceApplications: onBillingAdv,
+    })
+    assertAdvanceApplicationFits({
+      advanceRemaining: advance.remainingAmount,
+      applying: input.amount,
+      billingOpenAmount: open,
+    })
+    const amt = Number(input.amount)
+    const now = new Date().toISOString()
+    const row: AdvanceApplication = {
+      id: `aap-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      advanceId: advance.id,
+      billingDocumentId: doc.id,
+      amount: amt,
+      createdAt: now,
+      createdBy: actor.id,
+    }
+    const apps = read(KEYS.advanceApplications, emptyAdvanceApplications)
+    apps.push(row)
+    write(KEYS.advanceApplications, apps)
+    const remaining = Math.round((advance.remainingAmount - amt) * 100) / 100
+    advances[aIdx] = {
+      ...advance,
+      remainingAmount: remaining,
+      status: remaining <= 0.009 ? 'closed' : 'open',
+    }
+    write(KEYS.customerAdvances, advances)
+    // Explicitly do NOT create a customer_payment — no new cash inflow
+    return row
   },
 
   softDeleteQuotation(

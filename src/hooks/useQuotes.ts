@@ -3,6 +3,7 @@ import { assertOnlineForOp } from '@/domain/offlineOps'
 import type {
   ChangeOrderKind,
   ChangeOrderStatus,
+  PaymentMethod,
   QuotationItemKind,
   QuoteExportFormat,
   QuoteWorkflowStatus,
@@ -28,6 +29,7 @@ export const quoteKeys = {
     ['change-order-items', changeOrderId] as const,
   billing: (quoteId: string) => ['billing', quoteId] as const,
   billingAll: ['billing'] as const,
+  payments: (quoteId: string) => ['payments', quoteId] as const,
 }
 
 export function useQuotes(userId: string | undefined) {
@@ -264,6 +266,9 @@ export function useQuoteDetail(quoteId: string | undefined) {
     })
     void queryClient.invalidateQueries({ queryKey: quoteKeys.billing(quoteId) })
     void queryClient.invalidateQueries({ queryKey: quoteKeys.billingAll })
+    void queryClient.invalidateQueries({
+      queryKey: quoteKeys.payments(quoteId),
+    })
   }
 
   const updateMeta = useMutation({
@@ -554,6 +559,112 @@ export function useQuoteDetail(quoteId: string | undefined) {
     onSuccess: invalidateAll,
   })
 
+  const paymentsQuery = useQuery({
+    queryKey: quoteId ? quoteKeys.payments(quoteId) : ['payments', 'none'],
+    enabled: Boolean(quoteId),
+    queryFn: async () => {
+      if (!quoteId) {
+        return {
+          payments: [],
+          allocations: [],
+          advances: [],
+          advanceApplications: [],
+        }
+      }
+      try {
+        if (formal) {
+          const [payments, advances] = await Promise.all([
+            supabaseRepos.listCustomerPayments(quoteId),
+            supabaseRepos.listCustomerAdvances(quoteId),
+          ])
+          const [allocations, advanceApplications] = await Promise.all([
+            supabaseRepos.listPaymentAllocations({ quotationId: quoteId }),
+            supabaseRepos.listAdvanceApplications({ quotationId: quoteId }),
+          ])
+          return { payments, allocations, advances, advanceApplications }
+        }
+        return {
+          payments: localDb.listCustomerPayments(quoteId),
+          allocations: localDb.listPaymentAllocations({ quotationId: quoteId }),
+          advances: localDb.listCustomerAdvances(quoteId),
+          advanceApplications: localDb.listAdvanceApplications({
+            quotationId: quoteId,
+          }),
+        }
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入收款／預收'))
+      }
+    },
+  })
+
+  const createCustomerPayment = useMutation({
+    mutationFn: async (input: {
+      amount: number
+      method: PaymentMethod
+      notes?: string
+    }) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.createCustomerPayment(user, {
+            quotationId: quoteId,
+            ...input,
+          })
+        : localDb.createCustomerPayment(
+            { id: user.id, role: user.role },
+            { quotationId: quoteId, ...input },
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const allocatePayment = useMutation({
+    mutationFn: async (input: {
+      paymentId: string
+      billingDocumentId: string
+      amount: number
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.allocatePayment(user, input)
+        : localDb.allocatePayment({ id: user.id, role: user.role }, input)
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const createCustomerAdvance = useMutation({
+    mutationFn: async (input: { amount: number; notes?: string }) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.createCustomerAdvance(user, {
+            quotationId: quoteId,
+            ...input,
+          })
+        : localDb.createCustomerAdvance(
+            { id: user.id, role: user.role },
+            { quotationId: quoteId, ...input },
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const applyCustomerAdvance = useMutation({
+    mutationFn: async (input: {
+      advanceId: string
+      billingDocumentId: string
+      amount: number
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.applyCustomerAdvance(user, input)
+        : localDb.applyCustomerAdvance({ id: user.id, role: user.role }, input)
+    },
+    onSuccess: invalidateAll,
+  })
+
   return {
     quote: quoteQuery.data ?? null,
     items: itemsQuery.data ?? [],
@@ -561,6 +672,10 @@ export function useQuoteDetail(quoteId: string | undefined) {
     changeOrders: changeOrdersQuery.data ?? [],
     billingMilestones: milestonesQuery.data ?? [],
     billingDocuments: billingDocsQuery.data ?? [],
+    payments: paymentsQuery.data?.payments ?? [],
+    paymentAllocations: paymentsQuery.data?.allocations ?? [],
+    advances: paymentsQuery.data?.advances ?? [],
+    advanceApplications: paymentsQuery.data?.advanceApplications ?? [],
     isLoading: quoteQuery.isLoading || itemsQuery.isLoading,
     error: quoteQuery.error || itemsQuery.error,
     updateMeta: updateMeta.mutateAsync,
@@ -580,6 +695,10 @@ export function useQuoteDetail(quoteId: string | undefined) {
     createBillingMilestone: createBillingMilestone.mutateAsync,
     createBillingDocument: createBillingDocument.mutateAsync,
     issueBillingDocument: issueBillingDocument.mutateAsync,
+    createCustomerPayment: createCustomerPayment.mutateAsync,
+    allocatePayment: allocatePayment.mutateAsync,
+    createCustomerAdvance: createCustomerAdvance.mutateAsync,
+    applyCustomerAdvance: applyCustomerAdvance.mutateAsync,
     saving:
       updateMeta.isPending ||
       addItem.isPending ||
@@ -596,6 +715,10 @@ export function useQuoteDetail(quoteId: string | undefined) {
       setChangeOrderStatus.isPending ||
       createBillingMilestone.isPending ||
       createBillingDocument.isPending ||
-      issueBillingDocument.isPending,
+      issueBillingDocument.isPending ||
+      createCustomerPayment.isPending ||
+      allocatePayment.isPending ||
+      createCustomerAdvance.isPending ||
+      applyCustomerAdvance.isPending,
   }
 }

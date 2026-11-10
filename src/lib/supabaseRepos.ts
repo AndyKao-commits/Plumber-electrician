@@ -31,6 +31,14 @@ import {
   sumIssuedBillingAmount,
 } from '@/domain/billing'
 import {
+  assertAdvanceApplicationFits,
+  assertAllocationFits,
+  assertCanManagePayments,
+  billingDocumentOpenAmount,
+  canRecordPaymentForQuote,
+  sumAllocations,
+} from '@/domain/payments'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   canCreateChangeOrder,
@@ -46,6 +54,7 @@ import {
   workflowFromLegacy,
 } from '@/domain/quoteWorkflow'
 import type {
+  AdvanceApplication,
   AppNotice,
   AppUser,
   AttendanceRecord,
@@ -57,7 +66,11 @@ import type {
   ChangeOrderItem,
   ChangeOrderKind,
   ChangeOrderStatus,
+  CustomerAdvance,
+  CustomerPayment,
   MaterialStock,
+  PaymentAllocation,
+  PaymentMethod,
   PurchaseMode,
   PurchaseRecord,
   ConstructionReport,
@@ -233,6 +246,66 @@ function mapBillingDocumentItemRow(
     unitPrice: Number(row.unit_price),
     amount: Number(row.amount),
     createdAt: String(row.created_at),
+  }
+}
+
+function mapCustomerPaymentRow(row: Record<string, unknown>): CustomerPayment {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    quotationId: String(row.quotation_id),
+    paymentNumber: String(row.payment_number),
+    amount: Number(row.amount),
+    method: row.method as PaymentMethod,
+    status: row.status as CustomerPayment['status'],
+    receivedAt: String(row.received_at),
+    notes: (row.notes as string | null) ?? null,
+    createdAt: String(row.created_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapPaymentAllocationRow(
+  row: Record<string, unknown>,
+): PaymentAllocation {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    paymentId: String(row.payment_id),
+    billingDocumentId: String(row.billing_document_id),
+    amount: Number(row.amount),
+    createdAt: String(row.created_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapCustomerAdvanceRow(row: Record<string, unknown>): CustomerAdvance {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    quotationId: String(row.quotation_id),
+    advanceNumber: String(row.advance_number),
+    amount: Number(row.amount),
+    remainingAmount: Number(row.remaining_amount),
+    status: row.status as CustomerAdvance['status'],
+    receivedAt: String(row.received_at),
+    notes: (row.notes as string | null) ?? null,
+    createdAt: String(row.created_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapAdvanceApplicationRow(
+  row: Record<string, unknown>,
+): AdvanceApplication {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    advanceId: String(row.advance_id),
+    billingDocumentId: String(row.billing_document_id),
+    amount: Number(row.amount),
+    createdAt: String(row.created_at),
+    createdBy: String(row.created_by ?? ''),
   }
 }
 
@@ -1726,6 +1799,286 @@ export const supabaseRepos = {
       .update({ status: 'billed' })
       .eq('id', milestone.id)
     return mapBillingDocumentRow(data as Record<string, unknown>)
+  },
+
+  async listCustomerPayments(quotationId: string): Promise<CustomerPayment[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('customer_payments')
+      .select(
+        'id, organization_id, quotation_id, payment_number, amount, method, status, received_at, notes, created_at, created_by',
+      )
+      .eq('quotation_id', qid)
+      .order('received_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入收款'))
+    return (data ?? []).map((row) => mapCustomerPaymentRow(row as Record<string, unknown>))
+  },
+
+  async listPaymentAllocations(filters: {
+    paymentId?: string
+    billingDocumentId?: string
+    quotationId?: string
+  }): Promise<PaymentAllocation[]> {
+    let q = sb()
+      .from('payment_allocations')
+      .select(
+        'id, organization_id, payment_id, billing_document_id, amount, created_at, created_by',
+      )
+    if (filters.paymentId) q = q.eq('payment_id', requireUuid(filters.paymentId, '收款'))
+    if (filters.billingDocumentId) {
+      q = q.eq(
+        'billing_document_id',
+        requireUuid(filters.billingDocumentId, '請款單'),
+      )
+    }
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入收款分配'))
+    let rows = (data ?? []).map((row) =>
+      mapPaymentAllocationRow(row as Record<string, unknown>),
+    )
+    if (filters.quotationId) {
+      const pays = await this.listCustomerPayments(filters.quotationId)
+      const ids = new Set(pays.map((p) => p.id))
+      rows = rows.filter((a) => ids.has(a.paymentId))
+    }
+    return rows
+  },
+
+  async listCustomerAdvances(quotationId: string): Promise<CustomerAdvance[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('customer_advances')
+      .select(
+        'id, organization_id, quotation_id, advance_number, amount, remaining_amount, status, received_at, notes, created_at, created_by',
+      )
+      .eq('quotation_id', qid)
+      .order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入預收款'))
+    return (data ?? []).map((row) => mapCustomerAdvanceRow(row as Record<string, unknown>))
+  },
+
+  async listAdvanceApplications(filters: {
+    advanceId?: string
+    billingDocumentId?: string
+    quotationId?: string
+  }): Promise<AdvanceApplication[]> {
+    let q = sb()
+      .from('advance_applications')
+      .select(
+        'id, organization_id, advance_id, billing_document_id, amount, created_at, created_by',
+      )
+    if (filters.advanceId) q = q.eq('advance_id', requireUuid(filters.advanceId, '預收'))
+    if (filters.billingDocumentId) {
+      q = q.eq(
+        'billing_document_id',
+        requireUuid(filters.billingDocumentId, '請款單'),
+      )
+    }
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入預收抵充'))
+    let rows = (data ?? []).map((row) =>
+      mapAdvanceApplicationRow(row as Record<string, unknown>),
+    )
+    if (filters.quotationId) {
+      const adv = await this.listCustomerAdvances(filters.quotationId)
+      const ids = new Set(adv.map((a) => a.id))
+      rows = rows.filter((a) => ids.has(a.advanceId))
+    }
+    return rows
+  },
+
+  async createCustomerPayment(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      amount: number
+      method: PaymentMethod
+      notes?: string
+    },
+  ): Promise<CustomerPayment> {
+    assertCanManagePayments(actor.role)
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canRecordPaymentForQuote(quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const amount = Number(input.amount) || 0
+    if (amount <= 0) throw new AppError('收款金額必須大於 0')
+    const paymentNumber = `PAY-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+    const { data, error } = await sb()
+      .from('customer_payments')
+      .insert({
+        quotation_id: quote.id,
+        payment_number: paymentNumber,
+        amount,
+        method: input.method,
+        status: 'confirmed',
+        notes: input.notes ?? null,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, quotation_id, payment_number, amount, method, status, received_at, notes, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登錄收款'))
+    return mapCustomerPaymentRow(data as Record<string, unknown>)
+  },
+
+  async allocatePayment(
+    actor: AppUser,
+    input: {
+      paymentId: string
+      billingDocumentId: string
+      amount: number
+    },
+  ): Promise<PaymentAllocation> {
+    assertCanManagePayments(actor.role)
+    const pid = requireUuid(input.paymentId, '收款')
+    const { data: payRow, error: payErr } = await sb()
+      .from('customer_payments')
+      .select(
+        'id, organization_id, quotation_id, payment_number, amount, method, status, received_at, notes, created_at, created_by',
+      )
+      .eq('id', pid)
+      .maybeSingle()
+    if (payErr) throw new AppError(toUserMessage(payErr, '無法讀取收款'))
+    if (!payRow) throw new AppError('找不到收款')
+    const payment = mapCustomerPaymentRow(payRow as Record<string, unknown>)
+    assertSameOrganization(actor.organizationId, payment.organizationId)
+    if (payment.status !== 'confirmed') throw new AppError('找不到已確認收款')
+    const docs = await this.listBillingDocuments(payment.quotationId)
+    const doc = docs.find((d) => d.id === input.billingDocumentId)
+    if (!doc || doc.status !== 'issued') {
+      throw new AppError('只能分配到已開立的請款單')
+    }
+    const onPayment = await this.listPaymentAllocations({ paymentId: payment.id })
+    const onBilling = await this.listPaymentAllocations({
+      billingDocumentId: doc.id,
+    })
+    const onBillingAdv = await this.listAdvanceApplications({
+      billingDocumentId: doc.id,
+    })
+    assertAllocationFits({
+      paymentAmount: payment.amount,
+      alreadyAllocatedOnPayment: sumAllocations(onPayment),
+      allocating: input.amount,
+      billingOpenAmount: billingDocumentOpenAmount({
+        document: doc,
+        allocations: onBilling,
+        advanceApplications: onBillingAdv,
+      }),
+    })
+    const { data, error } = await sb()
+      .from('payment_allocations')
+      .insert({
+        payment_id: payment.id,
+        billing_document_id: doc.id,
+        amount: Number(input.amount),
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, payment_id, billing_document_id, amount, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '收款分配失敗'))
+    return mapPaymentAllocationRow(data as Record<string, unknown>)
+  },
+
+  async createCustomerAdvance(
+    actor: AppUser,
+    input: { quotationId: string; amount: number; notes?: string },
+  ): Promise<CustomerAdvance> {
+    assertCanManagePayments(actor.role)
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canRecordPaymentForQuote(quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const amount = Number(input.amount) || 0
+    if (amount <= 0) throw new AppError('預收金額必須大於 0')
+    const advanceNumber = `ADV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+    const { data, error } = await sb()
+      .from('customer_advances')
+      .insert({
+        quotation_id: quote.id,
+        advance_number: advanceNumber,
+        amount,
+        remaining_amount: amount,
+        status: 'open',
+        notes: input.notes ?? null,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, quotation_id, advance_number, amount, remaining_amount, status, received_at, notes, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登錄預收款'))
+    return mapCustomerAdvanceRow(data as Record<string, unknown>)
+  },
+
+  async applyCustomerAdvance(
+    actor: AppUser,
+    input: {
+      advanceId: string
+      billingDocumentId: string
+      amount: number
+    },
+  ): Promise<AdvanceApplication> {
+    assertCanManagePayments(actor.role)
+    const aid = requireUuid(input.advanceId, '預收')
+    const { data: advRow, error: advErr } = await sb()
+      .from('customer_advances')
+      .select(
+        'id, organization_id, quotation_id, advance_number, amount, remaining_amount, status, received_at, notes, created_at, created_by',
+      )
+      .eq('id', aid)
+      .maybeSingle()
+    if (advErr) throw new AppError(toUserMessage(advErr, '無法讀取預收'))
+    if (!advRow) throw new AppError('找不到預收款')
+    const advance = mapCustomerAdvanceRow(advRow as Record<string, unknown>)
+    assertSameOrganization(actor.organizationId, advance.organizationId)
+    if (advance.status !== 'open') throw new AppError('預收款已關閉或作廢')
+    const docs = await this.listBillingDocuments(advance.quotationId)
+    const doc = docs.find((d) => d.id === input.billingDocumentId)
+    if (!doc || doc.status !== 'issued') {
+      throw new AppError('只能抵充已開立的請款單')
+    }
+    const onBilling = await this.listPaymentAllocations({
+      billingDocumentId: doc.id,
+    })
+    const onBillingAdv = await this.listAdvanceApplications({
+      billingDocumentId: doc.id,
+    })
+    assertAdvanceApplicationFits({
+      advanceRemaining: advance.remainingAmount,
+      applying: input.amount,
+      billingOpenAmount: billingDocumentOpenAmount({
+        document: doc,
+        allocations: onBilling,
+        advanceApplications: onBillingAdv,
+      }),
+    })
+    const amt = Number(input.amount)
+    const { data, error } = await sb()
+      .from('advance_applications')
+      .insert({
+        advance_id: advance.id,
+        billing_document_id: doc.id,
+        amount: amt,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, advance_id, billing_document_id, amount, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '預收抵充失敗'))
+    const remaining = Math.round((advance.remainingAmount - amt) * 100) / 100
+    await sb()
+      .from('customer_advances')
+      .update({
+        remaining_amount: remaining,
+        status: remaining <= 0.009 ? 'closed' : 'open',
+      })
+      .eq('id', advance.id)
+    return mapAdvanceApplicationRow(data as Record<string, unknown>)
   },
 
   async listQuotationItems(quotationId: string): Promise<QuotationItem[]> {
