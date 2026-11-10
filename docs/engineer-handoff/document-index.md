@@ -32,6 +32,20 @@ ChatGPT 宣告共 **10 份文件、20 個下載檔案**（每份 Word + PDF）�
 - `水電工程管理系統_工程交付完整文件包.zip`（約 4.7 MB、20 檔）
 - `水電工程管理系統_工程交付合併閱讀版.pdf`（約 40 頁）
 
+## ChatGPT Library 分享（待匯入）
+
+負責人提供的 library 分享連結：
+
+- https://chatgpt.com/library/share/libfile_d90ffd0208408191be60ac1c4cb26eb3?account_id=personal
+
+**狀態（2026-11-10）：** Cloud Agent 開啟後被導向 ChatGPT 登入頁，無法在未登入狀態讀取檔名、預覽或下載內容。  
+若此連結即為工程交付 ZIP／PDF，請改以下任一方式匯入本 repo：
+
+1. 將檔案上傳到 Cursor 對話附件  
+2. 或直接放到 `docs/engineer-handoff/original/` 後 commit  
+
+匯入後應保留原始檔名，並更新本文件狀態為「已匯入」。
+
 ## 保存建議
 
 最終整合規格置頂；DOC-01～09 作附件。  

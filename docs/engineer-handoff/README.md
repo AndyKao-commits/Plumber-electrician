@@ -6,7 +6,11 @@
 - https://chatgpt.com/share/6af28a57-0b70-83ee-8496-f50778494099
 
 ChatGPT 端已宣告：**需求規劃結束，不再擴充規劃階段**。  
-原始 Word／PDF／ZIP 僅存在於 ChatGPT sandbox，此 repo 以對話內容重建可追蹤的工程交付文件。
+原始 Word／PDF／ZIP 僅存在於 ChatGPT sandbox／Library；此 repo 以對話內容重建可追蹤的工程交付文件。
+
+Library 分享連結（需 ChatGPT 登入，Cloud Agent 目前無法直接下載）：  
+https://chatgpt.com/library/share/libfile_d90ffd0208408191be60ac1c4cb26eb3?account_id=personal  
+請改上傳附件或放到 `docs/engineer-handoff/original/`。
 
 ## 建議閱讀順序
 
