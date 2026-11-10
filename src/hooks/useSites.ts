@@ -59,6 +59,7 @@ export function useSites() {
       kind: ProjectKind
       address?: string
       customerName?: string
+      warrantyUntil?: string | null
     }) => {
       if (formal && !user) throw new Error('尚未登入')
       try {
@@ -74,6 +75,16 @@ export function useSites() {
     },
   })
 
+  const warrantyMutation = useMutation({
+    mutationFn: async (input: { siteId: string; warrantyUntil: string | null }) => {
+      if (!formal || !user) throw new Error('正式模式才能更新保固')
+      return supabaseRepos.updateSiteWarranty(user, input.siteId, input.warrantyUntil)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: siteKeys.all })
+    },
+  })
+
   return {
     sites: listQuery.data ?? [],
     isLoading: listQuery.isLoading,
@@ -81,6 +92,8 @@ export function useSites() {
     createSite: createMutation.mutateAsync,
     isCreating: createMutation.isPending,
     createError: createMutation.error,
+    updateWarranty: warrantyMutation.mutateAsync,
+    isUpdatingWarranty: warrantyMutation.isPending,
   }
 }
 

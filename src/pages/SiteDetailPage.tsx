@@ -2,23 +2,37 @@ import { Link, useParams } from 'react-router-dom'
 import { useMemo, useState, type FormEvent } from 'react'
 import type { DefectSeverity } from '@/domain/types'
 import { useAttendance } from '@/hooks/useAttendance'
+import { useDailyLogs } from '@/hooks/useDailyLogs'
 import { useDefects } from '@/hooks/useDefects'
 import { usePhotos } from '@/hooks/usePhotos'
 import { useReports } from '@/hooks/useReports'
-import { useSite } from '@/hooks/useSites'
+import { useSite, useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
 import { isFormalMode } from '@/lib/dataMode'
 import { useQuery } from '@tanstack/react-query'
 import { supabaseRepos } from '@/lib/supabaseRepos'
+import { taipeiDateString } from '@/lib/time'
 
 export function SiteDetailPage() {
   const { siteId } = useParams()
   const { data: site, isLoading, isError, error } = useSite(siteId)
+  const { updateWarranty, isUpdatingWarranty } = useSites()
   const { user } = useUser()
   const { openShift, assignSite, isAssigningSite } = useAttendance(user?.id)
   const formal = isFormalMode()
   const { photos } = usePhotos()
   const { reports } = useReports(siteId)
+  const {
+    logs,
+    ensureDraft,
+    isEnsuring,
+    ensureError,
+    saveBody,
+    isSaving,
+    publish,
+    isPublishing,
+    publishError,
+  } = useDailyLogs(siteId)
   const {
     defects,
     createDefect,
@@ -30,6 +44,12 @@ export function SiteDetailPage() {
   const [defectTitle, setDefectTitle] = useState('')
   const [defectDetail, setDefectDetail] = useState('')
   const [defectSeverity, setDefectSeverity] = useState<DefectSeverity>('normal')
+  const [warrantyDraft, setWarrantyDraft] = useState('')
+  const [logDrafts, setLogDrafts] = useState<Record<string, string>>({})
+  const todayLog = useMemo(
+    () => logs.find((l) => l.logDate === taipeiDateString()),
+    [logs],
+  )
 
   const purchasesQuery = useQuery({
     queryKey: ['purchases', 'site', siteId],
@@ -97,6 +117,33 @@ export function SiteDetailPage() {
           {[site.customerName, site.address].filter(Boolean).join(' · ') ||
             '尚未填寫客戶或地址'}
         </p>
+        {formal ? (
+          <div className="stack" style={{ gap: 8 }}>
+            <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
+              保固到期：{site.warrantyUntil || '未設定'}（到期前 30 天會產生站內待辦）
+            </p>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <input
+                type="date"
+                value={warrantyDraft || site.warrantyUntil || ''}
+                onChange={(e) => setWarrantyDraft(e.target.value)}
+              />
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={isUpdatingWarranty}
+                onClick={() =>
+                  void updateWarranty({
+                    siteId: site.id,
+                    warrantyUntil: (warrantyDraft || site.warrantyUntil || null) as string | null,
+                  })
+                }
+              >
+                {isUpdatingWarranty ? '儲存中…' : '儲存保固日'}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel stack">
@@ -139,6 +186,104 @@ export function SiteDetailPage() {
           </Link>
         </div>
       </section>
+
+      {formal ? (
+        <section className="panel stack">
+          <div className="row between">
+            <strong>施工日誌</strong>
+            <span className="muted" style={{ fontSize: '0.85rem' }}>
+              每日一則 · 彙整後發布
+            </span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-steel"
+            disabled={isEnsuring}
+            onClick={() => void ensureDraft()}
+          >
+            {isEnsuring
+              ? '彙整中…'
+              : todayLog
+                ? '重新彙整今日草稿'
+                : '彙整今日日誌草稿'}
+          </button>
+          {ensureError ? (
+            <p style={{ color: 'var(--danger)', margin: 0 }}>{ensureError.message}</p>
+          ) : null}
+          {logs.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>
+              尚無日誌。可先有出勤／回報／照片／缺失後再彙整。
+            </p>
+          ) : (
+            logs.slice(0, 7).map((log) => (
+              <div key={log.id} className="site-link stack">
+                <div className="row between">
+                  <strong style={{ margin: 0 }}>{log.logDate}</strong>
+                  <span className="badge">
+                    {log.status === 'published'
+                      ? `已發布 v${log.currentVersion}`
+                      : '草稿'}
+                  </span>
+                </div>
+                <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+                  回報 {log.summary.reportCount} · 照片 {log.summary.photoCount} · 缺失{' '}
+                  {log.summary.defectCount} · 出勤 {log.summary.attendanceCount}
+                </p>
+                {log.status === 'draft' ? (
+                  <>
+                    <textarea
+                      rows={6}
+                      value={logDrafts[log.id] ?? log.body}
+                      onChange={(e) =>
+                        setLogDrafts((prev) => ({ ...prev, [log.id]: e.target.value }))
+                      }
+                    />
+                    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        disabled={isSaving}
+                        onClick={() =>
+                          void saveBody({
+                            logId: log.id,
+                            body: logDrafts[log.id] ?? log.body,
+                          })
+                        }
+                      >
+                        {isSaving ? '儲存中…' : '儲存草稿'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-steel"
+                        disabled={isPublishing}
+                        onClick={() => void publish(log.id)}
+                      >
+                        {isPublishing ? '發布中…' : '確認發布'}
+                      </button>
+                    </div>
+                    {publishError ? (
+                      <p style={{ color: 'var(--danger)', margin: 0 }}>
+                        {publishError.message}
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <pre
+                    style={{
+                      margin: 0,
+                      whiteSpace: 'pre-wrap',
+                      fontFamily: 'inherit',
+                      fontSize: '0.9rem',
+                    }}
+                  >
+                    {log.body}
+                  </pre>
+                )}
+              </div>
+            ))
+          )}
+        </section>
+      ) : null}
 
       <section className="panel stack">
         <div className="row between">

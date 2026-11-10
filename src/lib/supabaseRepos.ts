@@ -27,6 +27,9 @@ import type {
   PurchaseMode,
   PurchaseRecord,
   ConstructionReport,
+  DailyLog,
+  DailyLogSummary,
+  DailyLogVersion,
   DefectSeverity,
   PhotoUpload,
   Quotation,
@@ -38,7 +41,7 @@ import type {
   UserRole,
 } from '@/domain/types'
 import { AppError, toUserMessage } from '@/lib/errors'
-import { formatTaipei } from '@/lib/time'
+import { formatTaipei, taipeiDateString } from '@/lib/time'
 import { supabase } from '@/lib/supabase'
 
 function sb() {
@@ -273,6 +276,7 @@ export const supabaseRepos = {
       kind: SiteProject['kind']
       address?: string
       customerName?: string
+      warrantyUntil?: string | null
     },
   ): Promise<SiteProject> {
     assertPermission(actor.role, PERMISSIONS.SITE_WRITE, {
@@ -286,6 +290,7 @@ export const supabaseRepos = {
         kind: input.kind,
         address: input.address?.trim() || null,
         customer_name: input.customerName?.trim() || null,
+        warranty_until: input.warrantyUntil || null,
         status: 'active',
       })
       .select(
@@ -296,6 +301,72 @@ export const supabaseRepos = {
     const site = mapSite(data)
     assertSameOrganization(actor.organizationId, site.organizationId)
     return site
+  },
+
+  async updateSiteWarranty(
+    actor: AppUser,
+    siteId: string,
+    warrantyUntil: string | null,
+  ): Promise<SiteProject> {
+    assertPermission(actor.role, PERMISSIONS.SITE_WRITE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const sid = requireUuid(siteId, '工地')
+    const { data, error } = await sb()
+      .from('sites')
+      .update({
+        warranty_until: warrantyUntil || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', sid)
+      .select(
+        'id, organization_id, name, kind, status, address, customer_name, notes, warranty_until, created_at, updated_at, version',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新保固日期'))
+    const site = mapSite(data)
+    assertSameOrganization(actor.organizationId, site.organizationId)
+    return site
+  },
+
+  /** Create in-app notices for sites with warranty ending within daysAhead. */
+  async ensureWarrantyNotices(actor: AppUser, daysAhead = 30): Promise<number> {
+    const today = taipeiDateString()
+    const until = new Date()
+    until.setDate(until.getDate() + daysAhead)
+    const untilStr = taipeiDateString(until)
+
+    const { data: sites, error } = await sb()
+      .from('sites')
+      .select('id, name, warranty_until')
+      .not('warranty_until', 'is', null)
+      .gte('warranty_until', today)
+      .lte('warranty_until', untilStr)
+    if (error) throw new AppError(toUserMessage(error, '無法檢查保固'))
+
+    let created = 0
+    for (const site of sites ?? []) {
+      const title = `保固即將到期：${site.name}`
+      const { data: existing } = await sb()
+        .from('notices')
+        .select('id')
+        .eq('user_id', actor.id)
+        .eq('title', title)
+        .eq('status', 'open')
+        .limit(1)
+      if (existing && existing.length > 0) continue
+
+      const { error: noticeError } = await sb().rpc('create_org_notices', {
+        p_recipient_ids: [actor.id],
+        p_kind: 'todo',
+        p_title: title,
+        p_detail: `保固日 ${site.warranty_until}（${daysAhead} 天內）。請確認是否需安排回訪。`,
+        p_href: `/sites/${site.id}`,
+        p_as_todo: true,
+      })
+      if (!noticeError) created += 1
+    }
+    return created
   },
 
   async getOpenAttendance(userId: string): Promise<AttendanceRecord | null> {
@@ -1641,4 +1712,287 @@ export const supabaseRepos = {
     const { error } = await sb().from('site_defects').update(patch).eq('id', id)
     if (error) throw new AppError(toUserMessage(error, '更新缺失失敗'))
   },
+
+  async listDailyLogs(siteId: string): Promise<DailyLog[]> {
+    const sid = requireUuid(siteId, '工地')
+    const { data, error } = await sb()
+      .from('daily_logs')
+      .select(
+        'id, organization_id, site_id, log_date, status, body, summary, current_version, published_at, updated_at, created_at',
+      )
+      .eq('site_id', sid)
+      .order('log_date', { ascending: false })
+      .limit(60)
+    if (error) throw new AppError(toUserMessage(error, '無法載入施工日誌'))
+    return (data ?? []).map((row) => mapDailyLog(row))
+  },
+
+  async listDailyLogVersions(dailyLogId: string): Promise<DailyLogVersion[]> {
+    const id = requireUuid(dailyLogId, '日誌')
+    const { data, error } = await sb()
+      .from('daily_log_versions')
+      .select('id, daily_log_id, version, body, summary, created_at, created_by')
+      .eq('daily_log_id', id)
+      .order('version', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入日誌版本'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      dailyLogId: String(row.daily_log_id),
+      version: Number(row.version),
+      body: String(row.body),
+      summary: mapDailyLogSummary(row.summary),
+      createdAt: String(row.created_at),
+      createdBy: String(row.created_by),
+    }))
+  },
+
+  /**
+   * FIELD-006: assemble draft from reports / photos / defects / attendance for the site-day.
+   * Refreshes draft body; if already published, reopens as draft for a new version cycle.
+   */
+  async ensureDailyLogDraft(
+    actor: AppUser,
+    siteId: string,
+    logDate?: string,
+  ): Promise<DailyLog> {
+    const sid = requireUuid(siteId, '工地')
+    const site = await this.getSite(sid, actor)
+    if (!site) throw new AppError('找不到工地')
+
+    const date = logDate || taipeiDateString()
+    const dayStart = `${date}T00:00:00+08:00`
+    const dayEnd = `${date}T23:59:59.999+08:00`
+
+    const [{ data: reports }, { data: photos }, { data: defects }, { data: attendance }] =
+      await Promise.all([
+        sb()
+          .from('construction_reports')
+          .select('id, body, author_id, created_at')
+          .eq('site_id', sid)
+          .gte('created_at', dayStart)
+          .lte('created_at', dayEnd),
+        sb()
+          .from('photo_uploads')
+          .select('id, uploaded_by, created_at, status')
+          .eq('site_id', sid)
+          .gte('created_at', dayStart)
+          .lte('created_at', dayEnd),
+        sb()
+          .from('site_defects')
+          .select('id, title, status, severity, created_at')
+          .eq('site_id', sid)
+          .gte('created_at', dayStart)
+          .lte('created_at', dayEnd),
+        sb()
+          .from('attendance')
+          .select('id, user_id, clock_in_at, clock_out_at, status')
+          .eq('site_id', sid)
+          .gte('clock_in_at', dayStart)
+          .lte('clock_in_at', dayEnd),
+      ])
+
+    const summary: DailyLogSummary = {
+      reportCount: (reports ?? []).length,
+      photoCount: (photos ?? []).length,
+      defectCount: (defects ?? []).length,
+      attendanceCount: (attendance ?? []).length,
+    }
+
+    const lines: string[] = [
+      `【施工日誌草稿】${site.name} · ${date}`,
+      '',
+      `彙整：回報 ${summary.reportCount}、照片 ${summary.photoCount}、缺失 ${summary.defectCount}、出勤 ${summary.attendanceCount}`,
+      '',
+    ]
+
+    if ((attendance ?? []).length) {
+      lines.push('■ 出勤')
+      for (const a of attendance ?? []) {
+        const out = a.clock_out_at
+          ? formatTaipei(String(a.clock_out_at), 'HH:mm')
+          : '尚未下班'
+        lines.push(
+          `- ${formatTaipei(String(a.clock_in_at), 'HH:mm')}～${out}（${a.status}）`,
+        )
+      }
+      lines.push('')
+    }
+
+    if ((reports ?? []).length) {
+      lines.push('■ 施工回報')
+      for (const r of reports ?? []) {
+        const t = formatTaipei(String(r.created_at), 'HH:mm')
+        lines.push(`- ${t} ${(r.body as string)?.trim() || '（僅照片／無文字）'}`)
+      }
+      lines.push('')
+    }
+
+    if ((photos ?? []).length) {
+      lines.push(`■ 施工照片 ${summary.photoCount} 張（已歸檔／當日上傳）`)
+      lines.push('')
+    }
+
+    if ((defects ?? []).length) {
+      lines.push('■ 缺失')
+      for (const d of defects ?? []) {
+        lines.push(`- [${d.severity}/${d.status}] ${d.title}`)
+      }
+      lines.push('')
+    }
+
+    if (
+      summary.reportCount +
+        summary.photoCount +
+        summary.defectCount +
+        summary.attendanceCount ===
+      0
+    ) {
+      lines.push('（當日尚無現場事件可彙整，可手動補寫後發布）')
+    }
+
+    const body = lines.join('\n').trim()
+
+    const { data: existing } = await sb()
+      .from('daily_logs')
+      .select(
+        'id, organization_id, site_id, log_date, status, body, summary, current_version, published_at, updated_at, created_at',
+      )
+      .eq('site_id', sid)
+      .eq('log_date', date)
+      .maybeSingle()
+
+    if (existing) {
+      const { data, error } = await sb()
+        .from('daily_logs')
+        .update({
+          body,
+          summary,
+          status: 'draft',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+        .select(
+          'id, organization_id, site_id, log_date, status, body, summary, current_version, published_at, updated_at, created_at',
+        )
+        .single()
+      if (error) throw new AppError(toUserMessage(error, '無法更新日誌草稿'))
+      return mapDailyLog(data)
+    }
+
+    const { data, error } = await sb()
+      .from('daily_logs')
+      .insert({
+        organization_id: actor.organizationId,
+        site_id: sid,
+        log_date: date,
+        status: 'draft',
+        body,
+        summary,
+        current_version: 0,
+      })
+      .select(
+        'id, organization_id, site_id, log_date, status, body, summary, current_version, published_at, updated_at, created_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立日誌草稿'))
+    return mapDailyLog(data)
+  },
+
+  async updateDailyLogBody(actor: AppUser, logId: string, body: string): Promise<DailyLog> {
+    const id = requireUuid(logId, '日誌')
+    const { data: current, error: loadError } = await sb()
+      .from('daily_logs')
+      .select('id, organization_id, status')
+      .eq('id', id)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取日誌'))
+    if (!current) throw new AppError('找不到日誌')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+    if (current.status !== 'draft') {
+      throw new AppError('已發布日誌請先「重新彙整」再開草稿後編輯')
+    }
+
+    const { data, error } = await sb()
+      .from('daily_logs')
+      .update({ body: body.trim(), updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select(
+        'id, organization_id, site_id, log_date, status, body, summary, current_version, published_at, updated_at, created_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法儲存日誌'))
+    return mapDailyLog(data)
+  },
+
+  async publishDailyLog(actor: AppUser, logId: string): Promise<DailyLog> {
+    const id = requireUuid(logId, '日誌')
+    const { data: current, error: loadError } = await sb()
+      .from('daily_logs')
+      .select(
+        'id, organization_id, site_id, log_date, status, body, summary, current_version, published_at, updated_at, created_at',
+      )
+      .eq('id', id)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取日誌'))
+    if (!current) throw new AppError('找不到日誌')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+    if (current.status !== 'draft') throw new AppError('僅草稿可發布')
+    if (!String(current.body ?? '').trim()) throw new AppError('日誌內容不可空白')
+
+    const nextVersion = Number(current.current_version ?? 0) + 1
+    const { error: versionError } = await sb().from('daily_log_versions').insert({
+      daily_log_id: id,
+      organization_id: current.organization_id,
+      version: nextVersion,
+      body: current.body,
+      summary: current.summary ?? {},
+      created_by: actor.id,
+    })
+    if (versionError) {
+      throw new AppError(toUserMessage(versionError, '無法寫入日誌版本'))
+    }
+
+    const { data, error } = await sb()
+      .from('daily_logs')
+      .update({
+        status: 'published',
+        current_version: nextVersion,
+        published_at: new Date().toISOString(),
+        published_by: actor.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select(
+        'id, organization_id, site_id, log_date, status, body, summary, current_version, published_at, updated_at, created_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '發布日誌失敗'))
+    return mapDailyLog(data)
+  },
+}
+
+function mapDailyLogSummary(raw: unknown): DailyLogSummary {
+  const s = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  return {
+    reportCount: Number(s.reportCount ?? s.report_count ?? 0),
+    photoCount: Number(s.photoCount ?? s.photo_count ?? 0),
+    defectCount: Number(s.defectCount ?? s.defect_count ?? 0),
+    attendanceCount: Number(s.attendanceCount ?? s.attendance_count ?? 0),
+  }
+}
+
+function mapDailyLog(row: Record<string, unknown>): DailyLog {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    siteId: String(row.site_id),
+    logDate: String(row.log_date),
+    status: row.status as DailyLog['status'],
+    body: String(row.body ?? ''),
+    summary: mapDailyLogSummary(row.summary),
+    currentVersion: Number(row.current_version ?? 0),
+    publishedAt: (row.published_at as string | null) ?? null,
+    updatedAt: String(row.updated_at),
+    createdAt: String(row.created_at),
+  }
 }

@@ -106,6 +106,12 @@ SQL：`20261110_line_bind_code_fix_random.sql`
    - 報價管理 → `/quotes`
    - 待辦／施工回報 → `/reports` 或 `/todos`
 
+## 4e. 施工日誌與保固提醒
+
+1. SQL：`supabase/migrations/20261110_daily_logs_and_warranty.sql`
+2. 工地詳情：彙整當日出勤／回報／照片／缺失 → 草稿 → 發布（版本不可改）
+3. 保固日可編輯；首頁載入時對 30 天內到期工地建立站內待辦
+
 ## 5. 驗證
 
 - Production：登入頁顯示「Supabase 正式模式」

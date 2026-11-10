@@ -214,3 +214,36 @@ export interface SiteDefect {
   closedAt?: string | null
   createdAt: string
 }
+
+export type DailyLogStatus = 'draft' | 'published'
+
+export interface DailyLogSummary {
+  reportCount: number
+  photoCount: number
+  defectCount: number
+  attendanceCount: number
+}
+
+export interface DailyLog {
+  id: string
+  organizationId: string
+  siteId: string
+  logDate: string
+  status: DailyLogStatus
+  body: string
+  summary: DailyLogSummary
+  currentVersion: number
+  publishedAt?: string | null
+  updatedAt: string
+  createdAt: string
+}
+
+export interface DailyLogVersion {
+  id: string
+  dailyLogId: string
+  version: number
+  body: string
+  summary: DailyLogSummary
+  createdAt: string
+  createdBy: string
+}
