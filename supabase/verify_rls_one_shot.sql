@@ -45,4 +45,8 @@ select 'outbox_retry_cols',
   (select count(*)::text from information_schema.columns
     where table_schema='public' and table_name='notification_outbox'
       and column_name in ('attempts','next_retry_at','last_attempt_at')),
-  'expect_3', null, null, null;
+  'expect_3', null, null, null
+union all
+select 'complete_signup_rpc',
+  (to_regprocedure('public.complete_signup(text,text)') is not null)::text,
+  'expect_true', null, null, null;
