@@ -167,6 +167,23 @@ export function usePurchases(userId: string | undefined) {
     onSuccess: invalidate,
   })
 
+  const inboundMutation = useMutation({
+    mutationFn: async (input: {
+      purchaseId: string
+      materialId: string
+      qty: number
+      unitCost?: number
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      if (!formal) throw new Error('本機示範模式請到庫存頁模擬入庫')
+      return supabaseRepos.purchaseInbound(user, input)
+    },
+    onSuccess: () => {
+      invalidate()
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] })
+    },
+  })
+
   return {
     purchases: listQuery.data ?? [],
     pendingApprovals: pendingQuery.data ?? [],
@@ -182,5 +199,10 @@ export function usePurchases(userId: string | undefined) {
     isRejecting: rejectMutation.isPending,
     rejectError: rejectMutation.error,
     cancelEmergency: cancelEmergencyMutation.mutateAsync,
+    purchaseInbound: inboundMutation.mutateAsync,
+    isInbound: inboundMutation.isPending,
+    inboundError: inboundMutation.error
+      ? new Error(toUserMessage(inboundMutation.error))
+      : null,
   }
 }

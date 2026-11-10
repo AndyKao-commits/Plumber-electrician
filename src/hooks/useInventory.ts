@@ -48,10 +48,26 @@ export function useInventory(userId: string | undefined) {
     },
   })
 
+  const createMaterialMutation = useMutation({
+    mutationFn: async (input: { name: string; unit: string }) => {
+      if (!user) throw new Error('尚未登入')
+      if (!formal) throw new Error('本機示範模式不支援新增材料')
+      return supabaseRepos.createMaterial(user, input)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: inventoryKeys.all })
+    },
+  })
+
   return {
     materials: listQuery.data ?? [],
     inbound: inboundMutation.mutateAsync,
     isInbound: inboundMutation.isPending,
     inboundError: inboundMutation.error,
+    createMaterial: createMaterialMutation.mutateAsync,
+    isCreatingMaterial: createMaterialMutation.isPending,
+    createMaterialError: createMaterialMutation.error
+      ? new Error(toUserMessage(createMaterialMutation.error))
+      : null,
   }
 }

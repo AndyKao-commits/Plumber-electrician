@@ -17,6 +17,9 @@ export function QuotesPage() {
     isCreating,
     createError,
     publishQuote,
+    createRepairCase,
+    isCreatingRepair,
+    createRepairError,
   } = useQuotes(user?.id)
   const canPublish =
     Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_PUBLISH)
@@ -30,6 +33,9 @@ export function QuotesPage() {
   const [taxMode, setTaxMode] = useState<TaxMode>('exclusive')
   const [amount, setAmount] = useState('10000')
   const [formError, setFormError] = useState<string | null>(null)
+  const [repairTitle, setRepairTitle] = useState('')
+  const [repairCustomer, setRepairCustomer] = useState('')
+  const [repairSiteId, setRepairSiteId] = useState('')
 
   const selectedProjectId =
     projectId && formalSites.some((s) => s.id === projectId)
@@ -79,6 +85,75 @@ export function QuotesPage() {
           建立時必須選擇稅務模式（REV-03）；必須恰好關聯工程或維修案件其一（REV-01）。
           發布後稅務快照凍結。
         </p>
+      </section>
+
+      <section className="panel stack">
+        <strong>建立維修案件</strong>
+        <p className="muted" style={{ margin: 0 }}>
+          報價若選「維修案件」需先有案件；可選掛到既有工地。
+        </p>
+        <form
+          className="stack"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void createRepairCase({
+              title: repairTitle,
+              customerName: repairCustomer,
+              siteId: repairSiteId || null,
+            }).then(() => {
+              setRepairTitle('')
+              setRepairCustomer('')
+              setRepairSiteId('')
+            })
+          }}
+        >
+          <div className="field">
+            <label htmlFor="repair-title">標題</label>
+            <input
+              id="repair-title"
+              value={repairTitle}
+              onChange={(e) => setRepairTitle(e.target.value)}
+              required
+              placeholder="例如：廚房漏水急修"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="repair-customer">客戶</label>
+            <input
+              id="repair-customer"
+              value={repairCustomer}
+              onChange={(e) => setRepairCustomer(e.target.value)}
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="repair-site">關聯工地（選填）</label>
+            <select
+              id="repair-site"
+              value={repairSiteId}
+              onChange={(e) => setRepairSiteId(e.target.value)}
+            >
+              <option value="">不指定</option>
+              {sites.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          {createRepairError ? (
+            <p style={{ color: 'var(--danger)', margin: 0 }}>
+              {createRepairError.message}
+            </p>
+          ) : null}
+          <button
+            className="btn btn-ghost"
+            type="submit"
+            disabled={isCreatingRepair || !repairTitle.trim() || !repairCustomer.trim()}
+          >
+            {isCreatingRepair ? '建立中…' : '新增維修案件'}
+          </button>
+        </form>
       </section>
 
       <section className="panel stack">

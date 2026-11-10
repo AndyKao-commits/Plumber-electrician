@@ -81,6 +81,21 @@ export function useQuotes(userId: string | undefined) {
     },
   })
 
+  const createRepairMutation = useMutation({
+    mutationFn: async (input: {
+      title: string
+      customerName: string
+      siteId?: string | null
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      if (!formal) throw new Error('本機示範模式請使用既有維修案件')
+      return supabaseRepos.createRepairCase(user, input)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['repair-cases'] })
+    },
+  })
+
   return {
     quotes: listQuery.data ?? [],
     repairCases: repairsQuery.data ?? [],
@@ -88,5 +103,10 @@ export function useQuotes(userId: string | undefined) {
     isCreating: createMutation.isPending,
     createError: createMutation.error,
     publishQuote: publishMutation.mutateAsync,
+    createRepairCase: createRepairMutation.mutateAsync,
+    isCreatingRepair: createRepairMutation.isPending,
+    createRepairError: createRepairMutation.error
+      ? new Error(toUserMessage(createRepairMutation.error))
+      : null,
   }
 }

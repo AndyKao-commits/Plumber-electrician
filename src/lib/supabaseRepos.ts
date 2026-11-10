@@ -27,9 +27,11 @@ import type {
   PurchaseMode,
   PurchaseRecord,
   ConstructionReport,
+  DefectSeverity,
   PhotoUpload,
   Quotation,
   RepairCase,
+  SiteDefect,
   SiteProject,
   TaxMode,
   TeamPresence,
@@ -123,6 +125,9 @@ function mapPurchase(row: Record<string, unknown>): PurchaseRecord {
     approvedBy: (row.approved_by as string | null) ?? null,
     approvedAt: (row.approved_at as string | null) ?? null,
     rejectedReason: (row.rejected_reason as string | null) ?? null,
+    inboundMaterialId: (row.inbound_material_id as string | null) ?? null,
+    inboundQty: row.inbound_qty == null ? null : Number(row.inbound_qty),
+    inboundAt: (row.inbound_at as string | null) ?? null,
   }
 }
 
@@ -407,7 +412,7 @@ export const supabaseRepos = {
     let query = sb()
       .from('purchases')
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
       )
       .order('created_at', { ascending: false })
 
@@ -427,7 +432,7 @@ export const supabaseRepos = {
     const { data, error } = await sb()
       .from('purchases')
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
       )
       .eq('status', 'pending_approval')
       .order('created_at', { ascending: false })
@@ -524,7 +529,7 @@ export const supabaseRepos = {
         business_date: businessDate,
       })
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法建立採購'))
@@ -564,7 +569,7 @@ export const supabaseRepos = {
     const { data: current, error: loadError } = await sb()
       .from('purchases')
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
       )
       .eq('id', pid)
       .maybeSingle()
@@ -588,7 +593,7 @@ export const supabaseRepos = {
       })
       .eq('id', pid)
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '核准失敗'))
@@ -613,7 +618,7 @@ export const supabaseRepos = {
     const { data: current, error: loadError } = await sb()
       .from('purchases')
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
       )
       .eq('id', pid)
       .maybeSingle()
@@ -641,7 +646,7 @@ export const supabaseRepos = {
       })
       .eq('id', pid)
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '駁回失敗'))
@@ -680,7 +685,7 @@ export const supabaseRepos = {
     const { data: current, error: loadError } = await sb()
       .from('purchases')
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
       )
       .eq('id', pid)
       .maybeSingle()
@@ -704,7 +709,7 @@ export const supabaseRepos = {
       })
       .eq('id', pid)
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '取消失敗'))
@@ -1376,5 +1381,264 @@ export const supabaseRepos = {
       p_as_todo: true,
     })
     if (error) throw new AppError(toUserMessage(error, '無法新增待辦'))
+  },
+
+  async createMaterial(
+    actor: AppUser,
+    input: { name: string; unit: string },
+  ): Promise<MaterialStock> {
+    assertPermission(actor.role, PERMISSIONS.INVENTORY_INBOUND, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const name = input.name.trim()
+    const unit = input.unit.trim() || '式'
+    if (!name) throw new AppError('請填寫材料名稱')
+    const { data, error } = await sb()
+      .from('materials')
+      .insert({
+        organization_id: actor.organizationId,
+        name,
+        unit,
+        qty: 0,
+        unit_cost: 0,
+      })
+      .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立材料'))
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      name: String(data.name),
+      unit: String(data.unit),
+      qty: Number(data.qty),
+      unitCost: Number(data.unit_cost),
+      updatedAt: String(data.updated_at),
+    }
+  },
+
+  async purchaseInbound(
+    actor: AppUser,
+    input: {
+      purchaseId: string
+      materialId: string
+      qty: number
+      unitCost?: number
+    },
+  ): Promise<PurchaseRecord> {
+    const pid = requireUuid(input.purchaseId, '採購')
+    const { data: current, error: loadError } = await sb()
+      .from('purchases')
+      .select(
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+      )
+      .eq('id', pid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取採購'))
+    if (!current) throw new AppError('找不到採購')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+    if (!['approved', 'purchased'].includes(String(current.status))) {
+      throw new AppError('僅已核准／已採購單可入庫')
+    }
+    if (current.inbound_at) throw new AppError('此採購已入庫，不可重複入庫')
+
+    const qty = input.qty
+    if (qty <= 0) throw new AppError('入庫數量必須大於 0')
+    const unitCost =
+      input.unitCost != null && input.unitCost >= 0
+        ? input.unitCost
+        : Number(current.goods_amount) / qty
+
+    await this.inboundMaterial(actor, {
+      materialId: input.materialId,
+      qty,
+      unitCost,
+    })
+
+    const { data, error } = await sb()
+      .from('purchases')
+      .update({
+        status: 'purchased',
+        inbound_material_id: requireUuid(input.materialId, '材料'),
+        inbound_qty: qty,
+        inbound_at: new Date().toISOString(),
+      })
+      .eq('id', pid)
+      .select(
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '入庫標記失敗'))
+    return mapPurchase(data)
+  },
+
+  async createRepairCase(
+    actor: AppUser,
+    input: { title: string; customerName: string; siteId?: string | null },
+  ): Promise<RepairCase> {
+    const title = input.title.trim()
+    const customerName = input.customerName.trim()
+    if (!title) throw new AppError('請填寫維修標題')
+    if (!customerName) throw new AppError('請填寫客戶名稱')
+    const { data, error } = await sb()
+      .from('repair_cases')
+      .insert({
+        organization_id: actor.organizationId,
+        title,
+        customer_name: customerName,
+        site_id: optionalUuid(input.siteId, '工地'),
+        created_by: actor.id,
+      })
+      .select('id, organization_id, site_id, customer_name, title, created_at')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立維修案件'))
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: (data.site_id as string | null) ?? null,
+      customerName: String(data.customer_name),
+      title: String(data.title),
+      createdAt: String(data.created_at),
+    }
+  },
+
+  async listSiteDefects(siteId: string): Promise<SiteDefect[]> {
+    const sid = requireUuid(siteId, '工地')
+    const { data, error } = await sb()
+      .from('site_defects')
+      .select(
+        'id, organization_id, site_id, reported_by, title, detail, severity, status, fixed_at, fixed_note, reinspected_at, reinspect_note, closed_at, created_at',
+      )
+      .eq('site_id', sid)
+      .order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入缺失'))
+
+    const rows = data ?? []
+    const reporterIds = [...new Set(rows.map((r) => String(r.reported_by)))]
+    const names = new Map<string, string>()
+    if (reporterIds.length > 0) {
+      const { data: profiles } = await sb()
+        .from('profiles')
+        .select('id, name')
+        .in('id', reporterIds)
+      for (const p of profiles ?? []) names.set(String(p.id), String(p.name))
+    }
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      siteId: String(row.site_id),
+      reportedBy: String(row.reported_by),
+      reporterName: names.get(String(row.reported_by)),
+      title: String(row.title),
+      detail: String(row.detail ?? ''),
+      severity: row.severity as SiteDefect['severity'],
+      status: row.status as SiteDefect['status'],
+      fixedAt: (row.fixed_at as string | null) ?? null,
+      fixedNote: (row.fixed_note as string | null) ?? null,
+      reinspectedAt: (row.reinspected_at as string | null) ?? null,
+      reinspectNote: (row.reinspect_note as string | null) ?? null,
+      closedAt: (row.closed_at as string | null) ?? null,
+      createdAt: String(row.created_at),
+    }))
+  },
+
+  async createSiteDefect(input: {
+    siteId: string
+    title: string
+    detail?: string
+    severity?: DefectSeverity
+  }): Promise<SiteDefect> {
+    const me = await this.getCurrentUser()
+    if (!me) throw new AppError('尚未登入')
+    const title = input.title.trim()
+    if (!title) throw new AppError('請填寫缺失標題')
+    const { data, error } = await sb()
+      .from('site_defects')
+      .insert({
+        organization_id: me.organizationId,
+        site_id: requireUuid(input.siteId, '工地'),
+        reported_by: me.id,
+        title,
+        detail: input.detail?.trim() || '',
+        severity: input.severity ?? 'normal',
+        status: 'open',
+      })
+      .select(
+        'id, organization_id, site_id, reported_by, title, detail, severity, status, fixed_at, fixed_note, reinspected_at, reinspect_note, closed_at, created_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法新增缺失'))
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: String(data.site_id),
+      reportedBy: String(data.reported_by),
+      reporterName: me.name,
+      title: String(data.title),
+      detail: String(data.detail ?? ''),
+      severity: data.severity as SiteDefect['severity'],
+      status: data.status as SiteDefect['status'],
+      createdAt: String(data.created_at),
+    }
+  },
+
+  async advanceSiteDefect(
+    actor: AppUser,
+    input: { defectId: string; action: 'fix' | 'reinspect' | 'close'; note?: string },
+  ): Promise<void> {
+    const id = requireUuid(input.defectId, '缺失')
+    const { data: current, error: loadError } = await sb()
+      .from('site_defects')
+      .select('id, organization_id, status, severity')
+      .eq('id', id)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取缺失'))
+    if (!current) throw new AppError('找不到缺失')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+
+    const note = input.note?.trim() || ''
+    const now = new Date().toISOString()
+    let patch: Record<string, unknown> | null = null
+
+    if (input.action === 'fix') {
+      if (current.status !== 'open') throw new AppError('僅「待改善」可標記已改善')
+      patch = {
+        status: 'fixed',
+        fixed_at: now,
+        fixed_by: actor.id,
+        fixed_note: note,
+      }
+    } else if (input.action === 'reinspect') {
+      if (current.status !== 'fixed') throw new AppError('僅「已改善」可複驗')
+      patch = {
+        status: 'reinspected',
+        reinspected_at: now,
+        reinspected_by: actor.id,
+        reinspect_note: note,
+      }
+    } else if (input.action === 'close') {
+      if (current.status !== 'reinspected' && current.severity !== 'normal') {
+        // safety must be reinspected before close
+        throw new AppError('安全缺失須先完成複驗才能結案')
+      }
+      if (current.status === 'open') throw new AppError('請先完成改善')
+      if (current.status === 'closed') throw new AppError('已結案')
+      // normal: allow close from fixed or reinspected; safety: only reinspected (checked above for open)
+      if (current.severity === 'safety' && current.status !== 'reinspected') {
+        throw new AppError('安全缺失須先複驗再結案')
+      }
+      if (current.severity === 'normal' && !['fixed', 'reinspected'].includes(String(current.status))) {
+        throw new AppError('請先標記改善')
+      }
+      patch = {
+        status: 'closed',
+        closed_at: now,
+        closed_by: actor.id,
+      }
+    }
+
+    if (!patch) throw new AppError('未知操作')
+    const { error } = await sb().from('site_defects').update(patch).eq('id', id)
+    if (error) throw new AppError(toUserMessage(error, '更新缺失失敗'))
   },
 }

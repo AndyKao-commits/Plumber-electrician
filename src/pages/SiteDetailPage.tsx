@@ -1,6 +1,8 @@
 import { Link, useParams } from 'react-router-dom'
-import { useMemo } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
+import type { DefectSeverity } from '@/domain/types'
 import { useAttendance } from '@/hooks/useAttendance'
+import { useDefects } from '@/hooks/useDefects'
 import { usePhotos } from '@/hooks/usePhotos'
 import { useReports } from '@/hooks/useReports'
 import { useSite } from '@/hooks/useSites'
@@ -17,6 +19,17 @@ export function SiteDetailPage() {
   const formal = isFormalMode()
   const { photos } = usePhotos()
   const { reports } = useReports(siteId)
+  const {
+    defects,
+    createDefect,
+    isCreating: isCreatingDefect,
+    createError: defectCreateError,
+    advanceDefect,
+    isAdvancing,
+  } = useDefects(siteId)
+  const [defectTitle, setDefectTitle] = useState('')
+  const [defectDetail, setDefectDetail] = useState('')
+  const [defectSeverity, setDefectSeverity] = useState<DefectSeverity>('normal')
 
   const purchasesQuery = useQuery({
     queryKey: ['purchases', 'site', siteId],
@@ -209,6 +222,159 @@ export function SiteDetailPage() {
           ))
         )}
       </section>
+
+      {formal ? (
+        <section className="panel stack">
+          <strong>缺失／複驗</strong>
+          <p className="muted" style={{ margin: 0 }}>
+            流程：待改善 → 已改善 → 複驗 → 結案。安全缺失須複驗後才能結案。
+          </p>
+          <form
+            className="stack"
+            onSubmit={(e: FormEvent) => {
+              e.preventDefault()
+              void createDefect({
+                title: defectTitle,
+                detail: defectDetail,
+                severity: defectSeverity,
+              }).then(() => {
+                setDefectTitle('')
+                setDefectDetail('')
+                setDefectSeverity('normal')
+              })
+            }}
+          >
+            <div className="field">
+              <label htmlFor="defect-title">缺失標題</label>
+              <input
+                id="defect-title"
+                value={defectTitle}
+                onChange={(e) => setDefectTitle(e.target.value)}
+                required
+                placeholder="例如：浴室地漏堵塞"
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="defect-detail">說明</label>
+              <textarea
+                id="defect-detail"
+                rows={2}
+                value={defectDetail}
+                onChange={(e) => setDefectDetail(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="defect-severity">嚴重度</label>
+              <select
+                id="defect-severity"
+                value={defectSeverity}
+                onChange={(e) =>
+                  setDefectSeverity(e.target.value as DefectSeverity)
+                }
+              >
+                <option value="normal">一般</option>
+                <option value="safety">安全（P0）</option>
+              </select>
+            </div>
+            {defectCreateError ? (
+              <p style={{ color: 'var(--danger)', margin: 0 }}>
+                {defectCreateError.message}
+              </p>
+            ) : null}
+            <button
+              className="btn btn-steel"
+              type="submit"
+              disabled={isCreatingDefect || !defectTitle.trim()}
+            >
+              {isCreatingDefect ? '新增中…' : '新增缺失'}
+            </button>
+          </form>
+
+          {defects.length === 0 ? (
+            <p className="muted" style={{ margin: 0 }}>尚無缺失</p>
+          ) : (
+            defects.map((d) => (
+              <div key={d.id} className="site-link stack">
+                <div className="row between">
+                  <strong style={{ margin: 0 }}>{d.title}</strong>
+                  <span className="badge">
+                    {d.severity === 'safety' ? '安全' : '一般'} · {d.status}
+                  </span>
+                </div>
+                {d.detail ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    {d.detail}
+                  </p>
+                ) : null}
+                <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+                  {d.reporterName || '未知'} ·{' '}
+                  {new Date(d.createdAt).toLocaleString('zh-TW', {
+                    timeZone: 'Asia/Taipei',
+                  })}
+                </p>
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  {d.status === 'open' ? (
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={isAdvancing}
+                      onClick={() =>
+                        void advanceDefect({
+                          defectId: d.id,
+                          action: 'fix',
+                          note: '已改善',
+                        })
+                      }
+                    >
+                      標記已改善
+                    </button>
+                  ) : null}
+                  {d.status === 'fixed' ? (
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={isAdvancing}
+                      onClick={() =>
+                        void advanceDefect({
+                          defectId: d.id,
+                          action: 'reinspect',
+                          note: '複驗通過',
+                        })
+                      }
+                    >
+                      複驗通過
+                    </button>
+                  ) : null}
+                  {d.status === 'fixed' && d.severity === 'normal' ? (
+                    <button
+                      type="button"
+                      className="btn btn-steel"
+                      disabled={isAdvancing}
+                      onClick={() =>
+                        void advanceDefect({ defectId: d.id, action: 'close' })
+                      }
+                    >
+                      結案
+                    </button>
+                  ) : null}
+                  {d.status === 'reinspected' ? (
+                    <button
+                      type="button"
+                      className="btn btn-steel"
+                      disabled={isAdvancing}
+                      onClick={() =>
+                        void advanceDefect({ defectId: d.id, action: 'close' })
+                      }
+                    >
+                      結案
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))
+          )}
+        </section>
+      ) : null}
     </div>
   )
 }

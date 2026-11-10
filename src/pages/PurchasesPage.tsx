@@ -5,9 +5,11 @@ import {
   calcFinalPayable,
   requiresPreApproval,
 } from '@/domain/rules'
+import { useInventory } from '@/hooks/useInventory'
 import { usePurchases } from '@/hooks/usePurchases'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
+import { isFormalMode } from '@/lib/dataMode'
 import { formatTaipei } from '@/lib/time'
 
 export function PurchasesPage() {
@@ -27,10 +29,17 @@ export function PurchasesPage() {
     isRejecting,
     rejectError,
     cancelEmergency,
+    purchaseInbound,
+    isInbound,
+    inboundError,
   } = usePurchases(user?.id)
+  const { materials, createMaterial, isCreatingMaterial } = useInventory(user?.id)
+  const formal = isFormalMode()
 
   const canApprove =
     Boolean(user) && hasPermission(user!.role, PERMISSIONS.PURCHASE_APPROVE)
+  const canInbound =
+    Boolean(user) && hasPermission(user!.role, PERMISSIONS.INVENTORY_INBOUND)
 
   const [title, setTitle] = useState('')
   const [mode, setMode] = useState<'normal' | 'emergency'>('normal')
@@ -40,6 +49,9 @@ export function PurchasesPage() {
   const [tax, setTax] = useState('0')
   const [shipping, setShipping] = useState('150')
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({})
+  const [inboundDraft, setInboundDraft] = useState<
+    Record<string, { materialId: string; qty: string; unitCost: string }>
+  >({})
 
   const preview = calcFinalPayable({
     goodsAmount: Number(goodsAmount) || 0,
@@ -288,6 +300,137 @@ export function PurchasesPage() {
                 >
                   取消並釋放當日額度
                 </button>
+              ) : null}
+              {formal &&
+              canInbound &&
+              (p.status === 'approved' || p.status === 'purchased') &&
+              !p.inboundAt ? (
+                <div className="stack">
+                  <strong style={{ margin: 0 }}>採購入庫</strong>
+                  <div className="field">
+                    <label htmlFor={`in-mat-${p.id}`}>材料</label>
+                    <select
+                      id={`in-mat-${p.id}`}
+                      value={inboundDraft[p.id]?.materialId ?? materials[0]?.id ?? ''}
+                      onChange={(e) =>
+                        setInboundDraft((prev) => ({
+                          ...prev,
+                          [p.id]: {
+                            materialId: e.target.value,
+                            qty: prev[p.id]?.qty ?? '1',
+                            unitCost:
+                              prev[p.id]?.unitCost ??
+                              String(Math.round(p.goodsAmount) || 0),
+                          },
+                        }))
+                      }
+                    >
+                      {materials.length === 0 ? (
+                        <option value="">尚無材料</option>
+                      ) : null}
+                      {materials.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}（庫存 {m.qty}）
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {materials.length === 0 ? (
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={isCreatingMaterial}
+                      onClick={() =>
+                        void createMaterial({ name: p.title || '採購材料', unit: '式' })
+                      }
+                    >
+                      {isCreatingMaterial ? '建立中…' : `用「${p.title}」建立材料`}
+                    </button>
+                  ) : null}
+                  <div className="grid-2">
+                    <div className="field">
+                      <label htmlFor={`in-qty-${p.id}`}>數量</label>
+                      <input
+                        id={`in-qty-${p.id}`}
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        value={inboundDraft[p.id]?.qty ?? '1'}
+                        onChange={(e) =>
+                          setInboundDraft((prev) => ({
+                            ...prev,
+                            [p.id]: {
+                              materialId:
+                                prev[p.id]?.materialId ?? materials[0]?.id ?? '',
+                              qty: e.target.value,
+                              unitCost:
+                                prev[p.id]?.unitCost ??
+                                String(Math.round(p.goodsAmount) || 0),
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="field">
+                      <label htmlFor={`in-cost-${p.id}`}>入庫單價</label>
+                      <input
+                        id={`in-cost-${p.id}`}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={
+                          inboundDraft[p.id]?.unitCost ??
+                          String(Math.round(p.goodsAmount) || 0)
+                        }
+                        onChange={(e) =>
+                          setInboundDraft((prev) => ({
+                            ...prev,
+                            [p.id]: {
+                              materialId:
+                                prev[p.id]?.materialId ?? materials[0]?.id ?? '',
+                              qty: prev[p.id]?.qty ?? '1',
+                              unitCost: e.target.value,
+                            },
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  {inboundError ? (
+                    <p style={{ color: 'var(--danger)', margin: 0 }}>
+                      {inboundError.message}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn btn-steel"
+                    disabled={
+                      isInbound ||
+                      !(inboundDraft[p.id]?.materialId ?? materials[0]?.id)
+                    }
+                    onClick={() => {
+                      const draft = inboundDraft[p.id]
+                      const materialId = draft?.materialId ?? materials[0]?.id
+                      if (!materialId) return
+                      void purchaseInbound({
+                        purchaseId: p.id,
+                        materialId,
+                        qty: Number(draft?.qty ?? 1) || 1,
+                        unitCost: Number(
+                          draft?.unitCost ?? p.goodsAmount,
+                        ),
+                      })
+                    }}
+                  >
+                    {isInbound ? '入庫中…' : '確認入庫並標記已採購'}
+                  </button>
+                </div>
+              ) : null}
+              {p.inboundAt ? (
+                <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+                  已入庫 qty {p.inboundQty} ·{' '}
+                  {formatTaipei(p.inboundAt, 'MM/dd HH:mm')}
+                </p>
               ) : null}
             </div>
           ))
