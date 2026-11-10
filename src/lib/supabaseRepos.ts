@@ -26,6 +26,7 @@ import type {
   MaterialStock,
   PurchaseMode,
   PurchaseRecord,
+  PhotoUpload,
   Quotation,
   RepairCase,
   SiteProject,
@@ -1090,5 +1091,90 @@ export const supabaseRepos = {
         siteName: siteId ? siteNames.get(siteId) ?? null : null,
       }
     })
+  },
+
+  async listPhotoUploads(): Promise<PhotoUpload[]> {
+    const { data, error } = await sb()
+      .from('photo_uploads')
+      .select(
+        'id, organization_id, uploaded_by, site_id, storage_path, content_type, byte_size, source, status, created_at',
+      )
+      .order('created_at', { ascending: false })
+      .limit(100)
+    if (error) throw new AppError(toUserMessage(error, '無法載入施工照片'))
+
+    const rows = data ?? []
+    const uploaderIds = [...new Set(rows.map((r) => String(r.uploaded_by)))]
+    const siteIds = [
+      ...new Set(
+        rows
+          .map((r) => r.site_id as string | null)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ]
+
+    const nameByUser = new Map<string, string>()
+    if (uploaderIds.length > 0) {
+      const { data: profiles } = await sb()
+        .from('profiles')
+        .select('id, name')
+        .in('id', uploaderIds)
+      for (const p of profiles ?? []) {
+        nameByUser.set(String(p.id), String(p.name))
+      }
+    }
+
+    const nameBySite = new Map<string, string>()
+    if (siteIds.length > 0) {
+      const { data: sites } = await sb().from('sites').select('id, name').in('id', siteIds)
+      for (const s of sites ?? []) {
+        nameBySite.set(String(s.id), String(s.name))
+      }
+    }
+
+    const paths = rows.map((r) => String(r.storage_path))
+    const previewByPath = new Map<string, string>()
+    if (paths.length > 0) {
+      const { data: signed } = await sb()
+        .storage.from('site-photos')
+        .createSignedUrls(paths, 3600)
+      for (const item of signed ?? []) {
+        if (item.path && item.signedUrl) {
+          previewByPath.set(item.path, item.signedUrl)
+        }
+      }
+    }
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      uploadedBy: String(row.uploaded_by),
+      uploaderName: nameByUser.get(String(row.uploaded_by)),
+      siteId: row.site_id ? String(row.site_id) : null,
+      siteName: row.site_id ? nameBySite.get(String(row.site_id)) ?? null : null,
+      storagePath: String(row.storage_path),
+      contentType: row.content_type ? String(row.content_type) : null,
+      byteSize: row.byte_size == null ? null : Number(row.byte_size),
+      source: String(row.source),
+      status: row.status as PhotoUpload['status'],
+      previewUrl: previewByPath.get(String(row.storage_path)) ?? null,
+      createdAt: String(row.created_at),
+    }))
+  },
+
+  async linkPhotoUpload(photoId: string, siteId: string): Promise<void> {
+    const { error } = await sb()
+      .from('photo_uploads')
+      .update({ site_id: requireUuid(siteId, '工地'), status: 'linked' })
+      .eq('id', requireUuid(photoId, '照片'))
+    if (error) throw new AppError(toUserMessage(error, '無法指定工地'))
+  },
+
+  async discardPhotoUpload(photoId: string): Promise<void> {
+    const { error } = await sb()
+      .from('photo_uploads')
+      .update({ status: 'discarded' })
+      .eq('id', requireUuid(photoId, '照片'))
+    if (error) throw new AppError(toUserMessage(error, '無法捨棄照片'))
   },
 }

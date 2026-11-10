@@ -4,7 +4,7 @@ type LineEvent = {
   type?: string
   replyToken?: string
   source?: { type?: string; userId?: string }
-  message?: { type?: string; text?: string }
+  message?: { type?: string; text?: string; id?: string }
 }
 
 type LineWebhookBody = { events?: LineEvent[] }
@@ -18,7 +18,7 @@ Deno.serve(async (req) => {
   if (req.method === 'GET' || req.method === 'HEAD') {
     return json({
       ok: true,
-      mode: 'reply_only_bind',
+      mode: 'reply_bind_photo',
       hasToken: token.length > 0,
       hasSecret: secret.length > 0,
       hasServiceKey: serviceKey.length > 0,
@@ -46,8 +46,6 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: 'invalid json' }, 400)
   }
 
-  // Rich menu handles navigation — do not spam menu replies on「你好」etc.
-  // Only reply for bind codes (and a short tip on follow).
   if (!token) {
     return json({ ok: true, replied: 0, reason: 'no_token' })
   }
@@ -62,32 +60,135 @@ Deno.serve(async (req) => {
   let replied = 0
   for (const event of body.events ?? []) {
     if (!event.replyToken) continue
+    const lineUserId = String(event.source?.userId ?? '').trim()
 
     if (event.type === 'follow') {
-      const ok = await replyText(
-        token,
-        event.replyToken,
-        '歡迎加入。請用下方圖文選單操作。\n若要綁定系統帳號：到工程管家「今日團隊」按「用 LINE 綁定」。',
-      )
-      if (ok) replied += 1
+      if (
+        await replyText(
+          token,
+          event.replyToken,
+          '歡迎加入。請用下方圖文選單操作。\n綁定：工程管家「今日團隊」→ 用 LINE 綁定。\n上傳照片：在此對話直接傳送圖片即可。',
+        )
+      ) {
+        replied += 1
+      }
       continue
     }
 
     if (event.type !== 'message') continue
+    const msgType = String(event.message?.type ?? '')
     const text = String(event.message?.text ?? '').trim()
-    const bindCode = extractBindCode(text)
-    if (!bindCode) {
-      // Silent: rich menu is the primary UX
+
+    if (msgType === 'image') {
+      const reply = await handleImage(admin, token, lineUserId, String(event.message?.id ?? ''))
+      if (await replyText(token, event.replyToken, reply)) replied += 1
       continue
     }
 
-    const lineUserId = String(event.source?.userId ?? '').trim()
-    const reply = await handleBind(admin, bindCode, lineUserId)
-    if (await replyText(token, event.replyToken, reply)) replied += 1
+    if (msgType === 'text') {
+      const bindCode = extractBindCode(text)
+      if (bindCode) {
+        const reply = await handleBind(admin, bindCode, lineUserId)
+        if (await replyText(token, event.replyToken, reply)) replied += 1
+        continue
+      }
+
+      if (/上傳照片|傳送照片|傳照片|施工照片/.test(text)) {
+        if (
+          await replyText(
+            token,
+            event.replyToken,
+            '請直接在此對話傳送照片（可從相簿或相機）。\n需先完成 LINE 綁定；上傳後可到系統「施工照片」指定工地。',
+          )
+        ) {
+          replied += 1
+        }
+        continue
+      }
+    }
+
+    // Other messages: silent (rich menu handles navigation)
   }
 
   return json({ ok: true, replied })
 })
+
+async function handleImage(
+  admin: ReturnType<typeof createClient> | null,
+  lineToken: string,
+  lineUserId: string,
+  messageId: string,
+): Promise<string> {
+  if (!admin) return '收圖失敗：伺服器尚未設定資料庫。'
+  if (!lineUserId) return '收圖失敗：讀不到你的 LINE User ID。'
+  if (!messageId) return '收圖失敗：缺少訊息編號。'
+
+  const { data: profile, error: profileError } = await admin
+    .from('profiles')
+    .select('id, organization_id, name, line_user_id')
+    .eq('line_user_id', lineUserId)
+    .maybeSingle()
+
+  if (profileError) {
+    console.warn('[line-webhook] profile lookup failed', profileError.message)
+    return '收圖失敗：查詢帳號時出錯。'
+  }
+  if (!profile) {
+    return '尚未綁定系統帳號。請先到工程管家「今日團隊」按「用 LINE 綁定」，再傳照片。'
+  }
+
+  try {
+    const contentRes = await fetch(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
+      headers: { Authorization: `Bearer ${lineToken}` },
+    })
+    if (!contentRes.ok) {
+      console.warn('[line-webhook] content download failed', contentRes.status)
+      return '收圖失敗：無法向 LINE 下載照片。'
+    }
+
+    const contentType = contentRes.headers.get('content-type') || 'image/jpeg'
+    const bytes = new Uint8Array(await contentRes.arrayBuffer())
+    if (bytes.byteLength === 0) return '收圖失敗：檔案是空的。'
+    if (bytes.byteLength > 15 * 1024 * 1024) return '收圖失敗：檔案超過 15MB。'
+
+    const ext = contentType.includes('png')
+      ? 'png'
+      : contentType.includes('webp')
+        ? 'webp'
+        : 'jpg'
+    const path = `${profile.organization_id}/${profile.id}/${crypto.randomUUID()}.${ext}`
+
+    const { error: uploadError } = await admin.storage.from('site-photos').upload(path, bytes, {
+      contentType,
+      upsert: false,
+    })
+    if (uploadError) {
+      console.warn('[line-webhook] storage upload failed', uploadError.message)
+      return '收圖失敗：無法存入雲端（請確認已執行 photo_uploads SQL／建立 site-photos bucket）。'
+    }
+
+    const { error: insertError } = await admin.from('photo_uploads').insert({
+      organization_id: profile.organization_id,
+      uploaded_by: profile.id,
+      storage_path: path,
+      content_type: contentType,
+      byte_size: bytes.byteLength,
+      line_message_id: messageId,
+      source: 'line',
+      status: 'pending',
+    })
+    if (insertError) {
+      console.warn('[line-webhook] insert failed', insertError.message)
+      return '收圖失敗：寫入資料庫失敗。'
+    }
+
+    const who = profile.name ? `（${profile.name}）` : ''
+    return `已收到施工照片${who}，已暫存。\n請到工程管家「施工照片」指定工地。`
+  } catch (err) {
+    console.warn('[line-webhook] image threw', String(err).slice(0, 200))
+    return '收圖失敗：系統例外，請稍後再試。'
+  }
+}
 
 function extractBindCode(text: string): string | null {
   const normalized = text
@@ -135,7 +236,7 @@ async function handleBind(
   }
 
   const name = result.name ? `，${result.name}` : ''
-  return `綁定成功${name}！可用圖文選單進入系統。`
+  return `綁定成功${name}！可用圖文選單進入系統；傳照片即可上傳。`
 }
 
 async function verifyLineSignature(body: string, signature: string, channelSecret: string) {
