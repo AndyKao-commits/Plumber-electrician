@@ -62,6 +62,10 @@ import {
   visitCreatesAttendance,
 } from '@/domain/repairs'
 import {
+  assertWarrantyAssessmentRationale,
+  isAutoFreeByWarrantyDates,
+} from '@/domain/warranty'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   canCreateChangeOrder,
@@ -120,6 +124,9 @@ import type {
   SiteDefect,
   SiteProject,
   TaxMode,
+  Warranty,
+  WarrantyAssessment,
+  WarrantyAssessmentClassification,
   TeamPresence,
   UserRole,
 } from '@/domain/types'
@@ -479,6 +486,38 @@ function mapRepairVisitRow(row: Record<string, unknown>): RepairVisit {
     visitedAt: String(row.visited_at),
     createdBy: String(row.created_by ?? ''),
     attendanceCreated: false,
+  }
+}
+
+function mapWarrantyRow(row: Record<string, unknown>): Warranty {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    title: String(row.title),
+    siteId: (row.site_id as string | null) ?? null,
+    repairCaseId: (row.repair_case_id as string | null) ?? null,
+    startsOn: (row.starts_on as string | null) ?? null,
+    endsOn: (row.ends_on as string | null) ?? null,
+    scopeNotes: (row.scope_notes as string | null) ?? null,
+    exclusionNotes: (row.exclusion_notes as string | null) ?? null,
+    createdAt: String(row.created_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapWarrantyAssessmentRow(
+  row: Record<string, unknown>,
+): WarrantyAssessment {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    repairCaseId: String(row.repair_case_id),
+    warrantyId: (row.warranty_id as string | null) ?? null,
+    classification: row.classification as WarrantyAssessmentClassification,
+    rationale: String(row.rationale),
+    assessedAt: String(row.assessed_at),
+    assessedBy: String(row.assessed_by),
+    assessedByName: String(row.assessed_by_name),
   }
 }
 
@@ -3493,6 +3532,112 @@ export const supabaseRepos = {
       .eq('id', rid)
     if (error) throw new AppError(toUserMessage(error, '無法更新維修狀態'))
     void actor
+  },
+
+  async listWarranties(): Promise<Warranty[]> {
+    const { data, error } = await sb()
+      .from('warranties')
+      .select(
+        'id, organization_id, title, site_id, repair_case_id, starts_on, ends_on, scope_notes, exclusion_notes, created_at, created_by',
+      )
+      .order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入保固'))
+    return (data ?? []).map((row) =>
+      mapWarrantyRow(row as Record<string, unknown>),
+    )
+  },
+
+  async createWarranty(
+    actor: AppUser,
+    input: {
+      title: string
+      siteId?: string | null
+      repairCaseId?: string | null
+      startsOn?: string | null
+      endsOn?: string | null
+      scopeNotes?: string | null
+      exclusionNotes?: string | null
+    },
+  ): Promise<Warranty> {
+    const title = input.title.trim()
+    if (!title) throw new AppError('保固標題為必填')
+    const { data, error } = await sb()
+      .from('warranties')
+      .insert({
+        title,
+        site_id: optionalUuid(input.siteId, '工地'),
+        repair_case_id: optionalUuid(input.repairCaseId, '維修案件'),
+        starts_on: input.startsOn || null,
+        ends_on: input.endsOn || null,
+        scope_notes: input.scopeNotes?.trim() || null,
+        exclusion_notes: input.exclusionNotes?.trim() || null,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, title, site_id, repair_case_id, starts_on, ends_on, scope_notes, exclusion_notes, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立保固'))
+    return mapWarrantyRow(data as Record<string, unknown>)
+  },
+
+  async listWarrantyAssessments(
+    repairCaseId: string,
+  ): Promise<WarrantyAssessment[]> {
+    const rid = requireUuid(repairCaseId, '維修案件')
+    const { data, error } = await sb()
+      .from('warranty_assessments')
+      .select(
+        'id, organization_id, repair_case_id, warranty_id, classification, rationale, assessed_at, assessed_by, assessed_by_name',
+      )
+      .eq('repair_case_id', rid)
+      .order('assessed_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入保固判定'))
+    return (data ?? []).map((row) =>
+      mapWarrantyAssessmentRow(row as Record<string, unknown>),
+    )
+  },
+
+  async createWarrantyAssessment(
+    actor: AppUser,
+    input: {
+      repairCaseId: string
+      warrantyId?: string | null
+      classification: WarrantyAssessmentClassification
+      rationale: string
+    },
+  ): Promise<WarrantyAssessment> {
+    const rid = requireUuid(input.repairCaseId, '維修案件')
+    const warranties = await this.listWarranties()
+    const warranty = input.warrantyId
+      ? warranties.find((w) => w.id === input.warrantyId)
+      : null
+    if (
+      isAutoFreeByWarrantyDates({
+        now: new Date().toISOString(),
+        warrantyStart: warranty?.startsOn,
+        warrantyEnd: warranty?.endsOn,
+      })
+    ) {
+      throw new AppError('不可依保固日期自動免費')
+    }
+    const rationale = assertWarrantyAssessmentRationale(input.rationale)
+    const { data, error } = await sb()
+      .from('warranty_assessments')
+      .insert({
+        repair_case_id: rid,
+        warranty_id: optionalUuid(input.warrantyId, '保固'),
+        classification: input.classification,
+        rationale,
+        assessed_by: actor.id,
+        assessed_by_name: actor.name,
+      })
+      .select(
+        'id, organization_id, repair_case_id, warranty_id, classification, rationale, assessed_at, assessed_by, assessed_by_name',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登錄保固判定'))
+    return mapWarrantyAssessmentRow(data as Record<string, unknown>)
   },
 
   async listSiteDefects(siteId: string): Promise<SiteDefect[]> {

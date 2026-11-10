@@ -102,6 +102,9 @@ import type {
   RepairVisit,
   SiteProject,
   TaxMode,
+  Warranty,
+  WarrantyAssessment,
+  WarrantyAssessmentClassification,
 } from '@/domain/types'
 import {
   assertProblemDescription,
@@ -109,6 +112,10 @@ import {
   nextRepairStatusAfterVisit,
   visitCreatesAttendance,
 } from '@/domain/repairs'
+import {
+  assertWarrantyAssessmentRationale,
+  isAutoFreeByWarrantyDates,
+} from '@/domain/warranty'
 import { formatTaipei } from '@/lib/time'
 
 const ORG_ID = 'org-demo'
@@ -125,6 +132,8 @@ const KEYS = {
   repairCases: 'eg.repairCases.v2',
   repairAssignments: 'eg.repairAssignments.v1',
   repairVisits: 'eg.repairVisits.v1',
+  warranties: 'eg.warranties.v1',
+  warrantyAssessments: 'eg.warrantyAssessments.v1',
   quotations: 'eg.quotations.v2',
   quotationItems: 'eg.quotationItems.v1',
   quotationVersions: 'eg.quotationVersions.v1',
@@ -165,6 +174,8 @@ const emptyEvents: EmergencyLimitEvent[] = []
 const emptyRepairs: RepairCase[] = []
 const emptyRepairAssignments: RepairAssignment[] = []
 const emptyRepairVisits: RepairVisit[] = []
+const emptyWarranties: Warranty[] = []
+const emptyWarrantyAssessments: WarrantyAssessment[] = []
 const emptyQuotes: Quotation[] = []
 const emptyQuoteItems: QuotationItem[] = []
 const emptyQuoteVersions: QuotationVersion[] = []
@@ -395,6 +406,8 @@ function seedIfNeeded() {
   write(KEYS.repairCases, seededRepairs)
   write(KEYS.repairAssignments, emptyRepairAssignments)
   write(KEYS.repairVisits, emptyRepairVisits)
+  write(KEYS.warranties, emptyWarranties)
+  write(KEYS.warrantyAssessments, emptyWarrantyAssessments)
   write(KEYS.quotations, emptyQuotes)
   write(KEYS.quotationItems, emptyQuoteItems)
   write(KEYS.quotationVersions, emptyQuoteVersions)
@@ -843,6 +856,94 @@ export const localDb = {
     if (next !== repair.status) {
       this.setRepairCaseStatus(actor, repair.id, next)
     }
+    return row
+  },
+
+  listWarranties(): Warranty[] {
+    return read(KEYS.warranties, emptyWarranties).sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt),
+    )
+  },
+
+  createWarranty(
+    actor: { id: string },
+    input: {
+      title: string
+      siteId?: string | null
+      repairCaseId?: string | null
+      startsOn?: string | null
+      endsOn?: string | null
+      scopeNotes?: string | null
+      exclusionNotes?: string | null
+    },
+  ): Warranty {
+    const title = input.title.trim()
+    if (!title) throw new Error('保固標題為必填')
+    const now = new Date().toISOString()
+    const row: Warranty = {
+      id: `war-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      title,
+      siteId: input.siteId || null,
+      repairCaseId: input.repairCaseId || null,
+      startsOn: input.startsOn || null,
+      endsOn: input.endsOn || null,
+      scopeNotes: input.scopeNotes?.trim() || null,
+      exclusionNotes: input.exclusionNotes?.trim() || null,
+      createdAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.warranties, emptyWarranties)
+    all.unshift(row)
+    write(KEYS.warranties, all)
+    return row
+  },
+
+  listWarrantyAssessments(repairCaseId: string): WarrantyAssessment[] {
+    return read(KEYS.warrantyAssessments, emptyWarrantyAssessments)
+      .filter((a) => a.repairCaseId === repairCaseId)
+      .sort((a, b) => b.assessedAt.localeCompare(a.assessedAt))
+  },
+
+  createWarrantyAssessment(
+    actor: { id: string; name: string },
+    input: {
+      repairCaseId: string
+      warrantyId?: string | null
+      classification: WarrantyAssessmentClassification
+      rationale: string
+    },
+  ): WarrantyAssessment {
+    if (!this.getRepairCase(input.repairCaseId)) throw new Error('找不到維修案件')
+    const warranty = input.warrantyId
+      ? this.listWarranties().find((w) => w.id === input.warrantyId)
+      : null
+    // Explicitly refuse calendar auto-free (REP-04)
+    if (
+      isAutoFreeByWarrantyDates({
+        now: new Date().toISOString(),
+        warrantyStart: warranty?.startsOn,
+        warrantyEnd: warranty?.endsOn,
+      })
+    ) {
+      throw new Error('不可依保固日期自動免費')
+    }
+    const rationale = assertWarrantyAssessmentRationale(input.rationale)
+    const now = new Date().toISOString()
+    const row: WarrantyAssessment = {
+      id: `wa-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      repairCaseId: input.repairCaseId,
+      warrantyId: input.warrantyId || null,
+      classification: input.classification,
+      rationale,
+      assessedAt: now,
+      assessedBy: actor.id,
+      assessedByName: actor.name,
+    }
+    const all = read(KEYS.warrantyAssessments, emptyWarrantyAssessments)
+    all.unshift(row)
+    write(KEYS.warrantyAssessments, all)
     return row
   },
 

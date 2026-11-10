@@ -169,6 +169,40 @@ export interface RepairVisit {
   attendanceCreated: false
 }
 
+/** WAR-001 warranty master (period/scope — not auto-free). */
+export interface Warranty {
+  id: string
+  organizationId: string
+  title: string
+  siteId?: string | null
+  repairCaseId?: string | null
+  startsOn?: string | null
+  endsOn?: string | null
+  scopeNotes?: string | null
+  exclusionNotes?: string | null
+  createdAt: string
+  createdBy: string
+}
+
+export type WarrantyAssessmentClassification =
+  | 'covered'
+  | 'partial'
+  | 'excluded'
+  | 'out_of_period'
+  | 'not_warranty'
+
+export interface WarrantyAssessment {
+  id: string
+  organizationId: string
+  repairCaseId: string
+  warrantyId?: string | null
+  classification: WarrantyAssessmentClassification
+  rationale: string
+  assessedAt: string
+  assessedBy: string
+  assessedByName: string
+}
+
 /** CRM-001: customer master — name is the only required field. */
 export interface Customer {
   id: string
