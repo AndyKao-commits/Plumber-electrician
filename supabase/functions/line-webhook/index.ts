@@ -621,7 +621,8 @@ async function buildTodosMessages(admin: Sb, profile: Profile): Promise<LineMess
   const todos = data ?? []
   if (todos.length === 0) return [textMsg('目前沒有待辦事項')]
 
-  const bubbles = todos.map((t) => todoBubble(t))
+  const appBase = appBaseUrl()
+  const bubbles = todos.map((t) => todoBubble(t, appBase))
   return [
     {
       type: 'flex',
@@ -634,13 +635,31 @@ async function buildTodosMessages(admin: Sb, profile: Profile): Promise<LineMess
   ]
 }
 
-function todoBubble(t: {
-  id: string
-  title: string
-  detail: string | null
-  href: string | null
-  created_at: string
-}): Record<string, unknown> {
+function appBaseUrl(): string {
+  const fromEnv = (Deno.env.get('APP_BASE_URL') ?? '').trim().replace(/\/$/, '')
+  return fromEnv || 'https://plumber-electrician-seven.vercel.app'
+}
+
+function todoViewUri(
+  href: string | null | undefined,
+  appBase: string,
+): string {
+  const raw = (href || '/todos').trim()
+  if (/^https?:\/\//i.test(raw)) return raw
+  const path = raw.startsWith('/') ? raw : `/${raw}`
+  return `${appBase}${path}`
+}
+
+function todoBubble(
+  t: {
+    id: string
+    title: string
+    detail: string | null
+    href: string | null
+    created_at: string
+  },
+  appBase: string,
+): Record<string, unknown> {
   const detail = (t.detail || '').slice(0, 120) || '（無說明）'
   return {
     type: 'bubble',
@@ -680,10 +699,9 @@ function todoBubble(t: {
           type: 'button',
           style: 'secondary',
           action: {
-            type: 'postback',
+            type: 'uri',
             label: '查看',
-            data: `a=todo_view&id=${t.id}`,
-            displayText: '查看待辦',
+            uri: todoViewUri(t.href, appBase),
           },
         },
       ],
