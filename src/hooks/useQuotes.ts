@@ -26,6 +26,8 @@ export const quoteKeys = {
       : (['change-orders'] as const),
   changeOrderItems: (changeOrderId: string) =>
     ['change-order-items', changeOrderId] as const,
+  billing: (quoteId: string) => ['billing', quoteId] as const,
+  billingAll: ['billing'] as const,
 }
 
 export function useQuotes(userId: string | undefined) {
@@ -71,6 +73,20 @@ export function useQuotes(userId: string | undefined) {
           : localDb.listChangeOrders()
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入追加減'))
+      }
+    },
+  })
+
+  const billingQuery = useQuery({
+    queryKey: quoteKeys.billingAll,
+    enabled: Boolean(userId),
+    queryFn: async () => {
+      try {
+        return formal
+          ? await supabaseRepos.listBillingDocuments()
+          : localDb.listBillingDocuments()
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入請款單'))
       }
     },
   })
@@ -121,6 +137,7 @@ export function useQuotes(userId: string | undefined) {
   return {
     quotes: listQuery.data ?? [],
     changeOrders: changeOrdersQuery.data ?? [],
+    billingDocuments: billingQuery.data ?? [],
     isLoading: listQuery.isLoading,
     repairCases: repairsQuery.data ?? [],
     createQuote: createMutation.mutateAsync,
@@ -201,6 +218,36 @@ export function useQuoteDetail(quoteId: string | undefined) {
     },
   })
 
+  const milestonesQuery = useQuery({
+    queryKey: quoteId ? [...quoteKeys.billing(quoteId), 'milestones'] : ['billing-ms', 'none'],
+    enabled: Boolean(quoteId),
+    queryFn: async () => {
+      if (!quoteId) return []
+      try {
+        return formal
+          ? await supabaseRepos.listBillingMilestones(quoteId)
+          : localDb.listBillingMilestones(quoteId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入請款節點'))
+      }
+    },
+  })
+
+  const billingDocsQuery = useQuery({
+    queryKey: quoteId ? quoteKeys.billing(quoteId) : ['billing-docs', 'none'],
+    enabled: Boolean(quoteId),
+    queryFn: async () => {
+      if (!quoteId) return []
+      try {
+        return formal
+          ? await supabaseRepos.listBillingDocuments(quoteId)
+          : localDb.listBillingDocuments(quoteId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入請款單'))
+      }
+    },
+  })
+
   function invalidateAll() {
     if (!quoteId) return
     void queryClient.invalidateQueries({ queryKey: quoteKeys.all })
@@ -215,6 +262,8 @@ export function useQuoteDetail(quoteId: string | undefined) {
     void queryClient.invalidateQueries({
       queryKey: quoteKeys.changeOrders(),
     })
+    void queryClient.invalidateQueries({ queryKey: quoteKeys.billing(quoteId) })
+    void queryClient.invalidateQueries({ queryKey: quoteKeys.billingAll })
   }
 
   const updateMeta = useMutation({
@@ -453,11 +502,65 @@ export function useQuoteDetail(quoteId: string | undefined) {
     }
   }
 
+  const createBillingMilestone = useMutation({
+    mutationFn: async (input: {
+      code: string
+      title: string
+      plannedAmount: number
+    }) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.createBillingMilestone(user, {
+            quotationId: quoteId,
+            ...input,
+          })
+        : localDb.createBillingMilestone(
+            { id: user.id, role: user.role },
+            { quotationId: quoteId, ...input },
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const createBillingDocument = useMutation({
+    mutationFn: async (input: { milestoneId: string; title?: string }) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.createBillingDocument(user, {
+            quotationId: quoteId,
+            ...input,
+          })
+        : localDb.createBillingDocument(
+            { id: user.id, role: user.role },
+            { quotationId: quoteId, ...input },
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const issueBillingDocument = useMutation({
+    mutationFn: async (documentId: string) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.issueBillingDocument(user, documentId)
+        : localDb.issueBillingDocument(
+            { id: user.id, role: user.role },
+            documentId,
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
   return {
     quote: quoteQuery.data ?? null,
     items: itemsQuery.data ?? [],
     versions: versionsQuery.data ?? [],
     changeOrders: changeOrdersQuery.data ?? [],
+    billingMilestones: milestonesQuery.data ?? [],
+    billingDocuments: billingDocsQuery.data ?? [],
     isLoading: quoteQuery.isLoading || itemsQuery.isLoading,
     error: quoteQuery.error || itemsQuery.error,
     updateMeta: updateMeta.mutateAsync,
@@ -474,6 +577,9 @@ export function useQuoteDetail(quoteId: string | undefined) {
     removeChangeOrderItem: removeChangeOrderItem.mutateAsync,
     setChangeOrderStatus: setChangeOrderStatus.mutateAsync,
     listChangeOrderItems,
+    createBillingMilestone: createBillingMilestone.mutateAsync,
+    createBillingDocument: createBillingDocument.mutateAsync,
+    issueBillingDocument: issueBillingDocument.mutateAsync,
     saving:
       updateMeta.isPending ||
       addItem.isPending ||
@@ -487,6 +593,9 @@ export function useQuoteDetail(quoteId: string | undefined) {
       createChangeOrder.isPending ||
       addChangeOrderItem.isPending ||
       removeChangeOrderItem.isPending ||
-      setChangeOrderStatus.isPending,
+      setChangeOrderStatus.isPending ||
+      createBillingMilestone.isPending ||
+      createBillingDocument.isPending ||
+      issueBillingDocument.isPending,
   }
 }

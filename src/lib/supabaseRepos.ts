@@ -22,9 +22,19 @@ import {
   requiresPreApproval,
 } from '@/domain/rules'
 import {
+  assertBillingDocumentEditable,
+  assertCanManageBilling,
+  assertIssueDoesNotExceedContract,
+  buildBillingSnapshot,
+  calcBillingTotals,
+  canCreateBillingForQuote,
+  sumIssuedBillingAmount,
+} from '@/domain/billing'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   canCreateChangeOrder,
+  effectiveContractAmountWithChangeOrders,
 } from '@/domain/changeOrders'
 import {
   assertCanSoftDeleteQuoteCase,
@@ -39,6 +49,10 @@ import type {
   AppNotice,
   AppUser,
   AttendanceRecord,
+  BillingDocument,
+  BillingDocumentItem,
+  BillingDocumentSnapshot,
+  BillingMilestone,
   ChangeOrder,
   ChangeOrderItem,
   ChangeOrderKind,
@@ -156,6 +170,69 @@ function mapChangeOrderItemRow(row: Record<string, unknown>): ChangeOrderItem {
     amount: Number(row.amount),
     createdAt: String(row.created_at),
     updatedAt: row.updated_at ? String(row.updated_at) : undefined,
+  }
+}
+
+const BILLING_MILESTONE_SELECT =
+  'id, organization_id, quotation_id, code, title, sequence, planned_amount, status, created_at, updated_at, created_by'
+
+const BILLING_DOC_SELECT =
+  'id, organization_id, quotation_id, milestone_id, document_number, title, status, tax_mode, tax_rate, amount_before_tax, tax_amount, amount_after_tax, notes, snapshot, issued_at, issued_by, created_at, updated_at, created_by'
+
+function mapBillingMilestoneRow(row: Record<string, unknown>): BillingMilestone {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    quotationId: String(row.quotation_id),
+    code: String(row.code),
+    title: String(row.title),
+    sequence: Number(row.sequence),
+    plannedAmount: Number(row.planned_amount),
+    status: row.status as BillingMilestone['status'],
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at || row.created_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapBillingDocumentRow(row: Record<string, unknown>): BillingDocument {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    quotationId: String(row.quotation_id),
+    milestoneId: String(row.milestone_id),
+    documentNumber: String(row.document_number),
+    title: String(row.title),
+    status: row.status as BillingDocument['status'],
+    taxMode: row.tax_mode as TaxMode,
+    taxRate: Number(row.tax_rate),
+    amountBeforeTax: Number(row.amount_before_tax),
+    taxAmount: Number(row.tax_amount),
+    amountAfterTax: Number(row.amount_after_tax),
+    notes: (row.notes as string | null) ?? null,
+    snapshot: (row.snapshot as BillingDocumentSnapshot | null) ?? null,
+    issuedAt: (row.issued_at as string | null) ?? null,
+    issuedBy: (row.issued_by as string | null) ?? null,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at || row.created_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapBillingDocumentItemRow(
+  row: Record<string, unknown>,
+): BillingDocumentItem {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    billingDocumentId: String(row.billing_document_id),
+    lineNo: Number(row.line_no),
+    description: String(row.description),
+    qty: Number(row.qty),
+    unit: String(row.unit),
+    unitPrice: Number(row.unit_price),
+    amount: Number(row.amount),
+    createdAt: String(row.created_at),
   }
 }
 
@@ -1376,6 +1453,279 @@ export const supabaseRepos = {
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法更新追加減狀態'))
     return mapChangeOrderRow(data as Record<string, unknown>)
+  },
+
+  async listBillingMilestones(quotationId: string): Promise<BillingMilestone[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('billing_milestones')
+      .select(BILLING_MILESTONE_SELECT)
+      .eq('quotation_id', qid)
+      .order('sequence', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入請款節點'))
+    return (data ?? []).map((row) =>
+      mapBillingMilestoneRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listBillingDocuments(quotationId?: string): Promise<BillingDocument[]> {
+    let q = sb()
+      .from('billing_documents')
+      .select(BILLING_DOC_SELECT)
+      .order('updated_at', { ascending: false })
+    if (quotationId) {
+      q = q.eq('quotation_id', requireUuid(quotationId, '報價'))
+    }
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入請款單'))
+    return (data ?? []).map((row) =>
+      mapBillingDocumentRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listBillingDocumentItems(
+    documentId: string,
+  ): Promise<BillingDocumentItem[]> {
+    const did = requireUuid(documentId, '請款單')
+    const { data, error } = await sb()
+      .from('billing_document_items')
+      .select(
+        'id, organization_id, billing_document_id, line_no, description, qty, unit, unit_price, amount, created_at',
+      )
+      .eq('billing_document_id', did)
+      .order('line_no', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入請款細項'))
+    return (data ?? []).map((row) =>
+      mapBillingDocumentItemRow(row as Record<string, unknown>),
+    )
+  },
+
+  async createBillingMilestone(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      code: string
+      title: string
+      plannedAmount: number
+      sequence?: number
+    },
+  ): Promise<BillingMilestone> {
+    assertCanManageBilling(actor.role)
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canCreateBillingForQuote(quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const existing = await this.listBillingMilestones(quote.id)
+    const code = input.code.trim().toUpperCase()
+    if (!code) throw new AppError('請款節點代碼不可空白')
+    if (existing.some((m) => m.code === code)) {
+      throw new AppError('同一報價不可重複請款節點代碼')
+    }
+    const { data, error } = await sb()
+      .from('billing_milestones')
+      .insert({
+        quotation_id: quote.id,
+        code,
+        title: input.title.trim() || code,
+        sequence: input.sequence ?? existing.length + 1,
+        planned_amount: Math.max(0, Number(input.plannedAmount) || 0),
+        status: 'planned',
+        created_by: actor.id,
+      })
+      .select(BILLING_MILESTONE_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立請款節點'))
+    return mapBillingMilestoneRow(data as Record<string, unknown>)
+  },
+
+  async createBillingDocument(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      milestoneId: string
+      title?: string
+      notes?: string
+    },
+  ): Promise<BillingDocument> {
+    assertCanManageBilling(actor.role)
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canCreateBillingForQuote(quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const milestones = await this.listBillingMilestones(quote.id)
+    const milestone = milestones.find((m) => m.id === input.milestoneId)
+    if (!milestone) throw new AppError('找不到請款節點')
+    if (milestone.status === 'cancelled') {
+      throw new AppError('已取消的請款節點不可開立請款')
+    }
+    const docs = await this.listBillingDocuments(quote.id)
+    if (docs.some((d) => d.milestoneId === milestone.id && d.status === 'issued')) {
+      throw new AppError('此請款節點已有正式請款單，不得重複開立')
+    }
+    const documentNumber = `BILL-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+    const { data, error } = await sb()
+      .from('billing_documents')
+      .insert({
+        quotation_id: quote.id,
+        milestone_id: milestone.id,
+        document_number: documentNumber,
+        title: (input.title || milestone.title).trim(),
+        status: 'draft',
+        tax_mode: quote.taxMode,
+        tax_rate: quote.taxRate,
+        notes: input.notes ?? null,
+        created_by: actor.id,
+      })
+      .select(BILLING_DOC_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立請款單'))
+    const doc = mapBillingDocumentRow(data as Record<string, unknown>)
+    if (milestone.plannedAmount > 0) {
+      await this.addBillingDocumentItem(actor, {
+        billingDocumentId: doc.id,
+        description: milestone.title,
+        qty: 1,
+        unit: '式',
+        unitPrice: milestone.plannedAmount,
+      })
+      const refreshed = await this.listBillingDocuments(quote.id)
+      return refreshed.find((d) => d.id === doc.id) ?? doc
+    }
+    return doc
+  },
+
+  async addBillingDocumentItem(
+    actor: AppUser,
+    input: {
+      billingDocumentId: string
+      description: string
+      qty: number
+      unit?: string
+      unitPrice: number
+    },
+  ): Promise<BillingDocumentItem> {
+    assertCanManageBilling(actor.role)
+    const did = requireUuid(input.billingDocumentId, '請款單')
+    const { data: docRow, error: loadError } = await sb()
+      .from('billing_documents')
+      .select(BILLING_DOC_SELECT)
+      .eq('id', did)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取請款單'))
+    if (!docRow) throw new AppError('找不到請款單')
+    const doc = mapBillingDocumentRow(docRow as Record<string, unknown>)
+    assertSameOrganization(actor.organizationId, doc.organizationId)
+    assertBillingDocumentEditable({ status: doc.status })
+    const existing = await this.listBillingDocumentItems(doc.id)
+    const amount = calcQuoteItemAmount({
+      qty: input.qty,
+      unitPrice: input.unitPrice,
+    })
+    const { data, error } = await sb()
+      .from('billing_document_items')
+      .insert({
+        billing_document_id: doc.id,
+        line_no: existing.length + 1,
+        description: input.description.trim(),
+        qty: input.qty,
+        unit: input.unit || '式',
+        unit_price: input.unitPrice,
+        amount,
+      })
+      .select(
+        'id, organization_id, billing_document_id, line_no, description, qty, unit, unit_price, amount, created_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法新增請款細項'))
+    const mapped = mapBillingDocumentItemRow(data as Record<string, unknown>)
+    const totals = calcBillingTotals({
+      items: [...existing, mapped],
+      taxMode: doc.taxMode,
+      taxRate: doc.taxRate,
+    })
+    await sb()
+      .from('billing_documents')
+      .update({
+        amount_before_tax: totals.amountBeforeTax,
+        tax_amount: totals.taxAmount,
+        amount_after_tax: totals.amountAfterTax,
+        tax_rate: totals.taxRate,
+      })
+      .eq('id', doc.id)
+      .eq('status', 'draft')
+    return mapped
+  },
+
+  async issueBillingDocument(
+    actor: AppUser,
+    documentId: string,
+  ): Promise<BillingDocument> {
+    assertCanManageBilling(actor.role)
+    const did = requireUuid(documentId, '請款單')
+    const { data: docRow, error: loadError } = await sb()
+      .from('billing_documents')
+      .select(BILLING_DOC_SELECT)
+      .eq('id', did)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取請款單'))
+    if (!docRow) throw new AppError('找不到請款單')
+    const doc = mapBillingDocumentRow(docRow as Record<string, unknown>)
+    assertSameOrganization(actor.organizationId, doc.organizationId)
+    assertBillingDocumentEditable({ status: doc.status })
+    const items = await this.listBillingDocumentItems(doc.id)
+    if (items.length === 0) throw new AppError('請先新增請款細項再開立')
+    const quote = await this.getQuotation(doc.quotationId)
+    const changeOrders = await this.listChangeOrders(quote.id)
+    const contract = effectiveContractAmountWithChangeOrders({
+      quotes: [quote],
+      changeOrders,
+    })
+    const allDocs = await this.listBillingDocuments(quote.id)
+    const alreadyIssued = sumIssuedBillingAmount(allDocs)
+    assertIssueDoesNotExceedContract({
+      contract,
+      alreadyIssued,
+      issuingAmount: doc.amountAfterTax,
+    })
+    if (
+      allDocs.some(
+        (d) =>
+          d.milestoneId === doc.milestoneId &&
+          d.status === 'issued' &&
+          d.id !== doc.id,
+      )
+    ) {
+      throw new AppError('此請款節點已有正式請款單，不得重複開立')
+    }
+    const milestones = await this.listBillingMilestones(quote.id)
+    const milestone = milestones.find((m) => m.id === doc.milestoneId)
+    if (!milestone) throw new AppError('找不到請款節點')
+    const now = new Date().toISOString()
+    const snapshot = buildBillingSnapshot({
+      document: doc,
+      milestone,
+      quote,
+      items,
+      issuedAt: now,
+    })
+    const { data, error } = await sb()
+      .from('billing_documents')
+      .update({
+        status: 'issued',
+        snapshot,
+        issued_at: now,
+        issued_by: actor.id,
+      })
+      .eq('id', doc.id)
+      .eq('status', 'draft')
+      .select(BILLING_DOC_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '開立請款單失敗'))
+    await sb()
+      .from('billing_milestones')
+      .update({ status: 'billed' })
+      .eq('id', milestone.id)
+    return mapBillingDocumentRow(data as Record<string, unknown>)
   },
 
   async listQuotationItems(quotationId: string): Promise<QuotationItem[]> {

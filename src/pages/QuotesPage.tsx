@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { hasPermission, PERMISSIONS } from '@/domain/permissions'
+import { sumIssuedBillingAmount } from '@/domain/billing'
 import { effectiveContractAmountWithChangeOrders } from '@/domain/changeOrders'
 import {
   CUSTOMER_ACCEPT_LABELS,
@@ -19,6 +20,7 @@ export function QuotesPage() {
   const {
     quotes,
     changeOrders,
+    billingDocuments,
     isLoading,
     repairCases,
     createQuote,
@@ -44,6 +46,10 @@ export function QuotesPage() {
         changeOrders,
       }),
     [quotes, changeOrders],
+  )
+  const billedTotal = useMemo(
+    () => sumIssuedBillingAmount(billingDocuments),
+    [billingDocuments],
   )
 
   const [showCreate, setShowCreate] = useState(false)
@@ -112,6 +118,9 @@ export function QuotesPage() {
         <div className="site-link">
           <p>有效合約金額（已接受報價 ± 已接受追加減）</p>
           <h3>NT${contractTotal.toLocaleString()}</h3>
+          <p className="muted" style={{ margin: '6px 0 0' }}>
+            已開立請款 NT${billedTotal.toLocaleString()}（≠ 收款）
+          </p>
         </div>
         {canCreate ? (
           <button
