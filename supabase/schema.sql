@@ -121,12 +121,9 @@ create table if not exists public.notices (
   created_at timestamptz not null default now()
 );
 
-create index if not exists attendance_user_status_idx
-  on public.attendance (user_id, status);
-create index if not exists sites_org_updated_idx
-  on public.sites (organization_id, updated_at desc);
-create index if not exists purchases_user_business_date_idx
-  on public.purchases (user_id, business_date, mode);
+create index if not exists attendance_user_status_idx on public.attendance (user_id, status);
+create index if not exists sites_org_updated_idx on public.sites (organization_id, updated_at desc);
+create index if not exists purchases_user_business_date_idx on public.purchases (user_id, business_date, mode);
 
 alter table public.profiles enable row level security;
 alter table public.sites enable row level security;
@@ -136,8 +133,7 @@ alter table public.notices enable row level security;
 
 -- Equal project access within organization; sensitive payroll still restricted.
 drop policy if exists "profiles_read_same_org" on public.profiles;
-create policy "profiles_read_same_org"
-  on public.profiles for select to authenticated
+create policy "profiles_read_same_org" on public.profiles for select to authenticated
   using (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
@@ -145,14 +141,12 @@ create policy "profiles_read_same_org"
   );
 
 drop policy if exists "profiles_update_own" on public.profiles;
-create policy "profiles_update_own"
-  on public.profiles for update to authenticated
+create policy "profiles_update_own" on public.profiles for update to authenticated
   using (id = auth.uid())
   with check (id = auth.uid());
 
 drop policy if exists "sites_org_all" on public.sites;
-create policy "sites_org_all"
-  on public.sites for all to authenticated
+create policy "sites_org_all" on public.sites for all to authenticated
   using (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
@@ -165,8 +159,7 @@ create policy "sites_org_all"
   );
 
 drop policy if exists "attendance_read_presence_or_own" on public.attendance;
-create policy "attendance_read_presence_or_own"
-  on public.attendance for select to authenticated
+create policy "attendance_read_presence_or_own" on public.attendance for select to authenticated
   using (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
@@ -174,19 +167,16 @@ create policy "attendance_read_presence_or_own"
   );
 
 drop policy if exists "attendance_write_own" on public.attendance;
-create policy "attendance_write_own"
-  on public.attendance for insert to authenticated
+create policy "attendance_write_own" on public.attendance for insert to authenticated
   with check (user_id = auth.uid());
 
 drop policy if exists "attendance_update_own" on public.attendance;
-create policy "attendance_update_own"
-  on public.attendance for update to authenticated
+create policy "attendance_update_own" on public.attendance for update to authenticated
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
 
 drop policy if exists "purchases_org_read" on public.purchases;
-create policy "purchases_org_read"
-  on public.purchases for select to authenticated
+create policy "purchases_org_read" on public.purchases for select to authenticated
   using (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
@@ -194,13 +184,11 @@ create policy "purchases_org_read"
   );
 
 drop policy if exists "purchases_insert_own" on public.purchases;
-create policy "purchases_insert_own"
-  on public.purchases for insert to authenticated
+create policy "purchases_insert_own" on public.purchases for insert to authenticated
   with check (user_id = auth.uid());
 
 drop policy if exists "notices_own" on public.notices;
-create policy "notices_own"
-  on public.notices for all to authenticated
+create policy "notices_own" on public.notices for all to authenticated
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
 
@@ -231,8 +219,7 @@ create table if not exists public.repair_cases (
 
 alter table public.repair_cases enable row level security;
 drop policy if exists "repair_cases_org_all" on public.repair_cases;
-create policy "repair_cases_org_all"
-  on public.repair_cases for all to authenticated
+create policy "repair_cases_org_all" on public.repair_cases for all to authenticated
   using (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
@@ -268,8 +255,7 @@ create table if not exists public.quotations (
 
 alter table public.quotations enable row level security;
 drop policy if exists "quotations_org_all" on public.quotations;
-create policy "quotations_org_all"
-  on public.quotations for all to authenticated
+create policy "quotations_org_all" on public.quotations for all to authenticated
   using (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
@@ -295,21 +281,18 @@ create table if not exists public.emergency_limit_events (
   created_by uuid not null references public.profiles (id)
 );
 
-create index if not exists emergency_limit_events_day_idx
-  on public.emergency_limit_events (organization_id, employee_id, business_date);
+create index if not exists emergency_limit_events_day_idx on public.emergency_limit_events (organization_id, employee_id, business_date);
 
 alter table public.emergency_limit_events enable row level security;
 drop policy if exists "emergency_limit_events_org_read" on public.emergency_limit_events;
-create policy "emergency_limit_events_org_read"
-  on public.emergency_limit_events for select to authenticated
+create policy "emergency_limit_events_org_read" on public.emergency_limit_events for select to authenticated
   using (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
     )
   );
 drop policy if exists "emergency_limit_events_insert_own_or_boss" on public.emergency_limit_events;
-create policy "emergency_limit_events_insert_own_or_boss"
-  on public.emergency_limit_events for insert to authenticated
+create policy "emergency_limit_events_insert_own_or_boss" on public.emergency_limit_events for insert to authenticated
   with check (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
@@ -366,8 +349,7 @@ alter table public.petty_cash_disbursements enable row level security;
 alter table public.petty_cash_ledger_entries enable row level security;
 
 drop policy if exists "petty_cash_accounts_org" on public.petty_cash_accounts;
-create policy "petty_cash_accounts_org"
-  on public.petty_cash_accounts for all to authenticated
+create policy "petty_cash_accounts_org" on public.petty_cash_accounts for all to authenticated
   using (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
@@ -380,8 +362,7 @@ create policy "petty_cash_accounts_org"
   );
 
 drop policy if exists "petty_cash_top_ups_org" on public.petty_cash_top_up_requests;
-create policy "petty_cash_top_ups_org"
-  on public.petty_cash_top_up_requests for all to authenticated
+create policy "petty_cash_top_ups_org" on public.petty_cash_top_up_requests for all to authenticated
   using (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
@@ -394,8 +375,7 @@ create policy "petty_cash_top_ups_org"
   );
 
 drop policy if exists "petty_cash_disbursements_org" on public.petty_cash_disbursements;
-create policy "petty_cash_disbursements_org"
-  on public.petty_cash_disbursements for all to authenticated
+create policy "petty_cash_disbursements_org" on public.petty_cash_disbursements for all to authenticated
   using (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
@@ -408,8 +388,7 @@ create policy "petty_cash_disbursements_org"
   );
 
 drop policy if exists "petty_cash_ledger_org" on public.petty_cash_ledger_entries;
-create policy "petty_cash_ledger_org"
-  on public.petty_cash_ledger_entries for all to authenticated
+create policy "petty_cash_ledger_org" on public.petty_cash_ledger_entries for all to authenticated
   using (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
@@ -433,8 +412,7 @@ create table if not exists public.materials (
 
 alter table public.materials enable row level security;
 drop policy if exists "materials_org_all" on public.materials;
-create policy "materials_org_all"
-  on public.materials for all to authenticated
+create policy "materials_org_all" on public.materials for all to authenticated
   using (
     organization_id in (
       select p.organization_id from public.profiles p where p.id = auth.uid()
