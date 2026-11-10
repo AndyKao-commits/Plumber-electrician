@@ -26,16 +26,23 @@ export function ReportsPage() {
     [photos],
   )
 
+  const [queuedHint, setQueuedHint] = useState('')
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
     if (!siteId) return
-    await createReport({
+    const result = await createReport({
       siteId,
       body,
       photoUploadId: photoId || null,
     })
     setBody('')
     setPhotoId('')
+    if (result && 'queued' in result && result.queued) {
+      setQueuedHint('已加入離線佇列，恢復網路後自動同步')
+    } else {
+      setQueuedHint('')
+    }
   }
 
   if (!isFormalMode) {
@@ -111,6 +118,11 @@ export function ReportsPage() {
           </div>
           {createError ? (
             <p style={{ color: 'var(--danger)', margin: 0 }}>{createError.message}</p>
+          ) : null}
+          {queuedHint ? (
+            <p className="muted" style={{ margin: 0 }}>
+              {queuedHint}
+            </p>
           ) : null}
           <button className="btn btn-steel" type="submit" disabled={isCreating || !siteId}>
             {isCreating ? '送出中…' : '送出回報'}

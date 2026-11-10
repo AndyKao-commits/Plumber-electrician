@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { assertOnlineForOp } from '@/domain/offlineOps'
 import type { TaxMode } from '@/domain/types'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
+import { isBrowserOnline } from '@/lib/offlineQueue'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { useUser } from '@/hooks/useUser'
 
@@ -52,6 +54,7 @@ export function useQuotes(userId: string | undefined) {
       amountBeforeTax: number
     }) => {
       if (!userId || !user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_create', isBrowserOnline())
       try {
         return formal
           ? await supabaseRepos.createQuotation(user, input)
@@ -68,6 +71,7 @@ export function useQuotes(userId: string | undefined) {
   const publishMutation = useMutation({
     mutationFn: async (quoteId: string) => {
       if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
       try {
         return formal
           ? await supabaseRepos.publishQuotation(user, quoteId)

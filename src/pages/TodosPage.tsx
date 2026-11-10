@@ -6,6 +6,8 @@ import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
+import { enqueueOfflineOp, isBrowserOnline } from '@/lib/offlineQueue'
+import { notifyOfflineQueueChanged } from '@/lib/offlineSync'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 
 export function TodosPage() {
@@ -23,11 +25,25 @@ export function TodosPage() {
     mutationFn: async () => {
       if (!formal) throw new Error('本機示範模式請用系統產生的待辦')
       const href = siteId ? `/sites/${siteId}` : null
+      const detailText =
+        detail ||
+        (siteId
+          ? `工地：${sites.find((s) => s.id === siteId)?.name || ''}`
+          : '')
+      if (!isBrowserOnline()) {
+        enqueueOfflineOp({
+          operationType: 'manual_todo',
+          payload: { title, detail: detailText, href },
+        })
+        notifyOfflineQueueChanged()
+        return { queued: true as const }
+      }
       await supabaseRepos.createManualTodo({
         title,
-        detail: detail || (siteId ? `工地：${sites.find((s) => s.id === siteId)?.name || ''}` : ''),
+        detail: detailText,
         href,
       })
+      return { queued: false as const }
     },
     onSuccess: () => {
       if (!user) return

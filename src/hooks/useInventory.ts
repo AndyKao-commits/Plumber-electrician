@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { assertOnlineForOp } from '@/domain/offlineOps'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
+import { isBrowserOnline } from '@/lib/offlineQueue'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { useUser } from '@/hooks/useUser'
 
@@ -35,6 +37,7 @@ export function useInventory(userId: string | undefined) {
       unitCost: number
     }) => {
       if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('inventory_inbound', isBrowserOnline())
       try {
         return formal
           ? await supabaseRepos.inboundMaterial(user, input)
