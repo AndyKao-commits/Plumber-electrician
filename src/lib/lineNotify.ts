@@ -10,7 +10,8 @@ export type LineNotifyEvent =
   | 'notice.created'
 
 /**
- * Best-effort LINE + in-app fan-out.
+ * Best-effort in-app fan-out only (DEC-007 reply-only).
+ * Does NOT enqueue LINE push or invoke line-push — OA replies only when the user messages.
  * NEVER throws — callers must not await-fail the main transaction on notify errors.
  */
 export async function safeNotify(input: {
@@ -40,37 +41,7 @@ export async function safeNotify(input: {
         console.warn('[notify] in-app notice failed', noticeError.message)
       }
     }
-
-    const { error: outboxError } = await supabase.rpc('enqueue_line_notifications', {
-      p_recipient_ids: recipients,
-      p_event_type: input.eventType,
-      p_title: input.title,
-      p_body: input.detail ?? '',
-      p_href: input.href ?? null,
-      p_payload: { eventType: input.eventType },
-    })
-    if (outboxError) {
-      console.warn('[notify] LINE outbox enqueue failed', outboxError.message)
-      return
-    }
-
-    // Fire-and-forget Edge Function; missing deploy/token must not break UX
-    void supabase.functions
-      .invoke('line-push', {
-        body: {
-          eventType: input.eventType,
-          title: input.title,
-          body: input.detail ?? '',
-          href: input.href,
-          recipientIds: recipients,
-        },
-      })
-      .then(({ error }) => {
-        if (error) console.warn('[notify] LINE push invoke failed', error.message)
-      })
-      .catch((err: unknown) => {
-        console.warn('[notify] LINE push invoke threw', err)
-      })
+    // LINE: reply-only via webhook. No proactive push / outbox enqueue.
   } catch (err) {
     console.warn('[notify] safeNotify swallowed error', err)
   }

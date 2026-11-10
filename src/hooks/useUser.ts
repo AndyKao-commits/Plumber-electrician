@@ -82,6 +82,13 @@ export function useUser() {
     onSuccess: (user) => queryClient.setQueryData(userKeys.me(), user),
   })
 
+  const createLineBindCodeMutation = useMutation({
+    mutationFn: async () => {
+      if (!formal) throw new Error('本機示範模式不支援 LINE 綁定碼')
+      return supabaseRepos.createLineBindCode()
+    },
+  })
+
   return {
     user: userQuery.data ?? null,
     isLoading: userQuery.isLoading,
@@ -106,6 +113,11 @@ export function useUser() {
     isBindingLine: bindLineMutation.isPending,
     bindLineError: bindLineMutation.error
       ? new Error(toUserMessage(bindLineMutation.error))
+      : null,
+    createLineBindCode: createLineBindCodeMutation.mutateAsync,
+    isCreatingLineBindCode: createLineBindCodeMutation.isPending,
+    createLineBindCodeError: createLineBindCodeMutation.error
+      ? new Error(toUserMessage(createLineBindCodeMutation.error))
       : null,
     isDemoMode: !formal,
     isFormalMode: formal,
