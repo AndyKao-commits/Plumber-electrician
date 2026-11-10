@@ -30,7 +30,10 @@ export function LoginPage() {
   const [formError, setFormError] = useState<string | null>(null)
 
   if (!isLoading && user) {
-    return <Navigate to="/" replace />
+    const pendingLineBind =
+      typeof sessionStorage !== 'undefined' &&
+      Boolean(sessionStorage.getItem('line_bind_pending_user_id'))
+    return <Navigate to={pendingLineBind ? '/line-bind-callback' : '/'} replace />
   }
 
   async function onPasswordLogin(event: FormEvent) {

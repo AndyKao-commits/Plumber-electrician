@@ -7,6 +7,7 @@ import { queryClient } from '@/lib/queryClient'
 import { AttendancePage } from '@/pages/AttendancePage'
 import { HomePage } from '@/pages/HomePage'
 import { InventoryPage } from '@/pages/InventoryPage'
+import { LineBindCallbackPage } from '@/pages/LineBindCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { NotificationsPage } from '@/pages/NotificationsPage'
 import { PurchasesPage } from '@/pages/PurchasesPage'
@@ -26,6 +27,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/line-bind-callback" element={<LineBindCallbackPage />} />
           <Route element={<AppShell />}>
             <Route path="/" element={<Protected><HomePage /></Protected>} />
             <Route path="/sites" element={<Protected><SitesPage /></Protected>} />
