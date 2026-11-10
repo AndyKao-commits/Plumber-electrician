@@ -94,6 +94,18 @@ SQL：`20261110_line_bind_code_fix_random.sql`
 3. 圖文選單「上傳照片」建議改為**文字訊息**：`上傳照片`（不要用網址）；或直接在聊天室傳圖
 4. App 路徑：`/photos` 指定工地
 
+## 4d. 施工回報與工地串接
+
+1. SQL：`supabase/migrations/20261110_construction_reports.sql`
+2. App：`/reports` 施工回報；工地詳情頁顯示照片／採購／報價／回報
+3. 圖文選單建議：
+   - 我的工地 → `/sites`
+   - 上傳照片 → 文字「上傳照片」或 `/photos`
+   - 出勤打卡 → `/attendance`
+   - 採購申請 → `/purchases`
+   - 報價管理 → `/quotes`
+   - 待辦／施工回報 → `/reports` 或 `/todos`
+
 ## 5. 驗證
 
 - Production：登入頁顯示「Supabase 正式模式」

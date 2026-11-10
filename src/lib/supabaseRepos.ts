@@ -26,6 +26,7 @@ import type {
   MaterialStock,
   PurchaseMode,
   PurchaseRecord,
+  ConstructionReport,
   PhotoUpload,
   Quotation,
   RepairCase,
@@ -1176,5 +1177,204 @@ export const supabaseRepos = {
       .update({ status: 'discarded' })
       .eq('id', requireUuid(photoId, '照片'))
     if (error) throw new AppError(toUserMessage(error, '無法捨棄照片'))
+  },
+
+  async uploadAppPhoto(input: {
+    file: File
+    siteId?: string | null
+  }): Promise<PhotoUpload> {
+    const { data: authData, error: authError } = await sb().auth.getUser()
+    if (authError) throw new AppError(toUserMessage(authError, '無法讀取登入狀態'))
+    if (!authData.user) throw new AppError('尚未登入')
+
+    const me = await this.getCurrentUser()
+    if (!me) throw new AppError('找不到個人資料')
+
+    const siteId = optionalUuid(input.siteId)
+    const mime = input.file.type || 'image/jpeg'
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg'
+    const path = `${me.organizationId}/${me.id}/${crypto.randomUUID()}.${ext}`
+
+    const { error: uploadError } = await sb().storage.from('site-photos').upload(path, input.file, {
+      contentType: mime,
+      upsert: false,
+    })
+    if (uploadError) {
+      throw new AppError(toUserMessage(uploadError, '無法上傳照片'))
+    }
+
+    const status = siteId ? 'linked' : 'pending'
+    const { data, error } = await sb()
+      .from('photo_uploads')
+      .insert({
+        organization_id: me.organizationId,
+        uploaded_by: me.id,
+        site_id: siteId,
+        storage_path: path,
+        content_type: mime,
+        byte_size: input.file.size,
+        source: 'app',
+        status,
+      })
+      .select(
+        'id, organization_id, uploaded_by, site_id, storage_path, content_type, byte_size, source, status, created_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法寫入照片紀錄'))
+
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      uploadedBy: String(data.uploaded_by),
+      siteId: data.site_id ? String(data.site_id) : null,
+      storagePath: String(data.storage_path),
+      contentType: data.content_type ? String(data.content_type) : null,
+      byteSize: data.byte_size == null ? null : Number(data.byte_size),
+      source: String(data.source),
+      status: data.status as PhotoUpload['status'],
+      createdAt: String(data.created_at),
+    }
+  },
+
+  async listConstructionReports(siteId?: string): Promise<ConstructionReport[]> {
+    let query = sb()
+      .from('construction_reports')
+      .select('id, organization_id, site_id, author_id, body, photo_upload_id, created_at')
+      .order('created_at', { ascending: false })
+      .limit(100)
+    if (siteId) {
+      query = query.eq('site_id', requireUuid(siteId, '工地'))
+    }
+    const { data, error } = await query
+    if (error) throw new AppError(toUserMessage(error, '無法載入施工回報'))
+
+    const rows = data ?? []
+    const siteIds = [...new Set(rows.map((r) => String(r.site_id)))]
+    const authorIds = [...new Set(rows.map((r) => String(r.author_id)))]
+    const photoIds = rows
+      .map((r) => r.photo_upload_id as string | null)
+      .filter((id): id is string => Boolean(id))
+
+    const siteNames = new Map<string, string>()
+    if (siteIds.length > 0) {
+      const { data: sites } = await sb().from('sites').select('id, name').in('id', siteIds)
+      for (const s of sites ?? []) siteNames.set(String(s.id), String(s.name))
+    }
+
+    const authorNames = new Map<string, string>()
+    if (authorIds.length > 0) {
+      const { data: profiles } = await sb()
+        .from('profiles')
+        .select('id, name')
+        .in('id', authorIds)
+      for (const p of profiles ?? []) authorNames.set(String(p.id), String(p.name))
+    }
+
+    const photoPathById = new Map<string, string>()
+    if (photoIds.length > 0) {
+      const { data: photos } = await sb()
+        .from('photo_uploads')
+        .select('id, storage_path')
+        .in('id', photoIds)
+      for (const p of photos ?? []) {
+        photoPathById.set(String(p.id), String(p.storage_path))
+      }
+    }
+
+    const previewByPath = new Map<string, string>()
+    const paths = [...photoPathById.values()]
+    if (paths.length > 0) {
+      const { data: signed } = await sb()
+        .storage.from('site-photos')
+        .createSignedUrls(paths, 3600)
+      for (const item of signed ?? []) {
+        if (item.path && item.signedUrl) previewByPath.set(item.path, item.signedUrl)
+      }
+    }
+
+    return rows.map((row) => {
+      const photoId = row.photo_upload_id ? String(row.photo_upload_id) : null
+      const path = photoId ? photoPathById.get(photoId) : null
+      return {
+        id: String(row.id),
+        organizationId: String(row.organization_id),
+        siteId: String(row.site_id),
+        siteName: siteNames.get(String(row.site_id)),
+        authorId: String(row.author_id),
+        authorName: authorNames.get(String(row.author_id)),
+        body: String(row.body ?? ''),
+        photoUploadId: photoId,
+        photoPreviewUrl: path ? previewByPath.get(path) ?? null : null,
+        createdAt: String(row.created_at),
+      }
+    })
+  },
+
+  async createConstructionReport(input: {
+    siteId: string
+    body?: string
+    photoUploadId?: string | null
+  }): Promise<ConstructionReport> {
+    const me = await this.getCurrentUser()
+    if (!me) throw new AppError('尚未登入')
+
+    const body = (input.body ?? '').trim()
+    const photoUploadId = optionalUuid(input.photoUploadId)
+    if (!body && !photoUploadId) {
+      throw new AppError('請填寫文字或附上照片')
+    }
+
+    const { data, error } = await sb()
+      .from('construction_reports')
+      .insert({
+        organization_id: me.organizationId,
+        site_id: requireUuid(input.siteId, '工地'),
+        author_id: me.id,
+        body,
+        photo_upload_id: photoUploadId,
+      })
+      .select('id, organization_id, site_id, author_id, body, photo_upload_id, created_at')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立施工回報'))
+
+    if (photoUploadId) {
+      await sb()
+        .from('photo_uploads')
+        .update({ site_id: requireUuid(input.siteId, '工地'), status: 'linked' })
+        .eq('id', photoUploadId)
+        .eq('status', 'pending')
+    }
+
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: String(data.site_id),
+      authorId: String(data.author_id),
+      authorName: me.name,
+      body: String(data.body ?? ''),
+      photoUploadId: data.photo_upload_id ? String(data.photo_upload_id) : null,
+      createdAt: String(data.created_at),
+    }
+  },
+
+  async createManualTodo(input: {
+    title: string
+    detail?: string
+    href?: string | null
+  }): Promise<void> {
+    const me = await this.getCurrentUser()
+    if (!me) throw new AppError('尚未登入')
+    const title = input.title.trim()
+    if (!title) throw new AppError('請填寫待辦標題')
+
+    const { error } = await sb().rpc('create_org_notices', {
+      p_recipient_ids: [me.id],
+      p_kind: 'todo',
+      p_title: title,
+      p_detail: input.detail?.trim() || '',
+      p_href: input.href ?? null,
+      p_as_todo: true,
+    })
+    if (error) throw new AppError(toUserMessage(error, '無法新增待辦'))
   },
 }

@@ -78,6 +78,7 @@ export const HOME_SHORTCUTS = [
   { id: 'todos', label: '待辦', path: '/todos' },
   { id: 'team', label: '今日團隊', path: '/team' },
   { id: 'photos', label: '施工照片', path: '/photos' },
+  { id: 'reports', label: '施工回報', path: '/reports' },
   { id: 'notices', label: '通知中心', path: '/notifications' },
 ] as const
 

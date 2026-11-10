@@ -177,3 +177,16 @@ export interface PhotoUpload {
   previewUrl?: string | null
   createdAt: string
 }
+
+export interface ConstructionReport {
+  id: string
+  organizationId: string
+  siteId: string
+  siteName?: string
+  authorId: string
+  authorName?: string
+  body: string
+  photoUploadId?: string | null
+  photoPreviewUrl?: string | null
+  createdAt: string
+}
