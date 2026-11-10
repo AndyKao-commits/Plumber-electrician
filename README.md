@@ -6,6 +6,10 @@
 
 - [對話 1](https://chatgpt.com/share/6af27b2e-31d8-83ee-9de3-c8287529caeb)
 - [對話 2](https://chatgpt.com/share/6af28019-cfd0-83ec-bf49-738de06277ea)
+- [對話 3](https://chatgpt.com/share/6af28a57-0b70-83ee-8496-f50778494099)（規劃結束／工程交付文件）
+
+工程交付包（重建）：`docs/engineer-handoff/`  
+規劃已結束擴充；正式開發需明確授權。
 
 ## 本 PR 已對齊的關鍵決策
 

@@ -7,7 +7,10 @@ export const PRODUCT = {
   sourceConversations: [
     'https://chatgpt.com/share/6af27b2e-31d8-83ee-9de3-c8287529caeb',
     'https://chatgpt.com/share/6af28019-cfd0-83ec-bf49-738de06277ea',
+    'https://chatgpt.com/share/6af28a57-0b70-83ee-8496-f50778494099',
   ],
+  planningClosed: true,
+  awaitingDevAuthorization: true,
 } as const
 
 /**
