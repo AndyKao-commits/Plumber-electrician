@@ -35,6 +35,10 @@ import {
   sumIssuedCredits,
 } from '@/domain/refunds'
 import {
+  assertCanRecordOperatingCost,
+  assertOperatingCostAmount,
+} from '@/domain/financeSummary'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   calcChangeOrderTotals,
@@ -68,11 +72,13 @@ import type {
   ChangeOrderItem,
   ChangeOrderKind,
   ChangeOrderStatus,
+  CaseOperatingCost,
   CustomerAdvance,
   CustomerCreditNote,
   CustomerPayment,
   CustomerRefund,
   MaterialStock,
+  OperatingCostKind,
   PaymentAllocation,
   PaymentMethod,
   PurchaseRecord,
@@ -114,6 +120,7 @@ const KEYS = {
   advanceApplications: 'eg.advanceApplications.v1',
   customerCreditNotes: 'eg.customerCreditNotes.v1',
   customerRefunds: 'eg.customerRefunds.v1',
+  caseOperatingCosts: 'eg.caseOperatingCosts.v1',
   materials: 'eg.materials.v1',
 } as const
 
@@ -148,6 +155,7 @@ const emptyCustomerAdvances: CustomerAdvance[] = []
 const emptyAdvanceApplications: AdvanceApplication[] = []
 const emptyCustomerCreditNotes: CustomerCreditNote[] = []
 const emptyCustomerRefunds: CustomerRefund[] = []
+const emptyCaseOperatingCosts: CaseOperatingCost[] = []
 const emptyMaterials: MaterialStock[] = []
 
 function write<T>(key: string, value: T) {
@@ -352,6 +360,7 @@ function seedIfNeeded() {
   write(KEYS.advanceApplications, emptyAdvanceApplications)
   write(KEYS.customerCreditNotes, emptyCustomerCreditNotes)
   write(KEYS.customerRefunds, emptyCustomerRefunds)
+  write(KEYS.caseOperatingCosts, emptyCaseOperatingCosts)
   write(KEYS.materials, seededMaterials)
   write(KEYS.shortcuts, [
     'clock',
@@ -1808,6 +1817,51 @@ export const localDb = {
     all.unshift(refund)
     write(KEYS.customerRefunds, all)
     return refund
+  },
+
+  listCaseOperatingCosts(quotationId: string): CaseOperatingCost[] {
+    return read(KEYS.caseOperatingCosts, emptyCaseOperatingCosts)
+      .filter((c) => c.quotationId === quotationId)
+      .sort((a, b) => b.confirmedAt.localeCompare(a.confirmedAt))
+  },
+
+  createCaseOperatingCost(
+    actor: { id: string; role: string; financeAuthorized?: boolean },
+    input: {
+      quotationId: string
+      kind: OperatingCostKind
+      description: string
+      amount: number
+      warrantyFree?: boolean
+    },
+  ): CaseOperatingCost {
+    assertCanRecordOperatingCost(
+      actor.role,
+      Boolean(actor.financeAuthorized),
+    )
+    assertOperatingCostAmount(input.amount)
+    const quote = this.getQuotation(input.quotationId)
+    if (!quote) throw new Error('找不到報價')
+    if (quote.deletedAt) throw new Error('報價案件已刪除')
+    const now = new Date().toISOString()
+    const id = `cost-${crypto.randomUUID()}`
+    const row: CaseOperatingCost = {
+      id,
+      organizationId: ORG_ID,
+      quotationId: quote.id,
+      kind: input.kind,
+      description: input.description.trim() || '已確認營運成本',
+      amount: Number(input.amount),
+      status: 'confirmed',
+      warrantyFree: Boolean(input.warrantyFree),
+      confirmedAt: now,
+      createdAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.caseOperatingCosts, emptyCaseOperatingCosts)
+    all.unshift(row)
+    write(KEYS.caseOperatingCosts, all)
+    return row
   },
 
   softDeleteQuotation(
