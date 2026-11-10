@@ -281,6 +281,54 @@ create policy "quotations_org_all"
     )
   );
 
+do $$
+begin
+  if not exists (
+    select 1 from pg_type t
+    join pg_namespace n on n.oid = t.typnamespace
+    where n.nspname = 'public' and t.typname = 'quotation_item_kind'
+  ) then
+    create type public.quotation_item_kind as enum ('material', 'labor', 'other');
+  end if;
+end $$;
+
+create table if not exists public.quotation_items (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations (id),
+  quotation_id uuid not null references public.quotations (id) on delete cascade,
+  line_no integer not null default 1,
+  kind public.quotation_item_kind not null default 'other',
+  description text not null,
+  qty numeric(12,3) not null default 1,
+  unit text not null default '式',
+  unit_price numeric(12,2) not null default 0,
+  amount numeric(12,2) not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint quotation_items_qty_nonneg check (qty >= 0),
+  constraint quotation_items_unit_price_nonneg check (unit_price >= 0),
+  constraint quotation_items_amount_nonneg check (amount >= 0),
+  constraint quotation_items_line_unique unique (quotation_id, line_no)
+);
+
+create index if not exists quotation_items_quote_idx
+  on public.quotation_items (quotation_id, line_no);
+
+alter table public.quotation_items enable row level security;
+drop policy if exists "quotation_items_org_all" on public.quotation_items;
+create policy "quotation_items_org_all"
+  on public.quotation_items for all to authenticated
+  using (
+    organization_id in (
+      select p.organization_id from public.profiles p where p.id = auth.uid()
+    )
+  )
+  with check (
+    organization_id in (
+      select p.organization_id from public.profiles p where p.id = auth.uid()
+    )
+  );
+
 -- REV-04 immutable emergency limit events
 create table if not exists public.emergency_limit_events (
   id uuid primary key default gen_random_uuid(),

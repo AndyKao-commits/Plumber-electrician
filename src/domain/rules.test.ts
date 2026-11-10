@@ -11,9 +11,12 @@ import {
 } from './inventoryCost'
 import {
   assertQuoteAssociation,
+  assertQuoteDraftEditable,
   calcFinalPayable,
+  calcQuoteItemAmount,
   calcQuoteTax,
   requiresPreApproval,
+  sumQuoteItems,
 } from './rules'
 
 describe('POL-001 final payable', () => {
@@ -100,6 +103,34 @@ describe('REV-03 / REV-01 quotes', () => {
       assertQuoteAssociation({ projectId: 'a', repairCaseId: 'b' }),
     ).toThrow(/XOR/)
     expect(() => assertQuoteAssociation({ projectId: 'a' })).not.toThrow()
+  })
+})
+
+describe('FIN-02 quote line items', () => {
+  it('computes line amount from qty × unitPrice', () => {
+    expect(calcQuoteItemAmount({ qty: 3, unitPrice: 250 })).toBe(750)
+  })
+
+  it('sums material and labor once without double-counting', () => {
+    const summed = sumQuoteItems([
+      { kind: 'material', amount: 4000 },
+      { kind: 'labor', amount: 6000 },
+      { kind: 'other', amount: 500 },
+    ])
+    expect(summed.total).toBe(10500)
+    expect(summed.byKind.material).toBe(4000)
+    expect(summed.byKind.labor).toBe(6000)
+    expect(summed.byKind.other).toBe(500)
+  })
+
+  it('blocks edits on frozen quotes', () => {
+    expect(() => assertQuoteDraftEditable({ frozen: true })).toThrow(/不可修改/)
+    expect(() => assertQuoteDraftEditable({ status: 'published' })).toThrow(
+      /不可修改/,
+    )
+    expect(() =>
+      assertQuoteDraftEditable({ frozen: false, status: 'draft' }),
+    ).not.toThrow()
   })
 })
 

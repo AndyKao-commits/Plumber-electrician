@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { assertOnlineForOp } from '@/domain/offlineOps'
-import type { TaxMode } from '@/domain/types'
+import type { QuotationItemKind, TaxMode } from '@/domain/types'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
@@ -10,6 +10,7 @@ import { useUser } from '@/hooks/useUser'
 
 export const quoteKeys = {
   all: ['quotes'] as const,
+  items: (quoteId: string) => ['quote-items', quoteId] as const,
 }
 
 export function useQuotes(userId: string | undefined) {
@@ -51,7 +52,7 @@ export function useQuotes(userId: string | undefined) {
       projectId?: string | null
       repairCaseId?: string | null
       taxMode: TaxMode
-      amountBeforeTax: number
+      amountBeforeTax?: number
     }) => {
       if (!userId || !user) throw new Error('尚未登入')
       assertOnlineForOp('quote_create', isBrowserOnline())
@@ -100,6 +101,52 @@ export function useQuotes(userId: string | undefined) {
     },
   })
 
+  const addItemMutation = useMutation({
+    mutationFn: async (input: {
+      quotationId: string
+      kind: QuotationItemKind
+      description: string
+      qty: number
+      unit?: string
+      unitPrice: number
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_create', isBrowserOnline())
+      try {
+        return formal
+          ? await supabaseRepos.addQuotationItem(user, input)
+          : localDb.addQuotationItem(input)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法新增報價細項'))
+      }
+    },
+    onSuccess: (_data, vars) => {
+      void queryClient.invalidateQueries({ queryKey: quoteKeys.all })
+      void queryClient.invalidateQueries({
+        queryKey: quoteKeys.items(vars.quotationId),
+      })
+    },
+  })
+
+  const removeItemMutation = useMutation({
+    mutationFn: async (input: { itemId: string; quotationId: string }) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_create', isBrowserOnline())
+      try {
+        if (formal) await supabaseRepos.removeQuotationItem(user, input.itemId)
+        else localDb.removeQuotationItem(input.itemId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法刪除報價細項'))
+      }
+    },
+    onSuccess: (_data, vars) => {
+      void queryClient.invalidateQueries({ queryKey: quoteKeys.all })
+      void queryClient.invalidateQueries({
+        queryKey: quoteKeys.items(vars.quotationId),
+      })
+    },
+  })
+
   return {
     quotes: listQuery.data ?? [],
     repairCases: repairsQuery.data ?? [],
@@ -112,5 +159,26 @@ export function useQuotes(userId: string | undefined) {
     createRepairError: createRepairMutation.error
       ? new Error(toUserMessage(createRepairMutation.error))
       : null,
+    addQuoteItem: addItemMutation.mutateAsync,
+    removeQuoteItem: removeItemMutation.mutateAsync,
+    isSavingItem: addItemMutation.isPending || removeItemMutation.isPending,
   }
+}
+
+export function useQuoteItems(quoteId: string | undefined) {
+  const formal = isFormalMode()
+  return useQuery({
+    queryKey: quoteId ? quoteKeys.items(quoteId) : ['quote-items', 'none'],
+    enabled: Boolean(quoteId),
+    queryFn: async () => {
+      if (!quoteId) return []
+      try {
+        return formal
+          ? await supabaseRepos.listQuotationItems(quoteId)
+          : localDb.getQuotationItems(quoteId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入報價細項'))
+      }
+    },
+  })
 }

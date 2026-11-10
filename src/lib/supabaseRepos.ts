@@ -15,7 +15,9 @@ import {
 import { applyInboundMovingAverage } from '@/domain/inventoryCost'
 import {
   assertQuoteAssociation,
+  assertQuoteDraftEditable,
   calcFinalPayable,
+  calcQuoteItemAmount,
   calcQuoteTax,
   requiresPreApproval,
 } from '@/domain/rules'
@@ -30,6 +32,8 @@ import type {
   DefectSeverity,
   PhotoUpload,
   Quotation,
+  QuotationItem,
+  QuotationItemKind,
   RepairCase,
   SiteDefect,
   SiteProject,
@@ -778,7 +782,7 @@ export const supabaseRepos = {
       projectId?: string | null
       repairCaseId?: string | null
       taxMode: TaxMode
-      amountBeforeTax: number
+      amountBeforeTax?: number
       taxRate?: number
     },
   ): Promise<Quotation> {
@@ -789,8 +793,9 @@ export const supabaseRepos = {
     const repairCaseId = optionalUuid(input.repairCaseId, '維修案件')
     assertQuoteAssociation({ projectId, repairCaseId })
     if (!input.taxMode) throw new AppError('建立報價必須選擇稅務模式（REV-03）')
+    const amountBeforeTax = Number(input.amountBeforeTax ?? 0) || 0
     const tax = calcQuoteTax({
-      amountBeforeTax: input.amountBeforeTax,
+      amountBeforeTax,
       taxMode: input.taxMode,
       taxRate: input.taxRate,
     })
@@ -804,7 +809,7 @@ export const supabaseRepos = {
         status: 'draft',
         tax_mode: input.taxMode,
         tax_rate: tax.taxRate,
-        amount_before_tax: input.amountBeforeTax,
+        amount_before_tax: amountBeforeTax,
         tax_amount: tax.taxAmount,
         amount_after_tax: tax.amountAfterTax,
         frozen: false,
@@ -853,6 +858,17 @@ export const supabaseRepos = {
       throw new AppError('報價已發布，稅務快照不可覆寫')
     }
     if (!current.tax_mode) throw new AppError('發布前必須已有稅務模式')
+
+    const { count, error: itemsCountError } = await sb()
+      .from('quotation_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('quotation_id', qid)
+    if (itemsCountError) {
+      throw new AppError(toUserMessage(itemsCountError, '無法檢查報價細項'))
+    }
+    if (!count || count < 1) {
+      throw new AppError('請先新增至少一筆報價細項再發布')
+    }
 
     const { data, error } = await sb()
       .from('quotations')
@@ -903,6 +919,139 @@ export const supabaseRepos = {
       })
     }
     return quote
+  },
+
+  async listQuotationItems(quotationId: string): Promise<QuotationItem[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('quotation_items')
+      .select(
+        'id, organization_id, quotation_id, line_no, kind, description, qty, unit, unit_price, amount, created_at, updated_at',
+      )
+      .eq('quotation_id', qid)
+      .order('line_no', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入報價細項'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      quotationId: String(row.quotation_id),
+      lineNo: Number(row.line_no),
+      kind: row.kind as QuotationItemKind,
+      description: String(row.description),
+      qty: Number(row.qty),
+      unit: String(row.unit),
+      unitPrice: Number(row.unit_price),
+      amount: Number(row.amount),
+      createdAt: String(row.created_at),
+      updatedAt: row.updated_at ? String(row.updated_at) : undefined,
+    }))
+  },
+
+  async addQuotationItem(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      kind: QuotationItemKind
+      description: string
+      qty: number
+      unit?: string
+      unitPrice: number
+    },
+  ): Promise<QuotationItem> {
+    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const qid = requireUuid(input.quotationId, '報價')
+    const { data: quote, error: quoteError } = await sb()
+      .from('quotations')
+      .select('id, organization_id, status, frozen')
+      .eq('id', qid)
+      .maybeSingle()
+    if (quoteError) throw new AppError(toUserMessage(quoteError, '無法讀取報價'))
+    if (!quote) throw new AppError('找不到報價')
+    assertSameOrganization(actor.organizationId, String(quote.organization_id))
+    assertQuoteDraftEditable({
+      frozen: Boolean(quote.frozen),
+      status: String(quote.status),
+    })
+
+    const description = input.description.trim()
+    if (!description) throw new AppError('請填寫細項說明')
+    const amount = calcQuoteItemAmount({
+      qty: input.qty,
+      unitPrice: input.unitPrice,
+    })
+
+    const { data: existing, error: lineError } = await sb()
+      .from('quotation_items')
+      .select('line_no')
+      .eq('quotation_id', qid)
+      .order('line_no', { ascending: false })
+      .limit(1)
+    if (lineError) throw new AppError(toUserMessage(lineError, '無法讀取細項'))
+    const lineNo = Number(existing?.[0]?.line_no ?? 0) + 1
+
+    const { data, error } = await sb()
+      .from('quotation_items')
+      .insert({
+        quotation_id: qid,
+        line_no: lineNo,
+        kind: input.kind,
+        description,
+        qty: input.qty,
+        unit: (input.unit || '式').trim() || '式',
+        unit_price: input.unitPrice,
+        amount,
+      })
+      .select(
+        'id, organization_id, quotation_id, line_no, kind, description, qty, unit, unit_price, amount, created_at, updated_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法新增報價細項'))
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      quotationId: String(data.quotation_id),
+      lineNo: Number(data.line_no),
+      kind: data.kind as QuotationItemKind,
+      description: String(data.description),
+      qty: Number(data.qty),
+      unit: String(data.unit),
+      unitPrice: Number(data.unit_price),
+      amount: Number(data.amount),
+      createdAt: String(data.created_at),
+      updatedAt: data.updated_at ? String(data.updated_at) : undefined,
+    }
+  },
+
+  async removeQuotationItem(actor: AppUser, itemId: string): Promise<void> {
+    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const iid = requireUuid(itemId, '報價細項')
+    const { data: item, error: loadError } = await sb()
+      .from('quotation_items')
+      .select('id, organization_id, quotation_id')
+      .eq('id', iid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取細項'))
+    if (!item) throw new AppError('找不到細項')
+    assertSameOrganization(actor.organizationId, String(item.organization_id))
+
+    const { data: quote, error: quoteError } = await sb()
+      .from('quotations')
+      .select('status, frozen')
+      .eq('id', item.quotation_id)
+      .maybeSingle()
+    if (quoteError) throw new AppError(toUserMessage(quoteError, '無法讀取報價'))
+    if (!quote) throw new AppError('找不到報價')
+    assertQuoteDraftEditable({
+      frozen: Boolean(quote.frozen),
+      status: String(quote.status),
+    })
+
+    const { error } = await sb().from('quotation_items').delete().eq('id', iid)
+    if (error) throw new AppError(toUserMessage(error, '無法刪除報價細項'))
   },
 
   async bindLineUserId(lineUserId: string | null): Promise<AppUser> {
