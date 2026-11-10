@@ -1,5 +1,11 @@
 import { roundMoney } from './money'
-import type { PurchaseRuleSnapshot, TaxMode, UserRole } from './types'
+import type {
+  PurchaseRuleSnapshot,
+  QuotationItem,
+  QuotationItemKind,
+  TaxMode,
+  UserRole,
+} from './types'
 import { applyInboundMovingAverage } from './inventoryCost'
 
 /** Confirmed product rules from planning conversations. */
@@ -134,6 +140,59 @@ export function assertQuoteAssociation(input: {
   const hasRepair = Boolean(input.repairCaseId)
   if (hasProject === hasRepair) {
     throw new Error('報價必須恰好關聯一個工程或一個維修案件（REV-01 XOR）')
+  }
+}
+
+export const QUOTE_ITEM_KIND_LABELS: Record<QuotationItemKind, string> = {
+  material: '材料',
+  labor: '工資',
+  other: '其他',
+}
+
+/** Line amount = qty × unitPrice (rounded). Header sums these once (FIN-02). */
+export function calcQuoteItemAmount(input: {
+  qty: number
+  unitPrice: number
+}): number {
+  const qty = Number(input.qty)
+  const unitPrice = Number(input.unitPrice)
+  if (!Number.isFinite(qty) || qty < 0) {
+    throw new Error('數量不可為負')
+  }
+  if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+    throw new Error('單價不可為負')
+  }
+  return roundMoney(qty * unitPrice)
+}
+
+/** Sum line amounts once — material + labor are display kinds, not double-counted. */
+export function sumQuoteItems(
+  items: Array<Pick<QuotationItem, 'amount' | 'kind'>>,
+): {
+  total: number
+  byKind: Record<QuotationItemKind, number>
+} {
+  const byKind: Record<QuotationItemKind, number> = {
+    material: 0,
+    labor: 0,
+    other: 0,
+  }
+  let total = 0
+  for (const item of items) {
+    const amt = Number(item.amount) || 0
+    total = roundMoney(total + amt)
+    const kind = item.kind in byKind ? item.kind : 'other'
+    byKind[kind] = roundMoney(byKind[kind] + amt)
+  }
+  return { total, byKind }
+}
+
+export function assertQuoteDraftEditable(input: {
+  frozen?: boolean
+  status?: string
+}): void {
+  if (input.frozen || input.status === 'published') {
+    throw new Error('已發布報價細項不可修改')
   }
 }
 

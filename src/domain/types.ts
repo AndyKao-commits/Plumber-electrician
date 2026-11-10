@@ -119,6 +119,7 @@ export interface Quotation {
   status: QuoteStatus
   taxMode: TaxMode
   taxRate: number
+  /** Derived from sum(quotation_items.amount) when items exist (FIN-02). */
   amountBeforeTax: number
   taxAmount: number
   amountAfterTax: number
@@ -127,6 +128,24 @@ export interface Quotation {
   createdAt: string
   publishedAt?: string | null
   createdBy: string
+}
+
+/** FIN-02: material / labor shown separately; amounts sum once into header. */
+export type QuotationItemKind = 'material' | 'labor' | 'other'
+
+export interface QuotationItem {
+  id: string
+  organizationId: string
+  quotationId: string
+  lineNo: number
+  kind: QuotationItemKind
+  description: string
+  qty: number
+  unit: string
+  unitPrice: number
+  amount: number
+  createdAt: string
+  updatedAt?: string
 }
 
 export interface MaterialStock {

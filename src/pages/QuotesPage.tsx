@@ -1,11 +1,219 @@
 import { useState, type FormEvent } from 'react'
 import { hasPermission, PERMISSIONS } from '@/domain/permissions'
-import { calcQuoteTax } from '@/domain/rules'
-import type { TaxMode } from '@/domain/types'
-import { useQuotes } from '@/hooks/useQuotes'
+import {
+  calcQuoteItemAmount,
+  calcQuoteTax,
+  QUOTE_ITEM_KIND_LABELS,
+  sumQuoteItems,
+} from '@/domain/rules'
+import type { Quotation, QuotationItemKind, TaxMode } from '@/domain/types'
+import { useQuoteItems, useQuotes } from '@/hooks/useQuotes'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
 import { formatTaipei } from '@/lib/time'
+
+function QuoteCard(props: {
+  quote: Quotation
+  canPublish: boolean
+  onPublish: (id: string) => Promise<unknown>
+  onAddItem: (input: {
+    quotationId: string
+    kind: QuotationItemKind
+    description: string
+    qty: number
+    unit?: string
+    unitPrice: number
+  }) => Promise<unknown>
+  onRemoveItem: (input: {
+    itemId: string
+    quotationId: string
+  }) => Promise<unknown>
+  saving: boolean
+}) {
+  const { quote } = props
+  const { data: items = [], isLoading } = useQuoteItems(quote.id)
+  const [kind, setKind] = useState<QuotationItemKind>('material')
+  const [description, setDescription] = useState('')
+  const [qty, setQty] = useState('1')
+  const [unit, setUnit] = useState('式')
+  const [unitPrice, setUnitPrice] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const editable = quote.status === 'draft' && !quote.frozen
+  const breakdown = sumQuoteItems(items)
+
+  async function addItem(event: FormEvent) {
+    event.preventDefault()
+    setError(null)
+    try {
+      await props.onAddItem({
+        quotationId: quote.id,
+        kind,
+        description,
+        qty: Number(qty) || 0,
+        unit,
+        unitPrice: Number(unitPrice) || 0,
+      })
+      setDescription('')
+      setUnitPrice('')
+      setQty('1')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '新增失敗')
+    }
+  }
+
+  return (
+    <div className="site-link stack">
+      <div className="row between">
+        <span className="badge steel">{quote.taxMode}</span>
+        <span className="badge">{quote.status}</span>
+      </div>
+      <h3 style={{ margin: 0 }}>{quote.title}</h3>
+      <p style={{ margin: 0 }}>
+        NT${quote.amountAfterTax.toLocaleString()} ·{' '}
+        {formatTaipei(quote.createdAt, 'MM/dd HH:mm')}
+        {quote.frozen ? ' · 已凍結' : ''}
+      </p>
+      <p className="muted" style={{ margin: 0 }}>
+        材料 NT${breakdown.byKind.material.toLocaleString()} · 工資 NT$
+        {breakdown.byKind.labor.toLocaleString()} · 其他 NT$
+        {breakdown.byKind.other.toLocaleString()}
+      </p>
+
+      {isLoading ? <p className="muted">載入細項…</p> : null}
+      {items.length === 0 ? (
+        <div className="empty">尚無細項（材料／工資分開列示，合計只加總一次）</div>
+      ) : (
+        <div className="stack">
+          {items.map((item) => (
+            <div key={item.id} className="row between" style={{ gap: 8 }}>
+              <div>
+                <strong>
+                  {QUOTE_ITEM_KIND_LABELS[item.kind]} · {item.description}
+                </strong>
+                <p className="muted" style={{ margin: 0 }}>
+                  {item.qty} {item.unit} × NT${item.unitPrice.toLocaleString()} ={' '}
+                  NT${item.amount.toLocaleString()}
+                </p>
+              </div>
+              {editable ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={props.saving}
+                  onClick={() =>
+                    void props
+                      .onRemoveItem({ itemId: item.id, quotationId: quote.id })
+                      .catch((e: unknown) =>
+                        setError(e instanceof Error ? e.message : '刪除失敗'),
+                      )
+                  }
+                >
+                  刪除
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {editable ? (
+        <form className="stack" onSubmit={(e) => void addItem(e)}>
+          <strong>新增細項</strong>
+          <div className="grid-2">
+            <div className="field">
+              <label htmlFor={`kind-${quote.id}`}>類型</label>
+              <select
+                id={`kind-${quote.id}`}
+                value={kind}
+                onChange={(e) => setKind(e.target.value as QuotationItemKind)}
+              >
+                <option value="material">材料</option>
+                <option value="labor">工資</option>
+                <option value="other">其他</option>
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor={`unit-${quote.id}`}>單位</label>
+              <input
+                id={`unit-${quote.id}`}
+                value={unit}
+                onChange={(e) => setUnit(e.target.value)}
+                placeholder="式／米／工"
+              />
+            </div>
+          </div>
+          <div className="field">
+            <label htmlFor={`desc-${quote.id}`}>說明</label>
+            <input
+              id={`desc-${quote.id}`}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              required
+              placeholder="例如：PVC 管 4 分"
+            />
+          </div>
+          <div className="grid-2">
+            <div className="field">
+              <label htmlFor={`qty-${quote.id}`}>數量</label>
+              <input
+                id={`qty-${quote.id}`}
+                type="number"
+                min="0"
+                step="0.001"
+                value={qty}
+                onChange={(e) => setQty(e.target.value)}
+                required
+              />
+            </div>
+            <div className="field">
+              <label htmlFor={`price-${quote.id}`}>單價</label>
+              <input
+                id={`price-${quote.id}`}
+                type="number"
+                min="0"
+                step="1"
+                value={unitPrice}
+                onChange={(e) => setUnitPrice(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+          <p className="muted" style={{ margin: 0 }}>
+            小計 NT$
+            {calcQuoteItemAmount({
+              qty: Number(qty) || 0,
+              unitPrice: Number(unitPrice) || 0,
+            }).toLocaleString()}
+          </p>
+          {error ? (
+            <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>
+          ) : null}
+          <button
+            className="btn btn-ghost"
+            type="submit"
+            disabled={props.saving || !description.trim()}
+          >
+            {props.saving ? '儲存中…' : '加入細項'}
+          </button>
+        </form>
+      ) : null}
+
+      {quote.status === 'draft' && props.canPublish ? (
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() =>
+            void props.onPublish(quote.id).catch((e: unknown) =>
+              setError(e instanceof Error ? e.message : '發布失敗'),
+            )
+          }
+        >
+          發布並凍結稅務
+        </button>
+      ) : null}
+    </div>
+  )
+}
 
 export function QuotesPage() {
   const { user } = useUser()
@@ -20,6 +228,9 @@ export function QuotesPage() {
     createRepairCase,
     isCreatingRepair,
     createRepairError,
+    addQuoteItem,
+    removeQuoteItem,
+    isSavingItem,
   } = useQuotes(user?.id)
   const canPublish =
     Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_PUBLISH)
@@ -31,7 +242,6 @@ export function QuotesPage() {
   const [projectId, setProjectId] = useState('')
   const [repairCaseId, setRepairCaseId] = useState('')
   const [taxMode, setTaxMode] = useState<TaxMode>('exclusive')
-  const [amount, setAmount] = useState('10000')
   const [formError, setFormError] = useState<string | null>(null)
   const [repairTitle, setRepairTitle] = useState('')
   const [repairCustomer, setRepairCustomer] = useState('')
@@ -47,7 +257,7 @@ export function QuotesPage() {
       : (repairCases[0]?.id ?? '')
 
   const preview = calcQuoteTax({
-    amountBeforeTax: Number(amount) || 0,
+    amountBeforeTax: 0,
     taxMode,
   })
 
@@ -70,7 +280,7 @@ export function QuotesPage() {
     await createQuote({
       title,
       taxMode,
-      amountBeforeTax: Number(amount) || 0,
+      amountBeforeTax: 0,
       projectId: nextProjectId,
       repairCaseId: nextRepairId,
     })
@@ -83,7 +293,7 @@ export function QuotesPage() {
         <strong>報價</strong>
         <p className="muted" style={{ margin: 0 }}>
           建立時必須選擇稅務模式（REV-03）；必須恰好關聯工程或維修案件其一（REV-01）。
-          發布後稅務快照凍結。
+          細項可拆材料／工資（FIN-02），合計只加總一次；發布後凍結。
         </p>
       </section>
 
@@ -149,7 +359,9 @@ export function QuotesPage() {
           <button
             className="btn btn-ghost"
             type="submit"
-            disabled={isCreatingRepair || !repairTitle.trim() || !repairCustomer.trim()}
+            disabled={
+              isCreatingRepair || !repairTitle.trim() || !repairCustomer.trim()
+            }
           >
             {isCreatingRepair ? '建立中…' : '新增維修案件'}
           </button>
@@ -157,7 +369,7 @@ export function QuotesPage() {
       </section>
 
       <section className="panel stack">
-        <strong>建立報價</strong>
+        <strong>建立報價草稿</strong>
         <form className="stack" onSubmit={(e) => void onSubmit(e)}>
           <div className="field">
             <label htmlFor="q-title">標題</label>
@@ -175,7 +387,9 @@ export function QuotesPage() {
               <select
                 id="q-link"
                 value={linkType}
-                onChange={(e) => setLinkType(e.target.value as 'project' | 'repair')}
+                onChange={(e) =>
+                  setLinkType(e.target.value as 'project' | 'repair')
+                }
               >
                 <option value="project">正式工程</option>
                 <option value="repair">維修案件</option>
@@ -236,24 +450,10 @@ export function QuotesPage() {
               </select>
             </div>
           )}
-          <div className="field">
-            <label htmlFor="q-amount">金額（稅前／含稅依模式）</label>
-            <input
-              id="q-amount"
-              type="number"
-              min="0"
-              step="1"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-          </div>
-          <div className="site-link">
-            <p>稅額／含稅合計</p>
-            <h3>
-              NT${preview.taxAmount.toLocaleString()} /{' '}
-              {preview.amountAfterTax.toLocaleString()}
-            </h3>
-          </div>
+          <p className="muted" style={{ margin: 0 }}>
+            金額由細項加總；建立後請新增材料／工資列。目前稅率預覽：稅額 NT$
+            {preview.taxAmount.toLocaleString()}（細項為 0 時）。
+          </p>
           {formError ? (
             <p style={{ color: 'var(--danger)', margin: 0 }}>{formError}</p>
           ) : null}
@@ -267,7 +467,9 @@ export function QuotesPage() {
             type="submit"
             disabled={
               isCreating ||
-              (linkType === 'project' ? formalSites.length === 0 : repairCases.length === 0)
+              (linkType === 'project'
+                ? formalSites.length === 0
+                : repairCases.length === 0)
             }
           >
             {isCreating ? '建立中…' : '建立報價草稿'}
@@ -281,27 +483,15 @@ export function QuotesPage() {
           <div className="empty">尚無報價</div>
         ) : (
           quotes.map((q) => (
-            <div key={q.id} className="site-link stack">
-              <div className="row between">
-                <span className="badge steel">{q.taxMode}</span>
-                <span className="badge">{q.status}</span>
-              </div>
-              <h3 style={{ margin: 0 }}>{q.title}</h3>
-              <p style={{ margin: 0 }}>
-                NT${q.amountAfterTax.toLocaleString()} ·{' '}
-                {formatTaipei(q.createdAt, 'MM/dd HH:mm')}
-                {q.frozen ? ' · 已凍結' : ''}
-              </p>
-              {q.status === 'draft' && canPublish ? (
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => void publishQuote(q.id)}
-                >
-                  發布並凍結稅務
-                </button>
-              ) : null}
-            </div>
+            <QuoteCard
+              key={q.id}
+              quote={q}
+              canPublish={canPublish}
+              onPublish={publishQuote}
+              onAddItem={addQuoteItem}
+              onRemoveItem={removeQuoteItem}
+              saving={isSavingItem}
+            />
           ))
         )}
       </section>

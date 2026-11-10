@@ -123,6 +123,12 @@ SQL：`20261110_line_bind_code_fix_random.sql`
 4. 採購：一般／緊急 → 品名 → 金額 → 工地 → 確認（Flex）；≥3000 一般需核准且不可自核
 5. 上傳照片／暫停切換提示同樣改為 Flex 卡片（不再用純文字 quickReply）
 
+## 4f. 報價細項（FIN-02）
+
+1. SQL：`supabase/migrations/20261111_quotation_items.sql`
+2. App：`/quotes` 草稿可新增材料／工資／其他細項；表頭金額由細項加總（不重複加總）
+3. 已發布（frozen）報價禁止改細項；至少一筆細項才能發布
+
 ## 5. 驗證
 
 - Production：登入頁顯示「Supabase 正式模式」
