@@ -51,6 +51,11 @@ import {
   assertOperatingCostAmount,
 } from '@/domain/financeSummary'
 import {
+  assertCanLinkCustomerToSite,
+  assertContactName,
+  assertCustomerName,
+} from '@/domain/crm'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   canCreateChangeOrder,
@@ -80,9 +85,12 @@ import type {
   ChangeOrderStatus,
   CustomerAdvance,
   CaseOperatingCost,
+  Customer,
+  CustomerContact,
   CustomerCreditNote,
   CustomerPayment,
   CustomerRefund,
+  CustomerSiteLink,
   OperatingCostKind,
   MaterialStock,
   PaymentAllocation,
@@ -375,6 +383,45 @@ function mapCaseOperatingCostRow(
     confirmedAt: String(row.confirmed_at),
     createdAt: String(row.created_at),
     createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapCustomerRow(row: Record<string, unknown>): Customer {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    name: String(row.name),
+    phone: (row.phone as string | null) ?? null,
+    notes: (row.notes as string | null) ?? null,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    createdBy: (row.created_by as string | null) ?? null,
+  }
+}
+
+function mapCustomerContactRow(row: Record<string, unknown>): CustomerContact {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    customerId: String(row.customer_id),
+    name: String(row.name),
+    phone: (row.phone as string | null) ?? null,
+    email: (row.email as string | null) ?? null,
+    isPrimary: Boolean(row.is_primary),
+    notes: (row.notes as string | null) ?? null,
+    createdAt: String(row.created_at),
+  }
+}
+
+function mapCustomerSiteLinkRow(
+  row: Record<string, unknown>,
+): CustomerSiteLink {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    customerId: String(row.customer_id),
+    siteId: String(row.site_id),
+    createdAt: String(row.created_at),
   }
 }
 
@@ -2328,6 +2375,134 @@ export const supabaseRepos = {
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法登錄營運成本'))
     return mapCaseOperatingCostRow(data as Record<string, unknown>)
+  },
+
+  async listCustomers(): Promise<Customer[]> {
+    const { data, error } = await sb()
+      .from('customers')
+      .select(
+        'id, organization_id, name, phone, notes, created_at, updated_at, created_by',
+      )
+      .order('name', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入客戶'))
+    return (data ?? []).map((row) =>
+      mapCustomerRow(row as Record<string, unknown>),
+    )
+  },
+
+  async createCustomer(
+    actor: AppUser,
+    input: { name: string; phone?: string | null; notes?: string | null },
+  ): Promise<Customer> {
+    const name = assertCustomerName(input.name)
+    const { data, error } = await sb()
+      .from('customers')
+      .insert({
+        name,
+        phone: input.phone?.trim() || null,
+        notes: input.notes?.trim() || null,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, name, phone, notes, created_at, updated_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立客戶'))
+    return mapCustomerRow(data as Record<string, unknown>)
+  },
+
+  async listCustomerContacts(customerId: string): Promise<CustomerContact[]> {
+    const cid = requireUuid(customerId, '客戶')
+    const { data, error } = await sb()
+      .from('customer_contacts')
+      .select(
+        'id, organization_id, customer_id, name, phone, email, is_primary, notes, created_at',
+      )
+      .eq('customer_id', cid)
+      .order('is_primary', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入聯絡人'))
+    return (data ?? []).map((row) =>
+      mapCustomerContactRow(row as Record<string, unknown>),
+    )
+  },
+
+  async addCustomerContact(
+    actor: AppUser,
+    input: {
+      customerId: string
+      name: string
+      phone?: string | null
+      email?: string | null
+      isPrimary?: boolean
+      notes?: string | null
+    },
+  ): Promise<CustomerContact> {
+    const cid = requireUuid(input.customerId, '客戶')
+    const name = assertContactName(input.name)
+    if (input.isPrimary) {
+      await sb()
+        .from('customer_contacts')
+        .update({ is_primary: false })
+        .eq('customer_id', cid)
+    }
+    const { data, error } = await sb()
+      .from('customer_contacts')
+      .insert({
+        customer_id: cid,
+        name,
+        phone: input.phone?.trim() || null,
+        email: input.email?.trim() || null,
+        is_primary: Boolean(input.isPrimary),
+        notes: input.notes?.trim() || null,
+      })
+      .select(
+        'id, organization_id, customer_id, name, phone, email, is_primary, notes, created_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法新增聯絡人'))
+    void actor
+    return mapCustomerContactRow(data as Record<string, unknown>)
+  },
+
+  async listCustomerSiteLinks(
+    customerId?: string,
+  ): Promise<CustomerSiteLink[]> {
+    let q = sb()
+      .from('customer_site_links')
+      .select('id, organization_id, customer_id, site_id, created_at')
+    if (customerId) {
+      q = q.eq('customer_id', requireUuid(customerId, '客戶'))
+    }
+    const { data, error } = await q.order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入客戶地址關聯'))
+    return (data ?? []).map((row) =>
+      mapCustomerSiteLinkRow(row as Record<string, unknown>),
+    )
+  },
+
+  async linkCustomerToSite(
+    actor: AppUser,
+    input: { customerId: string; siteId: string },
+  ): Promise<CustomerSiteLink> {
+    const cid = requireUuid(input.customerId, '客戶')
+    const sid = requireUuid(input.siteId, '工地')
+    const existing = await this.listCustomerSiteLinks()
+    assertCanLinkCustomerToSite({
+      customerId: cid,
+      siteId: sid,
+      existingLinks: existing,
+    })
+    const { data, error } = await sb()
+      .from('customer_site_links')
+      .insert({
+        customer_id: cid,
+        site_id: sid,
+      })
+      .select('id, organization_id, customer_id, site_id, created_at')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法關聯客戶與地址'))
+    void actor
+    return mapCustomerSiteLinkRow(data as Record<string, unknown>)
   },
 
   async listQuotationItems(quotationId: string): Promise<QuotationItem[]> {
