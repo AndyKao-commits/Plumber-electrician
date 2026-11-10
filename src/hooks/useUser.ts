@@ -9,6 +9,32 @@ export const userKeys = {
   directory: () => [...userKeys.all, 'directory'] as const,
 }
 
+function mapProfile(row: {
+  id: string
+  organization_id: string
+  name: string
+  role: string
+  email: string | null
+  phone: string | null
+  pay_type: AppUser['payType'] | null
+  line_user_id: string | null
+  finance_authorized: boolean | null
+  created_at: string
+}, fallbackEmail?: string): AppUser {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    name: row.name,
+    role: row.role as UserRole,
+    email: row.email ?? fallbackEmail,
+    phone: row.phone ?? undefined,
+    payType: row.pay_type ?? undefined,
+    lineUserId: row.line_user_id,
+    financeAuthorized: Boolean(row.finance_authorized),
+    createdAt: row.created_at,
+  }
+}
+
 async function fetchCurrentUser(): Promise<AppUser | null> {
   if (isSupabaseConfigured && supabase) {
     const { data: auth } = await supabase.auth.getUser()
@@ -24,19 +50,7 @@ async function fetchCurrentUser(): Promise<AppUser | null> {
 
     if (error) throw error
     if (!data) return null
-
-    return {
-      id: data.id,
-      organizationId: data.organization_id,
-      name: data.name,
-      role: data.role as UserRole,
-      email: data.email ?? auth.user.email ?? undefined,
-      phone: data.phone ?? undefined,
-      payType: data.pay_type ?? undefined,
-      lineUserId: data.line_user_id,
-      financeAuthorized: Boolean(data.finance_authorized),
-      createdAt: data.created_at,
-    }
+    return mapProfile(data, auth.user.email ?? undefined)
   }
 
   const sessionId = localDb.getSessionUserId()
@@ -54,18 +68,7 @@ async function fetchDirectory(): Promise<AppUser[]> {
       .order('created_at', { ascending: true })
 
     if (error) throw error
-    return (data ?? []).map((row) => ({
-      id: row.id,
-      organizationId: row.organization_id,
-      name: row.name,
-      role: row.role as UserRole,
-      email: row.email ?? undefined,
-      phone: row.phone ?? undefined,
-      payType: row.pay_type ?? undefined,
-      lineUserId: row.line_user_id,
-      financeAuthorized: Boolean(row.finance_authorized),
-      createdAt: row.created_at,
-    }))
+    return (data ?? []).map((row) => mapProfile(row))
   }
 
   return localDb.getUsers()
@@ -78,6 +81,37 @@ async function loginAsLocal(userId: string): Promise<AppUser> {
   return user
 }
 
+async function loginWithPassword(input: {
+  email: string
+  password: string
+}): Promise<AppUser> {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error('尚未設定 Supabase anon key')
+  }
+
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: input.email.trim(),
+    password: input.password,
+  })
+  if (error) throw error
+  if (!data.user) throw new Error('登入失敗')
+
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select(
+      'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, created_at',
+    )
+    .eq('id', data.user.id)
+    .maybeSingle()
+
+  if (profileError) throw profileError
+  if (!profile) {
+    throw new Error('帳號已登入，但尚未建立 profiles 資料列')
+  }
+
+  return mapProfile(profile, data.user.email ?? undefined)
+}
+
 async function logoutCurrent(): Promise<void> {
   if (isSupabaseConfigured && supabase) {
     await supabase.auth.signOut()
@@ -87,7 +121,7 @@ async function logoutCurrent(): Promise<void> {
 
 /**
  * Current signed-in user via React Query.
- * Falls back to local demo accounts when Supabase env is not configured.
+ * Falls back to local demo accounts when Supabase anon key is not configured.
  */
 export function useUser() {
   const queryClient = useQueryClient()
@@ -100,10 +134,18 @@ export function useUser() {
   const directoryQuery = useQuery({
     queryKey: userKeys.directory(),
     queryFn: fetchDirectory,
+    enabled: !isSupabaseConfigured,
   })
 
   const loginMutation = useMutation({
     mutationFn: loginAsLocal,
+    onSuccess: (user) => {
+      queryClient.setQueryData(userKeys.me(), user)
+    },
+  })
+
+  const passwordLoginMutation = useMutation({
+    mutationFn: loginWithPassword,
     onSuccess: (user) => {
       queryClient.setQueryData(userKeys.me(), user)
     },
@@ -124,7 +166,9 @@ export function useUser() {
     refetch: userQuery.refetch,
     directory: directoryQuery.data ?? [],
     loginAs: loginMutation.mutateAsync,
-    isLoggingIn: loginMutation.isPending,
+    isLoggingIn: loginMutation.isPending || passwordLoginMutation.isPending,
+    loginWithPassword: passwordLoginMutation.mutateAsync,
+    passwordLoginError: passwordLoginMutation.error,
     logout: logoutMutation.mutateAsync,
     isLoggingOut: logoutMutation.isPending,
     isDemoMode: !isSupabaseConfigured,

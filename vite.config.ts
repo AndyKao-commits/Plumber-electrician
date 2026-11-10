@@ -6,7 +6,25 @@ import { fileURLToPath } from 'node:url'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
 
+/** Allow Cursor app secrets (SUPABASE_*) and local Vite (.env.local VITE_*) alike. */
+const supabaseUrl =
+  process.env.SUPABASE_URL ||
+  process.env.VITE_SUPABASE_URL ||
+  'https://rhpzvqvkmllbdtkpouwn.supabase.co'
+const supabaseAnonKey =
+  process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || ''
+
 export default defineConfig({
+  define: {
+    'import.meta.env.SUPABASE_URL': JSON.stringify(supabaseUrl),
+    'import.meta.env.SUPABASE_ANON_KEY': JSON.stringify(supabaseAnonKey),
+    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(
+      process.env.VITE_SUPABASE_URL || supabaseUrl,
+    ),
+    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(
+      process.env.VITE_SUPABASE_ANON_KEY || supabaseAnonKey,
+    ),
+  },
   plugins: [
     react(),
     VitePWA({

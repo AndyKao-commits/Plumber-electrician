@@ -30,11 +30,16 @@ npm run dev
 
 示範帳號：老闆、師傅阿明、師傅阿強。
 
-## 接上 Supabase（可選）
+## 接上 Supabase
 
-1. 複製 `.env.example` → `.env.local`
-2. 執行 `supabase/schema.sql`
-3. 重啟 `npm run dev`
+專案：`https://rhpzvqvkmllbdtkpouwn.supabase.co`
+
+1. 在 Cursor Secrets 填入 `SUPABASE_ANON_KEY`（或本機 `.env.local` 的 `VITE_SUPABASE_ANON_KEY`）
+2. 於 Supabase SQL Editor 執行 `supabase/schema.sql`（可選 `seed.sql`）
+3. 建立 Auth 使用者與對應 `profiles`
+4. 重啟 `npm run dev` → 登入頁改為 Email／密碼
+
+詳見 `docs/engineer-handoff/supabase-setup.md`。
 
 ## 開發策略
 
