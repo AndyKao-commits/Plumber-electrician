@@ -85,26 +85,35 @@ SQL：`20261110_line_bind_code_fix_random.sql`
 流程：產生綁定碼 → LINE 傳「綁定 代碼」。
 
 ### Webhook
-`line-webhook` 不再對「你好」回長選單（圖文選單負責入口）；只處理綁定碼／加好友短提示。請重新 Deploy webhook（JWT 關）。
+`line-webhook` 為 **reply-only**（DEC-007）：不 push、不廣播、不主動逾時提醒。  
+處理：綁定碼、流程草稿、批次上傳照片、待辦 Flex。請重新 Deploy（JWT 關）。
 
-## 4c. 施工照片（LINE 直傳）
+## 4c. 施工照片（LINE 批次流程）
 
-1. SQL Editor 執行：`supabase/migrations/20261110_line_photo_uploads.sql`
-2. 重新 Deploy `line-webhook`（JWT 關）
-3. 圖文選單「上傳照片」建議改為**文字訊息**：`上傳照片`（不要用網址）；或直接在聊天室傳圖
-4. App 路徑：`/photos` 指定工地
+1. SQL：`supabase/migrations/20261110_line_photo_uploads.sql`
+2. SQL：`supabase/migrations/20261110_line_flow_drafts.sql`（草稿狀態機 + `batch_id`／`photo_type`）
+3. 重新 Deploy `line-webhook`（JWT 關）
+4. 圖文選單「上傳照片」→ **文字訊息** `上傳照片`（不要用網址）
+5. 流程：選工地 → 選類型 → 連續傳多張 → 完成／取消  
+   逾時僅在「下次使用者操作」時判斷（30 分暫停／24 時清除），不主動推播
+6. App 路徑：`/photos`
+
+## 4c-2. 待辦事項（LINE）
+
+1. 圖文選單「待辦事項」→ 文字 `待辦事項`
+2. Webhook 即時查 `notices`（open todos），Flex Carousel 顯示；可標記完成（與網站同步）
 
 ## 4d. 施工回報與工地串接
 
 1. SQL：`supabase/migrations/20261110_construction_reports.sql`
 2. App：`/reports` 施工回報；工地詳情頁顯示照片／採購／報價／回報
 3. 圖文選單建議：
+   - 上傳照片 → 文字「上傳照片」
+   - 待辦事項 → 文字「待辦事項」
    - 我的工地 → `/sites`
-   - 上傳照片 → 文字「上傳照片」或 `/photos`
    - 出勤打卡 → `/attendance`
    - 採購申請 → `/purchases`
    - 報價管理 → `/quotes`
-   - 待辦／施工回報 → `/reports` 或 `/todos`
 
 ## 5. 驗證
 
