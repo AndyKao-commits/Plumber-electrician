@@ -32,6 +32,13 @@ export function usePhotos() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: photoKeys.all }),
   })
 
+  const uploadMutation = useMutation({
+    mutationFn: async (input: { file: File; siteId?: string | null }) => {
+      return supabaseRepos.uploadAppPhoto(input)
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: photoKeys.all }),
+  })
+
   return {
     photos: listQuery.data ?? [],
     isLoading: listQuery.isLoading,
@@ -41,5 +48,10 @@ export function usePhotos() {
     isLinking: linkMutation.isPending,
     discardPhoto: discardMutation.mutateAsync,
     isDiscarding: discardMutation.isPending,
+    uploadPhoto: uploadMutation.mutateAsync,
+    isUploading: uploadMutation.isPending,
+    uploadError: uploadMutation.error
+      ? new Error(toUserMessage(uploadMutation.error))
+      : null,
   }
 }
