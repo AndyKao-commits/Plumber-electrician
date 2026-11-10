@@ -29,6 +29,7 @@ import {
   quotePdfFilename,
 } from '@/lib/quoteExport'
 import { formatTaipei } from '@/lib/time'
+import { BillingPanel } from '@/pages/BillingPanel'
 import { ChangeOrdersPanel } from '@/pages/ChangeOrdersPanel'
 
 export function QuoteDetailPage() {
@@ -57,6 +58,11 @@ export function QuoteDetailPage() {
     removeChangeOrderItem,
     setChangeOrderStatus,
     listChangeOrderItems,
+    billingMilestones,
+    billingDocuments,
+    createBillingMilestone,
+    createBillingDocument,
+    issueBillingDocument,
     saving,
   } = useQuoteDetail(quoteId)
 
@@ -802,6 +808,20 @@ export function QuoteDetailPage() {
         removeChangeOrderItem={removeChangeOrderItem}
         setChangeOrderStatus={setChangeOrderStatus}
         listChangeOrderItems={listChangeOrderItems}
+        onError={setActionError}
+        onSuccess={setActionSuccess}
+      />
+
+      <BillingPanel
+        quote={quote}
+        changeOrders={changeOrders}
+        milestones={billingMilestones}
+        documents={billingDocuments}
+        userRole={user?.role || 'member'}
+        saving={busy}
+        createBillingMilestone={createBillingMilestone}
+        createBillingDocument={createBillingDocument}
+        issueBillingDocument={issueBillingDocument}
         onError={setActionError}
         onSuccess={setActionSuccess}
       />

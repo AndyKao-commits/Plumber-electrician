@@ -269,6 +269,86 @@ export interface ChangeOrderItem {
   updatedAt?: string
 }
 
+/** FIN-003: 請款節點（分期）。 */
+export type BillingMilestoneStatus = 'planned' | 'billed' | 'cancelled'
+
+export interface BillingMilestone {
+  id: string
+  organizationId: string
+  quotationId: string
+  code: string
+  title: string
+  sequence: number
+  plannedAmount: number
+  status: BillingMilestoneStatus
+  createdAt: string
+  updatedAt: string
+  createdBy: string
+}
+
+/** 請款單 ≠ 法定統一發票 ≠ 收款 ≠ 會計收入。 */
+export type BillingDocumentStatus = 'draft' | 'issued' | 'void'
+
+export interface BillingDocument {
+  id: string
+  organizationId: string
+  quotationId: string
+  milestoneId: string
+  documentNumber: string
+  title: string
+  status: BillingDocumentStatus
+  taxMode: TaxMode
+  taxRate: number
+  amountBeforeTax: number
+  taxAmount: number
+  amountAfterTax: number
+  notes?: string | null
+  /** Frozen payload when issued. */
+  snapshot?: BillingDocumentSnapshot | null
+  issuedAt?: string | null
+  issuedBy?: string | null
+  createdAt: string
+  updatedAt: string
+  createdBy: string
+}
+
+export interface BillingDocumentItem {
+  id: string
+  organizationId: string
+  billingDocumentId: string
+  lineNo: number
+  description: string
+  qty: number
+  unit: string
+  unitPrice: number
+  amount: number
+  createdAt: string
+}
+
+export interface BillingDocumentSnapshot {
+  documentNumber: string
+  milestoneCode: string
+  milestoneTitle: string
+  quoteNumber: string
+  title: string
+  customerName: string
+  issuedAt: string
+  taxMode: TaxMode
+  taxRate: number
+  items: Array<{
+    lineNo: number
+    description: string
+    qty: number
+    unit: string
+    unitPrice: number
+    amount: number
+  }>
+  amountBeforeTax: number
+  taxAmount: number
+  amountAfterTax: number
+  notes: string
+}
+
 export interface MaterialStock {
   id: string
   organizationId: string

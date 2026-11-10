@@ -10,10 +10,20 @@ import {
   assertCanMarkQuoteAccept,
 } from '@/domain/permissions'
 import {
+  assertBillingDocumentEditable,
+  assertCanManageBilling,
+  assertIssueDoesNotExceedContract,
+  buildBillingSnapshot,
+  calcBillingTotals,
+  canCreateBillingForQuote,
+  sumIssuedBillingAmount,
+} from '@/domain/billing'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   calcChangeOrderTotals,
   canCreateChangeOrder,
+  effectiveContractAmountWithChangeOrders,
 } from '@/domain/changeOrders'
 import {
   assertCanSoftDeleteQuoteCase,
@@ -34,6 +44,9 @@ import type {
   AppNotice,
   AppUser,
   AttendanceRecord,
+  BillingDocument,
+  BillingDocumentItem,
+  BillingMilestone,
   ChangeOrder,
   ChangeOrderItem,
   ChangeOrderKind,
@@ -69,6 +82,9 @@ const KEYS = {
   quotationVersions: 'eg.quotationVersions.v1',
   changeOrders: 'eg.changeOrders.v1',
   changeOrderItems: 'eg.changeOrderItems.v1',
+  billingMilestones: 'eg.billingMilestones.v1',
+  billingDocuments: 'eg.billingDocuments.v1',
+  billingDocumentItems: 'eg.billingDocumentItems.v1',
   materials: 'eg.materials.v1',
 } as const
 
@@ -94,6 +110,9 @@ const emptyQuoteItems: QuotationItem[] = []
 const emptyQuoteVersions: QuotationVersion[] = []
 const emptyChangeOrders: ChangeOrder[] = []
 const emptyChangeOrderItems: ChangeOrderItem[] = []
+const emptyBillingMilestones: BillingMilestone[] = []
+const emptyBillingDocuments: BillingDocument[] = []
+const emptyBillingDocumentItems: BillingDocumentItem[] = []
 const emptyMaterials: MaterialStock[] = []
 
 function write<T>(key: string, value: T) {
@@ -289,6 +308,9 @@ function seedIfNeeded() {
   write(KEYS.quotationVersions, emptyQuoteVersions)
   write(KEYS.changeOrders, emptyChangeOrders)
   write(KEYS.changeOrderItems, emptyChangeOrderItems)
+  write(KEYS.billingMilestones, emptyBillingMilestones)
+  write(KEYS.billingDocuments, emptyBillingDocuments)
+  write(KEYS.billingDocumentItems, emptyBillingDocumentItems)
   write(KEYS.materials, seededMaterials)
   write(KEYS.shortcuts, [
     'clock',
@@ -1136,6 +1158,258 @@ export const localDb = {
     }
     all[idx] = next
     write(KEYS.changeOrders, all)
+    return next
+  },
+
+  listBillingMilestones(quotationId: string): BillingMilestone[] {
+    return read(KEYS.billingMilestones, emptyBillingMilestones)
+      .filter((m) => m.quotationId === quotationId)
+      .sort((a, b) => a.sequence - b.sequence)
+  },
+
+  listBillingDocuments(quotationId?: string): BillingDocument[] {
+    return read(KEYS.billingDocuments, emptyBillingDocuments)
+      .filter((d) => (quotationId ? d.quotationId === quotationId : true))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  },
+
+  getBillingDocumentItems(documentId: string): BillingDocumentItem[] {
+    return read(KEYS.billingDocumentItems, emptyBillingDocumentItems)
+      .filter((i) => i.billingDocumentId === documentId)
+      .sort((a, b) => a.lineNo - b.lineNo)
+  },
+
+  createBillingMilestone(
+    actor: { id: string; role: string },
+    input: {
+      quotationId: string
+      code: string
+      title: string
+      plannedAmount: number
+      sequence?: number
+    },
+  ): BillingMilestone {
+    assertCanManageBilling(actor.role)
+    const quote = this.getQuotation(input.quotationId)
+    if (!quote) throw new Error('找不到報價')
+    const gate = canCreateBillingForQuote(quote)
+    if (!gate.ok) throw new Error(gate.reason)
+    const code = input.code.trim().toUpperCase()
+    if (!code) throw new Error('請款節點代碼不可空白')
+    const existing = this.listBillingMilestones(input.quotationId)
+    if (existing.some((m) => m.code === code)) {
+      throw new Error('同一報價不可重複請款節點代碼')
+    }
+    const now = new Date().toISOString()
+    const milestone: BillingMilestone = {
+      id: `bms-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      quotationId: input.quotationId,
+      code,
+      title: input.title.trim() || code,
+      sequence: input.sequence ?? existing.length + 1,
+      plannedAmount: Math.max(0, Number(input.plannedAmount) || 0),
+      status: 'planned',
+      createdAt: now,
+      updatedAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.billingMilestones, emptyBillingMilestones)
+    all.push(milestone)
+    write(KEYS.billingMilestones, all)
+    return milestone
+  },
+
+  createBillingDocument(
+    actor: { id: string; role: string },
+    input: {
+      quotationId: string
+      milestoneId: string
+      title?: string
+      notes?: string
+    },
+  ): BillingDocument {
+    assertCanManageBilling(actor.role)
+    const quote = this.getQuotation(input.quotationId)
+    if (!quote) throw new Error('找不到報價')
+    const gate = canCreateBillingForQuote(quote)
+    if (!gate.ok) throw new Error(gate.reason)
+    const milestones = this.listBillingMilestones(input.quotationId)
+    const milestone = milestones.find((m) => m.id === input.milestoneId)
+    if (!milestone) throw new Error('找不到請款節點')
+    if (milestone.status === 'cancelled') {
+      throw new Error('已取消的請款節點不可開立請款')
+    }
+    const issued = this.listBillingDocuments(input.quotationId).filter(
+      (d) => d.milestoneId === milestone.id && d.status === 'issued',
+    )
+    if (issued.length > 0) {
+      throw new Error('此請款節點已有正式請款單，不得重複開立')
+    }
+    const now = new Date().toISOString()
+    const id = `bd-${crypto.randomUUID()}`
+    const doc: BillingDocument = {
+      id,
+      organizationId: ORG_ID,
+      quotationId: input.quotationId,
+      milestoneId: milestone.id,
+      documentNumber: `BILL-${now.slice(0, 10).replace(/-/g, '')}-${id.slice(-4).toUpperCase()}`,
+      title: (input.title || milestone.title).trim(),
+      status: 'draft',
+      taxMode: quote.taxMode,
+      taxRate: quote.taxRate,
+      amountBeforeTax: 0,
+      taxAmount: 0,
+      amountAfterTax: 0,
+      notes: input.notes ?? null,
+      snapshot: null,
+      issuedAt: null,
+      issuedBy: null,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.billingDocuments, emptyBillingDocuments)
+    all.unshift(doc)
+    write(KEYS.billingDocuments, all)
+    if (milestone.plannedAmount > 0) {
+      this.addBillingDocumentItem({
+        billingDocumentId: doc.id,
+        description: milestone.title,
+        qty: 1,
+        unit: '式',
+        unitPrice: milestone.plannedAmount,
+      })
+    }
+    return this.listBillingDocuments(input.quotationId).find((d) => d.id === doc.id)!
+  },
+
+  recalcBillingDocument(documentId: string): BillingDocument {
+    const all = read(KEYS.billingDocuments, emptyBillingDocuments)
+    const idx = all.findIndex((d) => d.id === documentId)
+    if (idx < 0) throw new Error('找不到請款單')
+    const current = all[idx]
+    assertBillingDocumentEditable({ status: current.status })
+    const items = this.getBillingDocumentItems(documentId)
+    const totals = calcBillingTotals({
+      items,
+      taxMode: current.taxMode,
+      taxRate: current.taxRate,
+    })
+    const next: BillingDocument = {
+      ...current,
+      amountBeforeTax: totals.amountBeforeTax,
+      taxAmount: totals.taxAmount,
+      amountAfterTax: totals.amountAfterTax,
+      taxRate: totals.taxRate,
+      updatedAt: new Date().toISOString(),
+    }
+    all[idx] = next
+    write(KEYS.billingDocuments, all)
+    return next
+  },
+
+  addBillingDocumentItem(input: {
+    billingDocumentId: string
+    description: string
+    qty: number
+    unit?: string
+    unitPrice: number
+  }): BillingDocumentItem {
+    const docs = read(KEYS.billingDocuments, emptyBillingDocuments)
+    const doc = docs.find((d) => d.id === input.billingDocumentId)
+    if (!doc) throw new Error('找不到請款單')
+    assertBillingDocumentEditable({ status: doc.status })
+    const existing = this.getBillingDocumentItems(input.billingDocumentId)
+    const amount = calcQuoteItemAmount({
+      qty: input.qty,
+      unitPrice: input.unitPrice,
+    })
+    const item: BillingDocumentItem = {
+      id: `bdi-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      billingDocumentId: input.billingDocumentId,
+      lineNo: existing.length + 1,
+      description: input.description.trim(),
+      qty: input.qty,
+      unit: input.unit || '式',
+      unitPrice: input.unitPrice,
+      amount,
+      createdAt: new Date().toISOString(),
+    }
+    const all = read(KEYS.billingDocumentItems, emptyBillingDocumentItems)
+    all.push(item)
+    write(KEYS.billingDocumentItems, all)
+    this.recalcBillingDocument(input.billingDocumentId)
+    return item
+  },
+
+  issueBillingDocument(
+    actor: { id: string; role: string },
+    documentId: string,
+  ): BillingDocument {
+    assertCanManageBilling(actor.role)
+    const all = read(KEYS.billingDocuments, emptyBillingDocuments)
+    const idx = all.findIndex((d) => d.id === documentId)
+    if (idx < 0) throw new Error('找不到請款單')
+    const current = all[idx]
+    assertBillingDocumentEditable({ status: current.status })
+    const items = this.getBillingDocumentItems(documentId)
+    if (items.length === 0) throw new Error('請先新增請款細項再開立')
+    const fresh = this.recalcBillingDocument(documentId)
+    const quote = this.getQuotation(fresh.quotationId)
+    if (!quote) throw new Error('找不到報價')
+    const contract = effectiveContractAmountWithChangeOrders({
+      quotes: [quote],
+      changeOrders: this.listChangeOrders(quote.id),
+    })
+    const alreadyIssued = sumIssuedBillingAmount(
+      this.listBillingDocuments(quote.id),
+    )
+    assertIssueDoesNotExceedContract({
+      contract,
+      alreadyIssued,
+      issuingAmount: fresh.amountAfterTax,
+    })
+    const otherIssued = this.listBillingDocuments(quote.id).some(
+      (d) =>
+        d.milestoneId === fresh.milestoneId &&
+        d.status === 'issued' &&
+        d.id !== fresh.id,
+    )
+    if (otherIssued) {
+      throw new Error('此請款節點已有正式請款單，不得重複開立')
+    }
+    const milestones = read(KEYS.billingMilestones, emptyBillingMilestones)
+    const mIdx = milestones.findIndex((m) => m.id === fresh.milestoneId)
+    if (mIdx < 0) throw new Error('找不到請款節點')
+    const milestone = milestones[mIdx]
+    const now = new Date().toISOString()
+    const snapshot = buildBillingSnapshot({
+      document: fresh,
+      milestone,
+      quote,
+      items,
+      issuedAt: now,
+    })
+    const next: BillingDocument = {
+      ...fresh,
+      status: 'issued',
+      snapshot,
+      issuedAt: now,
+      issuedBy: actor.id,
+      updatedAt: now,
+    }
+    const docs = read(KEYS.billingDocuments, emptyBillingDocuments)
+    const dIdx = docs.findIndex((d) => d.id === documentId)
+    docs[dIdx] = next
+    write(KEYS.billingDocuments, docs)
+    milestones[mIdx] = {
+      ...milestone,
+      status: 'billed',
+      updatedAt: now,
+    }
+    write(KEYS.billingMilestones, milestones)
     return next
   },
 
