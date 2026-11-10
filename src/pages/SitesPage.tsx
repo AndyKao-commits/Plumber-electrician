@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom'
 import type { ProjectKind } from '@/domain/types'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
-import { canManageCompany } from '@/domain/rules'
 
 export function SitesPage() {
   const { user } = useUser()
@@ -88,11 +87,10 @@ export function SitesPage() {
             <button className="btn btn-steel btn-block" type="submit" disabled={isCreating}>
               {isCreating ? '建立中…' : '建立工地'}
             </button>
-            {!user || !canManageCompany(user.role) ? (
-              <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-                員工也可建立臨時維修案件；正式派工與結案確認仍由老闆處理。
-              </p>
-            ) : null}
+            <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+              全員工程操作權限相同；敏感財務與他人薪資仍受保護
+              {user ? `（目前身分：${user.role}）` : ''}。
+            </p>
           </form>
         ) : null}
       </section>

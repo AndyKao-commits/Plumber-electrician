@@ -1,10 +1,11 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { PRODUCT } from '@/domain/rules'
+import { PRODUCT, ROLES } from '@/domain/rules'
+import { useNotices } from '@/hooks/useNotices'
 import { useUser } from '@/hooks/useUser'
-import { ROLES } from '@/domain/rules'
 
 export function AppShell() {
   const { user, logout, isDemoMode } = useUser()
+  const { unreadCount } = useNotices(user?.id)
 
   return (
     <div className="app-shell">
@@ -17,9 +18,14 @@ export function AppShell() {
           </span>
         </div>
         {user ? (
-          <button className="btn btn-ghost" type="button" onClick={() => void logout()}>
-            登出
-          </button>
+          <div className="row">
+            <NavLink to="/notifications" className="btn btn-ghost">
+              通知{unreadCount > 0 ? ` ${unreadCount}` : ''}
+            </NavLink>
+            <button className="btn btn-ghost" type="button" onClick={() => void logout()}>
+              登出
+            </button>
+          </div>
         ) : null}
       </header>
 
@@ -31,6 +37,7 @@ export function AppShell() {
             首頁
           </NavLink>
           <NavLink to="/sites">工地</NavLink>
+          <NavLink to="/purchases">採購</NavLink>
           <NavLink to="/attendance">出勤</NavLink>
         </nav>
       ) : null}

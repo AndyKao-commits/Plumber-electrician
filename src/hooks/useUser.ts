@@ -16,7 +16,9 @@ async function fetchCurrentUser(): Promise<AppUser | null> {
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, name, role, email, phone, pay_type, line_user_id, created_at')
+      .select(
+        'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, created_at',
+      )
       .eq('id', auth.user.id)
       .maybeSingle()
 
@@ -25,12 +27,14 @@ async function fetchCurrentUser(): Promise<AppUser | null> {
 
     return {
       id: data.id,
+      organizationId: data.organization_id,
       name: data.name,
       role: data.role as UserRole,
       email: data.email ?? auth.user.email ?? undefined,
       phone: data.phone ?? undefined,
       payType: data.pay_type ?? undefined,
       lineUserId: data.line_user_id,
+      financeAuthorized: Boolean(data.finance_authorized),
       createdAt: data.created_at,
     }
   }
@@ -44,18 +48,22 @@ async function fetchDirectory(): Promise<AppUser[]> {
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, name, role, email, phone, pay_type, line_user_id, created_at')
+      .select(
+        'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, created_at',
+      )
       .order('created_at', { ascending: true })
 
     if (error) throw error
     return (data ?? []).map((row) => ({
       id: row.id,
+      organizationId: row.organization_id,
       name: row.name,
       role: row.role as UserRole,
       email: row.email ?? undefined,
       phone: row.phone ?? undefined,
       payType: row.pay_type ?? undefined,
       lineUserId: row.line_user_id,
+      financeAuthorized: Boolean(row.finance_authorized),
       createdAt: row.created_at,
     }))
   }

@@ -1,16 +1,21 @@
 # 工程管家（Plumber-electrician）
 
-水電工程行管理系統：出勤打卡、工地紀錄、採購與薪資規劃中的第一版基礎。
+水電工程行管理系統：出勤、工地、採購、通知與待辦的第一版基礎。
 
-規劃來源：[ChatGPT 對話](https://chatgpt.com/share/6af27b2e-31d8-83ee-9de3-c8287529caeb)
+規劃來源：
 
-## 已完成（本 PR）
+- [對話 1](https://chatgpt.com/share/6af27b2e-31d8-83ee-9de3-c8287529caeb)
+- [對話 2](https://chatgpt.com/share/6af28019-cfd0-83ec-bf49-738de06277ea)
 
-- 產品決策整理：`docs/product-decisions.md`、`src/domain/rules.ts`
-- Vite + React + TypeScript + TanStack Query + PWA
-- `useUser` / `useSites` / `useAttendance` React Query hooks
-- 本機示範模式（無 Supabase 也可登入、打卡、工地 CRUD）
-- Supabase schema 草案：`supabase/schema.sql`
+## 本 PR 已對齊的關鍵決策
+
+- 全員工程操作權限相同；敏感財務／他人薪資／個人打卡明細保密
+- 不主動推播 LINE；通知與待辦只在系統內
+- 採購：最終應付金額 ≥ 3000 需核准；緊急單次 5000、每日 10000
+- 跨日班次允許；Email／密碼為主登入；報價稅務每張選擇
+- 首頁＝今日待辦＋功能宮格
+
+詳見 `docs/product-decisions.md`、`src/domain/rules.ts`。
 
 ## 本機啟動
 
@@ -19,17 +24,14 @@ npm install
 npm run dev
 ```
 
-開啟後可用「老闆」或「師傅阿明」示範帳號登入。
+示範帳號：老闆、師傅阿明、師傅阿強。
 
 ## 接上 Supabase（可選）
 
-1. 複製 `.env.example` 為 `.env.local`，填入 `VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`
-2. 在 Supabase SQL editor 執行 `supabase/schema.sql`
-3. 重新啟動 `npm run dev`
+1. 複製 `.env.example` → `.env.local`
+2. 執行 `supabase/schema.sql`
+3. 重啟 `npm run dev`
 
-## 技術方向
+## 開發策略
 
-- 前端：手機優先 PWA（離線為第一版必要能力）
-- 後端：Supabase（帳號、資料、權限）
-- 部署：Cloudflare（商用免費額度優先）
-- LINE 官方帳號：後續串接快速打卡／回報按鈕
+全部主要功能完成並整合測試後，才正式交給團隊使用。目前為可操作的規格落地基礎，不是完整正式上線版。

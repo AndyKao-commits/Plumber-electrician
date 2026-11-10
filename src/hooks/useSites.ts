@@ -9,28 +9,47 @@ export const siteKeys = {
   detail: (id: string) => [...siteKeys.all, 'detail', id] as const,
 }
 
+function mapSite(row: {
+  id: string
+  organization_id: string
+  name: string
+  kind: ProjectKind
+  status: SiteProject['status']
+  address: string | null
+  customer_name: string | null
+  notes: string | null
+  warranty_until: string | null
+  created_at: string
+  updated_at: string
+  version: number
+}): SiteProject {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    name: row.name,
+    kind: row.kind,
+    status: row.status,
+    address: row.address ?? undefined,
+    customerName: row.customer_name ?? undefined,
+    notes: row.notes ?? undefined,
+    warrantyUntil: row.warranty_until,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    version: row.version ?? 1,
+  }
+}
+
 async function fetchSites(): Promise<SiteProject[]> {
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase
       .from('sites')
       .select(
-        'id, name, kind, status, address, customer_name, notes, warranty_until, created_at, updated_at',
+        'id, organization_id, name, kind, status, address, customer_name, notes, warranty_until, created_at, updated_at, version',
       )
       .order('updated_at', { ascending: false })
 
     if (error) throw error
-    return (data ?? []).map((row) => ({
-      id: row.id,
-      name: row.name,
-      kind: row.kind,
-      status: row.status,
-      address: row.address ?? undefined,
-      customerName: row.customer_name ?? undefined,
-      notes: row.notes ?? undefined,
-      warrantyUntil: row.warranty_until,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    }))
+    return (data ?? []).map(mapSite)
   }
 
   return localDb.getSites()
@@ -45,6 +64,7 @@ async function createLocalSite(input: {
   const now = new Date().toISOString()
   const site: SiteProject = {
     id: `site-${crypto.randomUUID()}`,
+    organizationId: localDb.orgId,
     name: input.name.trim(),
     kind: input.kind,
     status: 'active',
@@ -52,6 +72,7 @@ async function createLocalSite(input: {
     customerName: input.customerName?.trim() || undefined,
     createdAt: now,
     updatedAt: now,
+    version: 1,
   }
   localDb.upsertSite(site)
   return site
@@ -83,22 +104,11 @@ export function useSites() {
             status: 'active',
           })
           .select(
-            'id, name, kind, status, address, customer_name, notes, warranty_until, created_at, updated_at',
+            'id, organization_id, name, kind, status, address, customer_name, notes, warranty_until, created_at, updated_at, version',
           )
           .single()
         if (error) throw error
-        return {
-          id: data.id,
-          name: data.name,
-          kind: data.kind,
-          status: data.status,
-          address: data.address ?? undefined,
-          customerName: data.customer_name ?? undefined,
-          notes: data.notes ?? undefined,
-          warrantyUntil: data.warranty_until,
-          createdAt: data.created_at,
-          updatedAt: data.updated_at,
-        } satisfies SiteProject
+        return mapSite(data)
       }
       return createLocalSite(input)
     },
@@ -125,24 +135,13 @@ export function useSite(id: string | undefined) {
         const { data, error } = await supabase
           .from('sites')
           .select(
-            'id, name, kind, status, address, customer_name, notes, warranty_until, created_at, updated_at',
+            'id, organization_id, name, kind, status, address, customer_name, notes, warranty_until, created_at, updated_at, version',
           )
           .eq('id', id)
           .maybeSingle()
         if (error) throw error
         if (!data) return null
-        return {
-          id: data.id,
-          name: data.name,
-          kind: data.kind,
-          status: data.status,
-          address: data.address ?? undefined,
-          customerName: data.customer_name ?? undefined,
-          notes: data.notes ?? undefined,
-          warrantyUntil: data.warranty_until,
-          createdAt: data.created_at,
-          updatedAt: data.updated_at,
-        } satisfies SiteProject
+        return mapSite(data)
       }
       return localDb.getSite(id)
     },

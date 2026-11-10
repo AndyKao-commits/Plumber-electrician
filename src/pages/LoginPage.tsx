@@ -16,7 +16,7 @@ export function LoginPage() {
           <div className="badge">水電工程行</div>
           <h1>{PRODUCT.name}</h1>
           <p className="lead">
-            一鍵打卡、工地紀錄、採購與薪資結算。先快速上班，再補登工地。
+            一鍵打卡、工地紀錄、採購與系統內通知。全員工程權限相同，敏感財務另保護。
           </p>
         </section>
 

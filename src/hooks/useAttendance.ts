@@ -32,6 +32,34 @@ async function getPosition(): Promise<{
   })
 }
 
+function mapAttendance(row: {
+  id: string
+  organization_id: string
+  user_id: string
+  status: AttendanceRecord['status']
+  clock_in_at: string
+  clock_out_at: string | null
+  site_id: string | null
+  job_type: JobType | null
+  latitude: number | null
+  longitude: number | null
+  note: string | null
+}): AttendanceRecord {
+  return {
+    id: row.id,
+    organizationId: row.organization_id,
+    userId: row.user_id,
+    status: row.status,
+    clockInAt: row.clock_in_at,
+    clockOutAt: row.clock_out_at,
+    siteId: row.site_id,
+    jobType: row.job_type,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    note: row.note,
+  }
+}
+
 export function useAttendance(userId: string | undefined) {
   const queryClient = useQueryClient()
 
@@ -44,25 +72,14 @@ export function useAttendance(userId: string | undefined) {
         const { data, error } = await supabase
           .from('attendance')
           .select(
-            'id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
+            'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
           )
           .eq('user_id', userId)
           .eq('status', 'clocked_in')
           .maybeSingle()
         if (error) throw error
         if (!data) return null
-        return {
-          id: data.id,
-          userId: data.user_id,
-          status: data.status,
-          clockInAt: data.clock_in_at,
-          clockOutAt: data.clock_out_at,
-          siteId: data.site_id,
-          jobType: data.job_type,
-          latitude: data.latitude,
-          longitude: data.longitude,
-          note: data.note,
-        }
+        return mapAttendance(data)
       }
       return localDb.getOpenAttendance(userId)
     },
@@ -77,24 +94,13 @@ export function useAttendance(userId: string | undefined) {
         const { data, error } = await supabase
           .from('attendance')
           .select(
-            'id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
+            'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
           )
           .eq('user_id', userId)
           .order('clock_in_at', { ascending: false })
           .limit(30)
         if (error) throw error
-        return (data ?? []).map((row) => ({
-          id: row.id,
-          userId: row.user_id,
-          status: row.status,
-          clockInAt: row.clock_in_at,
-          clockOutAt: row.clock_out_at,
-          siteId: row.site_id,
-          jobType: row.job_type,
-          latitude: row.latitude,
-          longitude: row.longitude,
-          note: row.note,
-        }))
+        return (data ?? []).map(mapAttendance)
       }
       return localDb
         .getAttendance()
@@ -102,6 +108,17 @@ export function useAttendance(userId: string | undefined) {
         .slice(0, 30)
     },
   })
+
+  const invalidate = () => {
+    if (!userId) return
+    void queryClient.invalidateQueries({
+      queryKey: attendanceKeys.open(userId),
+    })
+    void queryClient.invalidateQueries({
+      queryKey: attendanceKeys.history(userId),
+    })
+    void queryClient.invalidateQueries({ queryKey: ['team'] })
+  }
 
   const clockInMutation = useMutation({
     mutationFn: async (input?: { siteId?: string; jobType?: JobType }) => {
@@ -122,29 +139,20 @@ export function useAttendance(userId: string | undefined) {
             longitude: pos.longitude,
           })
           .select(
-            'id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
+            'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
           )
           .single()
         if (error) throw error
-        return {
-          id: data.id,
-          userId: data.user_id,
-          status: data.status,
-          clockInAt: data.clock_in_at,
-          clockOutAt: data.clock_out_at,
-          siteId: data.site_id,
-          jobType: data.job_type,
-          latitude: data.latitude,
-          longitude: data.longitude,
-          note: data.note,
-        } satisfies AttendanceRecord
+        return mapAttendance(data)
       }
 
       const open = localDb.getOpenAttendance(userId)
       if (open) throw new Error('已經在上班中，請先下班或補登工地')
 
+      const user = localDb.getUser(userId)
       const record: AttendanceRecord = {
         id: `att-${crypto.randomUUID()}`,
+        organizationId: user?.organizationId ?? localDb.orgId,
         userId,
         status: 'clocked_in',
         clockInAt: now,
@@ -157,13 +165,7 @@ export function useAttendance(userId: string | undefined) {
       return record
     },
     onSuccess: () => {
-      if (!userId) return
-      void queryClient.invalidateQueries({
-        queryKey: attendanceKeys.open(userId),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: attendanceKeys.history(userId),
-      })
+      invalidate()
       void queryClient.invalidateQueries({ queryKey: userKeys.me() })
     },
   })
@@ -181,22 +183,11 @@ export function useAttendance(userId: string | undefined) {
           .update({ status: 'clocked_out', clock_out_at: now })
           .eq('id', open.id)
           .select(
-            'id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
+            'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
           )
           .single()
         if (error) throw error
-        return {
-          id: data.id,
-          userId: data.user_id,
-          status: data.status,
-          clockInAt: data.clock_in_at,
-          clockOutAt: data.clock_out_at,
-          siteId: data.site_id,
-          jobType: data.job_type,
-          latitude: data.latitude,
-          longitude: data.longitude,
-          note: data.note,
-        } satisfies AttendanceRecord
+        return mapAttendance(data)
       }
 
       const open = localDb.getOpenAttendance(userId)
@@ -209,15 +200,7 @@ export function useAttendance(userId: string | undefined) {
       localDb.saveAttendance(closed)
       return closed
     },
-    onSuccess: () => {
-      if (!userId) return
-      void queryClient.invalidateQueries({
-        queryKey: attendanceKeys.open(userId),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: attendanceKeys.history(userId),
-      })
-    },
+    onSuccess: invalidate,
   })
 
   const assignSiteMutation = useMutation({
@@ -235,22 +218,11 @@ export function useAttendance(userId: string | undefined) {
           })
           .eq('id', open.id)
           .select(
-            'id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
+            'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
           )
           .single()
         if (error) throw error
-        return {
-          id: data.id,
-          userId: data.user_id,
-          status: data.status,
-          clockInAt: data.clock_in_at,
-          clockOutAt: data.clock_out_at,
-          siteId: data.site_id,
-          jobType: data.job_type,
-          latitude: data.latitude,
-          longitude: data.longitude,
-          note: data.note,
-        } satisfies AttendanceRecord
+        return mapAttendance(data)
       }
 
       const updated: AttendanceRecord = {
@@ -261,15 +233,7 @@ export function useAttendance(userId: string | undefined) {
       localDb.saveAttendance(updated)
       return updated
     },
-    onSuccess: () => {
-      if (!userId) return
-      void queryClient.invalidateQueries({
-        queryKey: attendanceKeys.open(userId),
-      })
-      void queryClient.invalidateQueries({
-        queryKey: attendanceKeys.history(userId),
-      })
-    },
+    onSuccess: invalidate,
   })
 
   return {

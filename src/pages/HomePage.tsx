@@ -2,16 +2,20 @@ import { Link } from 'react-router-dom'
 import {
   DEFAULT_PURCHASE_RULES,
   FEATURE_FLAGS,
+  HOME_SHORTCUTS,
   PRODUCT,
 } from '@/domain/rules'
 import { useAttendance } from '@/hooks/useAttendance'
+import { useNotices } from '@/hooks/useNotices'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
 import { formatTaipei } from '@/lib/time'
+import { localDb } from '@/lib/localDb'
 
 export function HomePage() {
   const { user } = useUser()
   const { sites } = useSites()
+  const { todos, unreadCount } = useNotices(user?.id)
   const {
     openShift,
     clockIn,
@@ -21,13 +25,15 @@ export function HomePage() {
   } = useAttendance(user?.id)
 
   const busy = isClockingIn || isClockingOut
+  const shortcutIds = localDb.getShortcutIds()
+  const shortcuts = HOME_SHORTCUTS.filter((s) => shortcutIds.includes(s.id))
 
   return (
     <div className="stack fade-up">
       <section className="panel hero-panel stack">
         <div className="row between">
           <div>
-            <div className="badge">今日作業</div>
+            <div className="badge">今日待辦＋快捷</div>
             <h2 style={{ margin: '10px 0 4px', fontSize: '1.7rem' }}>
               你好，{user?.name}
             </h2>
@@ -35,13 +41,17 @@ export function HomePage() {
               {PRODUCT.tagline} · {formatTaipei(new Date(), 'M月d日 EEEE')}
             </p>
           </div>
-          {openShift ? (
-            <div className="row">
-              <span className="pulse-dot" aria-hidden />
-              <span>上班中</span>
-            </div>
-          ) : null}
+          <Link to="/notifications" className="badge steel">
+            通知 {unreadCount}
+          </Link>
         </div>
+
+        {openShift ? (
+          <div className="row">
+            <span className="pulse-dot" aria-hidden />
+            <span>上班中</span>
+          </div>
+        ) : null}
 
         {openShift ? (
           <button
@@ -64,10 +74,44 @@ export function HomePage() {
         )}
 
         <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-          {FEATURE_FLAGS.gpsOptionalOnClockIn
-            ? 'GPS 僅輔助定位，不會擋住一鍵打卡。工地可稍後補登。'
-            : '請完成打卡。'}
+          {FEATURE_FLAGS.lineProactivePush
+            ? 'LINE 推播啟用中'
+            : '不主動推播 LINE；待辦與通知只在系統內顯示。'}
+          {FEATURE_FLAGS.gpsOptionalOnClockIn ? ' GPS 僅輔助定位。' : ''}
         </p>
+      </section>
+
+      <section className="panel stack">
+        <div className="row between">
+          <strong>快捷功能</strong>
+          <span className="muted" style={{ fontSize: '0.85rem' }}>
+            可自訂順序（之後）
+          </span>
+        </div>
+        <div className="shortcut-grid">
+          {shortcuts.map((item) => (
+            <Link key={item.id} className="shortcut-tile" to={item.path}>
+              {item.label}
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel stack">
+        <div className="row between">
+          <strong>今日待辦</strong>
+          <Link to="/todos">全部</Link>
+        </div>
+        {todos.length === 0 ? (
+          <div className="empty">目前沒有待辦</div>
+        ) : (
+          todos.slice(0, 4).map((todo) => (
+            <Link key={todo.id} className="site-link" to={todo.href || '/todos'}>
+              <h3>{todo.title}</h3>
+              <p>{todo.detail}</p>
+            </Link>
+          ))
+        )}
       </section>
 
       {openShift && !openShift.siteId ? (
@@ -87,44 +131,26 @@ export function HomePage() {
               </Link>
             ))}
           </div>
-          <Link className="btn btn-steel btn-block" to="/attendance">
-            到出勤頁補登
-          </Link>
         </section>
       ) : null}
 
       <section className="panel stack">
-        <div className="row between">
-          <strong>工地速覽</strong>
-          <Link to="/sites">全部</Link>
-        </div>
-        <div className="grid-2">
-          {sites.slice(0, 4).map((site) => (
-            <Link key={site.id} className="site-link" to={`/sites/${site.id}`}>
-              <div className="badge steel" style={{ marginBottom: 8 }}>
-                {site.kind === 'formal' ? '正式' : '臨時'}
-              </div>
-              <h3>{site.name}</h3>
-              <p>{site.customerName || site.address || '尚未填客戶／地址'}</p>
-            </Link>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel stack">
-        <strong>已確認採購規則</strong>
+        <strong>採購額度（已確認）</strong>
         <div className="grid-2">
           <div className="site-link">
             <p>一般採購事前核准</p>
             <h3>NT${DEFAULT_PURCHASE_RULES.preApprovalThresholdNtd.toLocaleString()}+</h3>
           </div>
           <div className="site-link">
-            <p>緊急採購單次上限</p>
-            <h3>NT${DEFAULT_PURCHASE_RULES.emergencySingleLimitNtd.toLocaleString()}</h3>
+            <p>緊急單次／每日</p>
+            <h3>
+              {DEFAULT_PURCHASE_RULES.emergencySingleLimitNtd.toLocaleString()} /{' '}
+              {DEFAULT_PURCHASE_RULES.emergencyDailyLimitNtd?.toLocaleString()}
+            </h3>
           </div>
         </div>
         <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-          每日緊急採購累計上限與供應商信用額度仍待確認。
+          以最終應付金額（折扣後含稅運）判斷；材料成本採移動加權平均。
         </p>
       </section>
     </div>

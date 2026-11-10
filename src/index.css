@@ -305,6 +305,33 @@ button {
   font-size: 0.9rem;
 }
 
+.shortcut-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.shortcut-tile {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  padding: 12px 8px;
+  text-align: center;
+  font-weight: 700;
+  border-radius: 16px;
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--steel);
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease;
+}
+
+.shortcut-tile:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--amber) 45%, var(--line));
+}
+
 .bottom-nav {
   position: fixed;
   left: 50%;
@@ -312,7 +339,7 @@ button {
   transform: translateX(-50%);
   width: min(690px, calc(100% - 24px));
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
   padding: 8px;
   border-radius: 18px;
