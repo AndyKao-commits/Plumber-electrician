@@ -3,6 +3,7 @@ import { assertOnlineForOp } from '@/domain/offlineOps'
 import type {
   ChangeOrderKind,
   ChangeOrderStatus,
+  OperatingCostKind,
   PaymentMethod,
   QuotationItemKind,
   QuoteExportFormat,
@@ -31,6 +32,7 @@ export const quoteKeys = {
   billingAll: ['billing'] as const,
   payments: (quoteId: string) => ['payments', quoteId] as const,
   refunds: (quoteId: string) => ['refunds', quoteId] as const,
+  operatingCosts: (quoteId: string) => ['operating-costs', quoteId] as const,
 }
 
 export function useQuotes(userId: string | undefined) {
@@ -272,6 +274,9 @@ export function useQuoteDetail(quoteId: string | undefined) {
     })
     void queryClient.invalidateQueries({
       queryKey: quoteKeys.refunds(quoteId),
+    })
+    void queryClient.invalidateQueries({
+      queryKey: quoteKeys.operatingCosts(quoteId),
     })
   }
 
@@ -735,6 +740,48 @@ export function useQuoteDetail(quoteId: string | undefined) {
     onSuccess: invalidateAll,
   })
 
+  const operatingCostsQuery = useQuery({
+    queryKey: quoteId
+      ? quoteKeys.operatingCosts(quoteId)
+      : ['operating-costs', 'none'],
+    enabled: Boolean(quoteId),
+    queryFn: async () => {
+      if (!quoteId) return []
+      try {
+        if (formal) return supabaseRepos.listCaseOperatingCosts(quoteId)
+        return localDb.listCaseOperatingCosts(quoteId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入營運成本'))
+      }
+    },
+  })
+
+  const createCaseOperatingCost = useMutation({
+    mutationFn: async (input: {
+      kind: OperatingCostKind
+      description: string
+      amount: number
+      warrantyFree?: boolean
+    }) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.createCaseOperatingCost(user, {
+            quotationId: quoteId,
+            ...input,
+          })
+        : localDb.createCaseOperatingCost(
+            {
+              id: user.id,
+              role: user.role,
+              financeAuthorized: user.financeAuthorized,
+            },
+            { quotationId: quoteId, ...input },
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
   return {
     quote: quoteQuery.data ?? null,
     items: itemsQuery.data ?? [],
@@ -748,6 +795,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
     advanceApplications: paymentsQuery.data?.advanceApplications ?? [],
     creditNotes: refundsQuery.data?.creditNotes ?? [],
     refunds: refundsQuery.data?.refunds ?? [],
+    operatingCosts: operatingCostsQuery.data ?? [],
     isLoading: quoteQuery.isLoading || itemsQuery.isLoading,
     error: quoteQuery.error || itemsQuery.error,
     updateMeta: updateMeta.mutateAsync,
@@ -773,6 +821,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
     applyCustomerAdvance: applyCustomerAdvance.mutateAsync,
     createCustomerCreditNote: createCustomerCreditNote.mutateAsync,
     createCustomerRefund: createCustomerRefund.mutateAsync,
+    createCaseOperatingCost: createCaseOperatingCost.mutateAsync,
     saving:
       updateMeta.isPending ||
       addItem.isPending ||
@@ -795,6 +844,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
       createCustomerAdvance.isPending ||
       applyCustomerAdvance.isPending ||
       createCustomerCreditNote.isPending ||
-      createCustomerRefund.isPending,
+      createCustomerRefund.isPending ||
+      createCaseOperatingCost.isPending,
   }
 }

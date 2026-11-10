@@ -31,6 +31,7 @@ import {
 import { formatTaipei } from '@/lib/time'
 import { BillingPanel } from '@/pages/BillingPanel'
 import { ChangeOrdersPanel } from '@/pages/ChangeOrdersPanel'
+import { FinanceSummaryPanel } from '@/pages/FinanceSummaryPanel'
 import { PaymentsPanel } from '@/pages/PaymentsPanel'
 import { RefundsPanel } from '@/pages/RefundsPanel'
 
@@ -77,6 +78,8 @@ export function QuoteDetailPage() {
     refunds,
     createCustomerCreditNote,
     createCustomerRefund,
+    operatingCosts,
+    createCaseOperatingCost,
     saving,
   } = useQuoteDetail(quoteId)
 
@@ -868,6 +871,22 @@ export function QuoteDetailPage() {
         saving={busy}
         createCustomerCreditNote={createCustomerCreditNote}
         createCustomerRefund={createCustomerRefund}
+        onError={setActionError}
+        onSuccess={setActionSuccess}
+      />
+
+      <FinanceSummaryPanel
+        quote={quote}
+        changeOrders={changeOrders}
+        billingDocuments={billingDocuments}
+        payments={payments}
+        creditNotes={creditNotes}
+        refunds={refunds}
+        operatingCosts={operatingCosts}
+        userRole={user?.role || 'member'}
+        financeAuthorized={Boolean(user?.financeAuthorized)}
+        saving={busy}
+        createCaseOperatingCost={createCaseOperatingCost}
         onError={setActionError}
         onSuccess={setActionSuccess}
       />

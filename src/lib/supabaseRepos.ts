@@ -47,6 +47,10 @@ import {
   sumIssuedCredits,
 } from '@/domain/refunds'
 import {
+  assertCanRecordOperatingCost,
+  assertOperatingCostAmount,
+} from '@/domain/financeSummary'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   canCreateChangeOrder,
@@ -75,9 +79,11 @@ import type {
   ChangeOrderKind,
   ChangeOrderStatus,
   CustomerAdvance,
+  CaseOperatingCost,
   CustomerCreditNote,
   CustomerPayment,
   CustomerRefund,
+  OperatingCostKind,
   MaterialStock,
   PaymentAllocation,
   PaymentMethod,
@@ -349,6 +355,24 @@ function mapCustomerRefundRow(row: Record<string, unknown>): CustomerRefund {
     status: row.status as CustomerRefund['status'],
     reason: String(row.reason),
     refundedAt: String(row.refunded_at),
+    createdAt: String(row.created_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapCaseOperatingCostRow(
+  row: Record<string, unknown>,
+): CaseOperatingCost {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    quotationId: String(row.quotation_id),
+    kind: row.kind as OperatingCostKind,
+    description: String(row.description),
+    amount: Number(row.amount),
+    status: row.status as CaseOperatingCost['status'],
+    warrantyFree: Boolean(row.warranty_free),
+    confirmedAt: String(row.confirmed_at),
     createdAt: String(row.created_at),
     createdBy: String(row.created_by ?? ''),
   }
@@ -2250,6 +2274,60 @@ export const supabaseRepos = {
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法登錄退款'))
     return mapCustomerRefundRow(data as Record<string, unknown>)
+  },
+
+  async listCaseOperatingCosts(
+    quotationId: string,
+  ): Promise<CaseOperatingCost[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('case_operating_costs')
+      .select(
+        'id, organization_id, quotation_id, kind, description, amount, status, warranty_free, confirmed_at, created_at, created_by',
+      )
+      .eq('quotation_id', qid)
+      .order('confirmed_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入營運成本'))
+    return (data ?? []).map((row) =>
+      mapCaseOperatingCostRow(row as Record<string, unknown>),
+    )
+  },
+
+  async createCaseOperatingCost(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      kind: OperatingCostKind
+      description: string
+      amount: number
+      warrantyFree?: boolean
+    },
+  ): Promise<CaseOperatingCost> {
+    assertCanRecordOperatingCost(
+      actor.role,
+      Boolean(actor.financeAuthorized),
+    )
+    assertOperatingCostAmount(input.amount)
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    if (quote.deletedAt) throw new AppError('報價案件已刪除')
+    const { data, error } = await sb()
+      .from('case_operating_costs')
+      .insert({
+        quotation_id: quote.id,
+        kind: input.kind,
+        description: input.description.trim() || '已確認營運成本',
+        amount: Number(input.amount),
+        status: 'confirmed',
+        warranty_free: Boolean(input.warrantyFree),
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, quotation_id, kind, description, amount, status, warranty_free, confirmed_at, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登錄營運成本'))
+    return mapCaseOperatingCostRow(data as Record<string, unknown>)
   },
 
   async listQuotationItems(quotationId: string): Promise<QuotationItem[]> {

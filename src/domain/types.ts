@@ -439,6 +439,27 @@ export interface CustomerRefund {
   createdBy: string
 }
 
+/**
+ * FIN-006: 已確認營運成本（≠ 薪資自動認列 ≠ 會計收入）。
+ * 免費保固仍可登錄成本（warrantyFree）；客戶收費可為 0。
+ */
+export type OperatingCostKind = 'material' | 'labor_ops' | 'other'
+export type OperatingCostStatus = 'confirmed' | 'void'
+
+export interface CaseOperatingCost {
+  id: string
+  organizationId: string
+  quotationId: string
+  kind: OperatingCostKind
+  description: string
+  amount: number
+  status: OperatingCostStatus
+  warrantyFree: boolean
+  confirmedAt: string
+  createdAt: string
+  createdBy: string
+}
+
 export interface MaterialStock {
   id: string
   organizationId: string
