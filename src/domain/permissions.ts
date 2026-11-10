@@ -3,6 +3,10 @@ import type { UserRole } from './types'
 /** Spec roles (Owner / Admin / Member). Legacy boss→Owner, employee→Member. */
 export type SpecRole = 'owner' | 'admin' | 'member'
 
+/**
+ * Permission dictionary — ops vs sensitive finance are separate.
+ * Admin may approve purchases / publish quotes without finance.* grants.
+ */
 export const PERMISSIONS = {
   ORG_READ: 'org.read',
   SITE_READ: 'site.read',
@@ -17,18 +21,34 @@ export const PERMISSIONS = {
   QUOTE_PUBLISH: 'quote.publish',
   INVENTORY_READ: 'inventory.read',
   INVENTORY_INBOUND: 'inventory.inbound',
+  /** Stocktake / variance posting — Member allowed by policy; UI in next batch. */
   INVENTORY_ADJUST: 'inventory.adjust',
   NOTICE_OWN: 'notice.own',
   TEAM_SUMMARY: 'team.summary',
+  /** Sensitive finance family — NOT implied by Admin purchase/quote ops. */
+  FINANCE_READ: 'finance.read',
+  FINANCE_COST_READ: 'finance.cost.read',
+  FINANCE_WRITE: 'finance.write',
   SENSITIVE_FINANCE: 'sensitive.finance',
   SENSITIVE_PAYROLL_OTHERS: 'sensitive.payroll_others',
   SENSITIVE_MARGIN: 'sensitive.margin',
+  SENSITIVE_BANK: 'sensitive.bank',
+  SENSITIVE_ACCESS_CONTROL: 'sensitive.access_control',
   PROFILE_PRIVILEGE_EDIT: 'profile.privilege_edit',
 } as const
 
 export type PermissionCode = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]
 
-/** Deny-by-default matrices. Admin gets Member + ops, not sensitive by default. */
+const SENSITIVE_FINANCE_FAMILY: readonly PermissionCode[] = [
+  PERMISSIONS.FINANCE_READ,
+  PERMISSIONS.FINANCE_COST_READ,
+  PERMISSIONS.FINANCE_WRITE,
+  PERMISSIONS.SENSITIVE_FINANCE,
+  PERMISSIONS.SENSITIVE_MARGIN,
+  PERMISSIONS.SENSITIVE_BANK,
+]
+
+/** Deny-by-default. Admin = ops without sensitive finance. */
 const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
   owner: [
     PERMISSIONS.ORG_READ,
@@ -46,9 +66,14 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.INVENTORY_ADJUST,
     PERMISSIONS.NOTICE_OWN,
     PERMISSIONS.TEAM_SUMMARY,
+    PERMISSIONS.FINANCE_READ,
+    PERMISSIONS.FINANCE_COST_READ,
+    PERMISSIONS.FINANCE_WRITE,
     PERMISSIONS.SENSITIVE_FINANCE,
     PERMISSIONS.SENSITIVE_PAYROLL_OTHERS,
     PERMISSIONS.SENSITIVE_MARGIN,
+    PERMISSIONS.SENSITIVE_BANK,
+    PERMISSIONS.SENSITIVE_ACCESS_CONTROL,
     PERMISSIONS.PROFILE_PRIVILEGE_EDIT,
   ],
   admin: [
@@ -66,6 +91,8 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.INVENTORY_ADJUST,
     PERMISSIONS.NOTICE_OWN,
     PERMISSIONS.TEAM_SUMMARY,
+    // Explicitly NO finance.read / finance.cost.read / finance.write /
+    // sensitive.finance / margin / payroll / bank / access_control
   ],
   member: [
     PERMISSIONS.ORG_READ,
@@ -77,6 +104,7 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.QUOTE_CREATE,
     PERMISSIONS.INVENTORY_READ,
     PERMISSIONS.INVENTORY_INBOUND,
+    PERMISSIONS.INVENTORY_ADJUST,
     PERMISSIONS.NOTICE_OWN,
     PERMISSIONS.TEAM_SUMMARY,
   ],
@@ -103,14 +131,14 @@ export function hasPermission(
   const spec = mapLegacyRoleToSpec(role)
   const granted = ROLE_PERMISSIONS[spec]
 
-  if (permission === PERMISSIONS.SENSITIVE_FINANCE) {
+  if (SENSITIVE_FINANCE_FAMILY.includes(permission)) {
     return Boolean(opts?.financeAuthorized) || granted.includes(permission)
   }
   if (permission === PERMISSIONS.SENSITIVE_PAYROLL_OTHERS) {
     return Boolean(opts?.payrollAuthorized) || granted.includes(permission)
   }
-  if (permission === PERMISSIONS.SENSITIVE_MARGIN) {
-    return Boolean(opts?.financeAuthorized) || granted.includes(permission)
+  if (permission === PERMISSIONS.SENSITIVE_ACCESS_CONTROL) {
+    return granted.includes(permission)
   }
 
   return granted.includes(permission)
@@ -171,4 +199,13 @@ export function assertSameOrganization(
   if (!actorOrgId || !resourceOrgId || actorOrgId !== resourceOrgId) {
     throw new Error('不得存取其他組織資料')
   }
+}
+
+/** Admin ops vs finance separation helpers for UI/API checks. */
+export function adminCanApproveWithoutFinance(role: UserRole | SpecRole | string): boolean {
+  return (
+    hasPermission(role, PERMISSIONS.PURCHASE_APPROVE) &&
+    !hasPermission(role, PERMISSIONS.FINANCE_READ) &&
+    mapLegacyRoleToSpec(role) === 'admin'
+  )
 }

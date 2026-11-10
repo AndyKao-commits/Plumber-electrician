@@ -205,6 +205,20 @@ describe('權限與組織隔離', () => {
   it('member 預設無敏感財務', () => {
     expect(hasPermission('employee', PERMISSIONS.SENSITIVE_FINANCE)).toBe(false)
   })
+  it('Admin 可核准採購與發布報價，但無 finance.*', () => {
+    expect(hasPermission('admin', PERMISSIONS.PURCHASE_APPROVE)).toBe(true)
+    expect(hasPermission('admin', PERMISSIONS.QUOTE_PUBLISH)).toBe(true)
+    expect(hasPermission('admin', PERMISSIONS.FINANCE_READ)).toBe(false)
+    expect(hasPermission('admin', PERMISSIONS.FINANCE_COST_READ)).toBe(false)
+    expect(hasPermission('admin', PERMISSIONS.FINANCE_WRITE)).toBe(false)
+    expect(hasPermission('admin', PERMISSIONS.SENSITIVE_MARGIN)).toBe(false)
+    expect(hasPermission('admin', PERMISSIONS.SENSITIVE_PAYROLL_OTHERS)).toBe(false)
+    expect(hasPermission('admin', PERMISSIONS.SENSITIVE_BANK)).toBe(false)
+  })
+  it('Member 具備盤點調整權限代碼（UI 下一批）', () => {
+    expect(hasPermission('member', PERMISSIONS.INVENTORY_ADJUST)).toBe(true)
+    expect(hasPermission('employee', PERMISSIONS.INVENTORY_INBOUND)).toBe(true)
+  })
   it('self-approve 永遠拒絕', () => {
     expect(hasPermission('boss', PERMISSIONS.PURCHASE_SELF_APPROVE)).toBe(false)
   })

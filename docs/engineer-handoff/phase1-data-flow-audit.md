@@ -35,3 +35,9 @@
 `supabase/migrations/20261110_formal_persistence_security.sql`
 
 （不刪資料；補 RLS、org 觸發器、採購核准欄位、凍結報價保護。）
+
+## 已確認決策（本批）
+
+- **DEC-005**：Admin 可核准採購／發布報價；不自動取得 finance.*／毛利／他人薪資／銀行／門禁。
+- **DEC-006**：Member 可盤點（政策）；本批僅入庫＋加權平均＋負庫存阻擋；盤點 UI／過帳下一批。
+- Migration 驗證通過後才授權 Vercel 部署；部署前須完整回報檢查表。
