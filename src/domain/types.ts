@@ -91,6 +91,9 @@ export interface PurchaseRecord {
   approvedBy?: string | null
   approvedAt?: string | null
   rejectedReason?: string | null
+  inboundMaterialId?: string | null
+  inboundQty?: number | null
+  inboundAt?: string | null
 }
 
 export type TaxMode = 'inclusive' | 'exclusive' | 'zero'
@@ -188,5 +191,26 @@ export interface ConstructionReport {
   body: string
   photoUploadId?: string | null
   photoPreviewUrl?: string | null
+  createdAt: string
+}
+
+export type DefectSeverity = 'normal' | 'safety'
+export type DefectStatus = 'open' | 'fixed' | 'reinspected' | 'closed'
+
+export interface SiteDefect {
+  id: string
+  organizationId: string
+  siteId: string
+  reportedBy: string
+  reporterName?: string
+  title: string
+  detail: string
+  severity: DefectSeverity
+  status: DefectStatus
+  fixedAt?: string | null
+  fixedNote?: string | null
+  reinspectedAt?: string | null
+  reinspectNote?: string | null
+  closedAt?: string | null
   createdAt: string
 }

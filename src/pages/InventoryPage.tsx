@@ -5,11 +5,21 @@ import { formatTaipei } from '@/lib/time'
 
 export function InventoryPage() {
   const { user } = useUser()
-  const { materials, inbound, isInbound, inboundError } = useInventory(user?.id)
+  const {
+    materials,
+    inbound,
+    isInbound,
+    inboundError,
+    createMaterial,
+    isCreatingMaterial,
+    createMaterialError,
+  } = useInventory(user?.id)
   const [materialId, setMaterialId] = useState('')
   const [qty, setQty] = useState('10')
   const [unitCost, setUnitCost] = useState('50')
   const [formError, setFormError] = useState<string | null>(null)
+  const [newName, setNewName] = useState('')
+  const [newUnit, setNewUnit] = useState('式')
 
   const selectedMaterialId =
     materialId && materials.some((m) => m.id === materialId)
@@ -59,7 +69,54 @@ export function InventoryPage() {
       </section>
 
       <section className="panel stack">
-        <strong>模擬入庫</strong>
+        <strong>新增材料</strong>
+        <form
+          className="stack"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void createMaterial({ name: newName, unit: newUnit }).then(() => {
+              setNewName('')
+              setNewUnit('式')
+            })
+          }}
+        >
+          <div className="grid-2">
+            <div className="field">
+              <label htmlFor="mat-name">名稱</label>
+              <input
+                id="mat-name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                required
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="mat-unit">單位</label>
+              <input
+                id="mat-unit"
+                value={newUnit}
+                onChange={(e) => setNewUnit(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+          {createMaterialError ? (
+            <p style={{ color: 'var(--danger)', margin: 0 }}>
+              {createMaterialError.message}
+            </p>
+          ) : null}
+          <button
+            className="btn btn-ghost"
+            type="submit"
+            disabled={isCreatingMaterial || !newName.trim()}
+          >
+            {isCreatingMaterial ? '建立中…' : '建立材料'}
+          </button>
+        </form>
+      </section>
+
+      <section className="panel stack">
+        <strong>入庫</strong>
         <form className="stack" onSubmit={(e) => void onSubmit(e)}>
           <div className="field">
             <label htmlFor="inv-mat">材料</label>
