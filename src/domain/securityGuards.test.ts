@@ -58,7 +58,7 @@ describe('負向：未授權角色', () => {
 
   it('Member 不可發布報價', () => {
     expect(hasPermission('employee', PERMISSIONS.QUOTE_PUBLISH)).toBe(false)
-    expect(() => assertCanPublishQuote('employee')).toThrow(/無權發布報價/)
+    expect(() => assertCanPublishQuote('employee')).toThrow(/無權匯出|無權發布/)
     expect(() => assertPermission('member', PERMISSIONS.QUOTE_PUBLISH)).toThrow(
       /無權執行/,
     )

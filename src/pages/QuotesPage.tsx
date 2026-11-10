@@ -1,243 +1,50 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { hasPermission, PERMISSIONS } from '@/domain/permissions'
 import {
-  calcQuoteItemAmount,
-  calcQuoteTax,
-  QUOTE_ITEM_KIND_LABELS,
-  sumQuoteItems,
-} from '@/domain/rules'
-import type { Quotation, QuotationItemKind, TaxMode } from '@/domain/types'
-import { useQuoteItems, useQuotes } from '@/hooks/useQuotes'
+  CUSTOMER_ACCEPT_LABELS,
+  QUOTE_WORKFLOW_LABELS,
+  effectiveContractAmount,
+} from '@/domain/quoteWorkflow'
+import type { TaxMode } from '@/domain/types'
+import { useQuotes } from '@/hooks/useQuotes'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
 import { formatTaipei } from '@/lib/time'
 
-function QuoteCard(props: {
-  quote: Quotation
-  canPublish: boolean
-  onPublish: (id: string) => Promise<unknown>
-  onAddItem: (input: {
-    quotationId: string
-    kind: QuotationItemKind
-    description: string
-    qty: number
-    unit?: string
-    unitPrice: number
-  }) => Promise<unknown>
-  onRemoveItem: (input: {
-    itemId: string
-    quotationId: string
-  }) => Promise<unknown>
-  saving: boolean
-}) {
-  const { quote } = props
-  const { data: items = [], isLoading } = useQuoteItems(quote.id)
-  const [kind, setKind] = useState<QuotationItemKind>('material')
-  const [description, setDescription] = useState('')
-  const [qty, setQty] = useState('1')
-  const [unit, setUnit] = useState('式')
-  const [unitPrice, setUnitPrice] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const editable = quote.status === 'draft' && !quote.frozen
-  const breakdown = sumQuoteItems(items)
-
-  async function addItem(event: FormEvent) {
-    event.preventDefault()
-    setError(null)
-    try {
-      await props.onAddItem({
-        quotationId: quote.id,
-        kind,
-        description,
-        qty: Number(qty) || 0,
-        unit,
-        unitPrice: Number(unitPrice) || 0,
-      })
-      setDescription('')
-      setUnitPrice('')
-      setQty('1')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '新增失敗')
-    }
-  }
-
-  return (
-    <div className="site-link stack">
-      <div className="row between">
-        <span className="badge steel">{quote.taxMode}</span>
-        <span className="badge">{quote.status}</span>
-      </div>
-      <h3 style={{ margin: 0 }}>{quote.title}</h3>
-      <p style={{ margin: 0 }}>
-        NT${quote.amountAfterTax.toLocaleString()} ·{' '}
-        {formatTaipei(quote.createdAt, 'MM/dd HH:mm')}
-        {quote.frozen ? ' · 已凍結' : ''}
-      </p>
-      <p className="muted" style={{ margin: 0 }}>
-        材料 NT${breakdown.byKind.material.toLocaleString()} · 工資 NT$
-        {breakdown.byKind.labor.toLocaleString()} · 其他 NT$
-        {breakdown.byKind.other.toLocaleString()}
-      </p>
-
-      {isLoading ? <p className="muted">載入細項…</p> : null}
-      {items.length === 0 ? (
-        <div className="empty">尚無細項（材料／工資分開列示，合計只加總一次）</div>
-      ) : (
-        <div className="stack">
-          {items.map((item) => (
-            <div key={item.id} className="row between" style={{ gap: 8 }}>
-              <div>
-                <strong>
-                  {QUOTE_ITEM_KIND_LABELS[item.kind]} · {item.description}
-                </strong>
-                <p className="muted" style={{ margin: 0 }}>
-                  {item.qty} {item.unit} × NT${item.unitPrice.toLocaleString()} ={' '}
-                  NT${item.amount.toLocaleString()}
-                </p>
-              </div>
-              {editable ? (
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={props.saving}
-                  onClick={() =>
-                    void props
-                      .onRemoveItem({ itemId: item.id, quotationId: quote.id })
-                      .catch((e: unknown) =>
-                        setError(e instanceof Error ? e.message : '刪除失敗'),
-                      )
-                  }
-                >
-                  刪除
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {editable ? (
-        <form className="stack" onSubmit={(e) => void addItem(e)}>
-          <strong>新增細項</strong>
-          <div className="grid-2">
-            <div className="field">
-              <label htmlFor={`kind-${quote.id}`}>類型</label>
-              <select
-                id={`kind-${quote.id}`}
-                value={kind}
-                onChange={(e) => setKind(e.target.value as QuotationItemKind)}
-              >
-                <option value="material">材料</option>
-                <option value="labor">工資</option>
-                <option value="other">其他</option>
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor={`unit-${quote.id}`}>單位</label>
-              <input
-                id={`unit-${quote.id}`}
-                value={unit}
-                onChange={(e) => setUnit(e.target.value)}
-                placeholder="式／米／工"
-              />
-            </div>
-          </div>
-          <div className="field">
-            <label htmlFor={`desc-${quote.id}`}>說明</label>
-            <input
-              id={`desc-${quote.id}`}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              required
-              placeholder="例如：PVC 管 4 分"
-            />
-          </div>
-          <div className="grid-2">
-            <div className="field">
-              <label htmlFor={`qty-${quote.id}`}>數量</label>
-              <input
-                id={`qty-${quote.id}`}
-                type="number"
-                min="0"
-                step="0.001"
-                value={qty}
-                onChange={(e) => setQty(e.target.value)}
-                required
-              />
-            </div>
-            <div className="field">
-              <label htmlFor={`price-${quote.id}`}>單價</label>
-              <input
-                id={`price-${quote.id}`}
-                type="number"
-                min="0"
-                step="1"
-                value={unitPrice}
-                onChange={(e) => setUnitPrice(e.target.value)}
-                required
-              />
-            </div>
-          </div>
-          <p className="muted" style={{ margin: 0 }}>
-            小計 NT$
-            {calcQuoteItemAmount({
-              qty: Number(qty) || 0,
-              unitPrice: Number(unitPrice) || 0,
-            }).toLocaleString()}
-          </p>
-          {error ? (
-            <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>
-          ) : null}
-          <button
-            className="btn btn-ghost"
-            type="submit"
-            disabled={props.saving || !description.trim()}
-          >
-            {props.saving ? '儲存中…' : '加入細項'}
-          </button>
-        </form>
-      ) : null}
-
-      {quote.status === 'draft' && props.canPublish ? (
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() =>
-            void props.onPublish(quote.id).catch((e: unknown) =>
-              setError(e instanceof Error ? e.message : '發布失敗'),
-            )
-          }
-        >
-          發布並凍結稅務
-        </button>
-      ) : null}
-    </div>
-  )
-}
-
 export function QuotesPage() {
+  const navigate = useNavigate()
   const { user } = useUser()
   const { sites } = useSites()
   const {
     quotes,
+    isLoading,
     repairCases,
     createQuote,
     isCreating,
     createError,
-    publishQuote,
     createRepairCase,
     isCreatingRepair,
     createRepairError,
-    addQuoteItem,
-    removeQuoteItem,
-    isSavingItem,
   } = useQuotes(user?.id)
-  const canPublish =
-    Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_PUBLISH)
+
+  const canCreate =
+    Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_CREATE)
+  const canExport =
+    Boolean(user) &&
+    (hasPermission(user!.role, PERMISSIONS.QUOTE_EXPORT) ||
+      hasPermission(user!.role, PERMISSIONS.QUOTE_PUBLISH))
 
   const formalSites = sites.filter((s) => s.kind === 'formal')
+  const contractTotal = useMemo(
+    () => effectiveContractAmount(quotes),
+    [quotes],
+  )
 
+  const [showCreate, setShowCreate] = useState(false)
   const [title, setTitle] = useState('')
+  const [customerName, setCustomerName] = useState('')
+  const [siteAddress, setSiteAddress] = useState('')
   const [linkType, setLinkType] = useState<'project' | 'repair'>('project')
   const [projectId, setProjectId] = useState('')
   const [repairCaseId, setRepairCaseId] = useState('')
@@ -256,243 +63,303 @@ export function QuotesPage() {
       ? repairCaseId
       : (repairCases[0]?.id ?? '')
 
-  const preview = calcQuoteTax({
-    amountBeforeTax: 0,
-    taxMode,
-  })
-
-  async function onSubmit(event: FormEvent) {
+  async function onCreate(event: FormEvent) {
     event.preventDefault()
     setFormError(null)
-
     const nextProjectId = linkType === 'project' ? selectedProjectId : null
     const nextRepairId = linkType === 'repair' ? selectedRepairId : null
-
     if (linkType === 'project' && !nextProjectId) {
-      setFormError('請先選擇正式工程（尚無可用工地）')
+      setFormError('請先選擇正式工程')
       return
     }
     if (linkType === 'repair' && !nextRepairId) {
-      setFormError('請先選擇維修案件（尚無可用案件）')
+      setFormError('請先選擇維修案件')
       return
     }
-
-    await createQuote({
+    const site = formalSites.find((s) => s.id === nextProjectId)
+    const repair = repairCases.find((r) => r.id === nextRepairId)
+    const created = await createQuote({
       title,
       taxMode,
-      amountBeforeTax: 0,
       projectId: nextProjectId,
       repairCaseId: nextRepairId,
+      customerName:
+        customerName ||
+        repair?.customerName ||
+        site?.customerName ||
+        '',
+      siteAddress: siteAddress || site?.address || '',
     })
     setTitle('')
+    setCustomerName('')
+    setSiteAddress('')
+    setShowCreate(false)
+    navigate(`/quotes/${created.id}`)
   }
 
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <strong>報價</strong>
+        <strong>報價案件</strong>
         <p className="muted" style={{ margin: 0 }}>
-          建立時必須選擇稅務模式（REV-03）；必須恰好關聯工程或維修案件其一（REV-01）。
-          細項可拆材料／工資（FIN-02），合計只加總一次；發布後凍結。
+          以案件為中心：編輯細項 → 匯出 PDF／CSV 建立版本 → 標記客戶接受後才計入合約。
         </p>
+        <div className="site-link">
+          <p>有效合約金額（僅客戶已接受）</p>
+          <h3>NT${contractTotal.toLocaleString()}</h3>
+        </div>
+        {canCreate ? (
+          <button
+            type="button"
+            className="btn btn-steel"
+            onClick={() => setShowCreate((v) => !v)}
+          >
+            {showCreate ? '收合建立表單' : '新增報價案件'}
+          </button>
+        ) : null}
       </section>
 
-      <section className="panel stack">
-        <strong>建立維修案件</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          報價若選「維修案件」需先有案件；可選掛到既有工地。
-        </p>
-        <form
-          className="stack"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void createRepairCase({
-              title: repairTitle,
-              customerName: repairCustomer,
-              siteId: repairSiteId || null,
-            }).then(() => {
-              setRepairTitle('')
-              setRepairCustomer('')
-              setRepairSiteId('')
-            })
-          }}
-        >
-          <div className="field">
-            <label htmlFor="repair-title">標題</label>
-            <input
-              id="repair-title"
-              value={repairTitle}
-              onChange={(e) => setRepairTitle(e.target.value)}
-              required
-              placeholder="例如：廚房漏水急修"
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="repair-customer">客戶</label>
-            <input
-              id="repair-customer"
-              value={repairCustomer}
-              onChange={(e) => setRepairCustomer(e.target.value)}
-              required
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="repair-site">關聯工地（選填）</label>
-            <select
-              id="repair-site"
-              value={repairSiteId}
-              onChange={(e) => setRepairSiteId(e.target.value)}
+      {showCreate ? (
+        <section className="panel stack">
+          <strong>新增報價案件</strong>
+          <form className="stack" onSubmit={(e) => void onCreate(e)}>
+            <div className="field">
+              <label htmlFor="q-title">案件名稱</label>
+              <input
+                id="q-title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                required
+                placeholder="例如：浴室整修報價"
+              />
+            </div>
+            <div className="grid-2">
+              <div className="field">
+                <label htmlFor="q-customer">客戶名稱</label>
+                <input
+                  id="q-customer"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="可之後再補"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="q-addr">工地地址</label>
+                <input
+                  id="q-addr"
+                  value={siteAddress}
+                  onChange={(e) => setSiteAddress(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="grid-2">
+              <div className="field">
+                <label htmlFor="q-link">關聯類型</label>
+                <select
+                  id="q-link"
+                  value={linkType}
+                  onChange={(e) =>
+                    setLinkType(e.target.value as 'project' | 'repair')
+                  }
+                >
+                  <option value="project">正式工程</option>
+                  <option value="repair">維修案件</option>
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="q-tax">稅務模式</label>
+                <select
+                  id="q-tax"
+                  value={taxMode}
+                  onChange={(e) => setTaxMode(e.target.value as TaxMode)}
+                >
+                  <option value="exclusive">未稅＋另計稅</option>
+                  <option value="inclusive">含稅</option>
+                  <option value="zero">免稅／零稅率</option>
+                </select>
+              </div>
+            </div>
+            {linkType === 'project' ? (
+              <div className="field">
+                <label htmlFor="q-project">工程</label>
+                <select
+                  id="q-project"
+                  value={selectedProjectId}
+                  onChange={(e) => {
+                    setProjectId(e.target.value)
+                    const s = formalSites.find((x) => x.id === e.target.value)
+                    if (s) {
+                      if (!customerName) setCustomerName(s.customerName || '')
+                      if (!siteAddress) setSiteAddress(s.address || '')
+                    }
+                  }}
+                  required
+                  disabled={formalSites.length === 0}
+                >
+                  {formalSites.length === 0 ? (
+                    <option value="">尚無正式工程</option>
+                  ) : null}
+                  {formalSites.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="field">
+                <label htmlFor="q-repair">維修案件</label>
+                <select
+                  id="q-repair"
+                  value={selectedRepairId}
+                  onChange={(e) => {
+                    setRepairCaseId(e.target.value)
+                    const r = repairCases.find((x) => x.id === e.target.value)
+                    if (r && !customerName) setCustomerName(r.customerName)
+                  }}
+                  required
+                  disabled={repairCases.length === 0}
+                >
+                  {repairCases.length === 0 ? (
+                    <option value="">尚無維修案件</option>
+                  ) : null}
+                  {repairCases.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.title}（{r.customerName}）
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {formError ? (
+              <p style={{ color: 'var(--danger)', margin: 0 }}>{formError}</p>
+            ) : null}
+            {createError ? (
+              <p style={{ color: 'var(--danger)', margin: 0 }}>
+                {(createError as Error).message}
+              </p>
+            ) : null}
+            <button
+              className="btn btn-steel btn-block"
+              type="submit"
+              disabled={isCreating}
             >
-              <option value="">不指定</option>
-              {sites.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          {createRepairError ? (
-            <p style={{ color: 'var(--danger)', margin: 0 }}>
-              {createRepairError.message}
-            </p>
-          ) : null}
-          <button
-            className="btn btn-ghost"
-            type="submit"
-            disabled={
-              isCreatingRepair || !repairTitle.trim() || !repairCustomer.trim()
-            }
-          >
-            {isCreatingRepair ? '建立中…' : '新增維修案件'}
-          </button>
-        </form>
-      </section>
+              {isCreating ? '建立中…' : '建立並進入案件'}
+            </button>
+          </form>
+
+          <details>
+            <summary>建立維修案件</summary>
+            <form
+              className="stack"
+              style={{ marginTop: 12 }}
+              onSubmit={(e) => {
+                e.preventDefault()
+                void createRepairCase({
+                  title: repairTitle,
+                  customerName: repairCustomer,
+                  siteId: repairSiteId || null,
+                }).then(() => {
+                  setRepairTitle('')
+                  setRepairCustomer('')
+                  setRepairSiteId('')
+                })
+              }}
+            >
+              <div className="field">
+                <label htmlFor="repair-title">標題</label>
+                <input
+                  id="repair-title"
+                  value={repairTitle}
+                  onChange={(e) => setRepairTitle(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="repair-customer">客戶</label>
+                <input
+                  id="repair-customer"
+                  value={repairCustomer}
+                  onChange={(e) => setRepairCustomer(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="repair-site">關聯工地（選填）</label>
+                <select
+                  id="repair-site"
+                  value={repairSiteId}
+                  onChange={(e) => setRepairSiteId(e.target.value)}
+                >
+                  <option value="">不指定</option>
+                  {sites.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {createRepairError ? (
+                <p style={{ color: 'var(--danger)', margin: 0 }}>
+                  {createRepairError.message}
+                </p>
+              ) : null}
+              <button
+                className="btn btn-ghost"
+                type="submit"
+                disabled={isCreatingRepair}
+              >
+                新增維修案件
+              </button>
+            </form>
+          </details>
+        </section>
+      ) : null}
 
       <section className="panel stack">
-        <strong>建立報價草稿</strong>
-        <form className="stack" onSubmit={(e) => void onSubmit(e)}>
-          <div className="field">
-            <label htmlFor="q-title">標題</label>
-            <input
-              id="q-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="例如：浴室整修報價"
-              required
-            />
-          </div>
-          <div className="grid-2">
-            <div className="field">
-              <label htmlFor="q-link">關聯類型</label>
-              <select
-                id="q-link"
-                value={linkType}
-                onChange={(e) =>
-                  setLinkType(e.target.value as 'project' | 'repair')
-                }
-              >
-                <option value="project">正式工程</option>
-                <option value="repair">維修案件</option>
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="q-tax">稅務模式</label>
-              <select
-                id="q-tax"
-                value={taxMode}
-                onChange={(e) => setTaxMode(e.target.value as TaxMode)}
-                required
-              >
-                <option value="exclusive">未稅＋另計稅</option>
-                <option value="inclusive">含稅</option>
-                <option value="zero">免稅／零稅率</option>
-              </select>
-            </div>
-          </div>
-          {linkType === 'project' ? (
-            <div className="field">
-              <label htmlFor="q-project">工程</label>
-              <select
-                id="q-project"
-                value={selectedProjectId}
-                onChange={(e) => setProjectId(e.target.value)}
-                required
-                disabled={formalSites.length === 0}
-              >
-                {formalSites.length === 0 ? (
-                  <option value="">尚無正式工程</option>
-                ) : null}
-                {formalSites.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : (
-            <div className="field">
-              <label htmlFor="q-repair">維修案件</label>
-              <select
-                id="q-repair"
-                value={selectedRepairId}
-                onChange={(e) => setRepairCaseId(e.target.value)}
-                required
-                disabled={repairCases.length === 0}
-              >
-                {repairCases.length === 0 ? (
-                  <option value="">尚無維修案件</option>
-                ) : null}
-                {repairCases.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.title}（{r.customerName}）
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          <p className="muted" style={{ margin: 0 }}>
-            金額由細項加總；建立後請新增材料／工資列。目前稅率預覽：稅額 NT$
-            {preview.taxAmount.toLocaleString()}（細項為 0 時）。
-          </p>
-          {formError ? (
-            <p style={{ color: 'var(--danger)', margin: 0 }}>{formError}</p>
-          ) : null}
-          {createError ? (
-            <p style={{ color: 'var(--danger)', margin: 0 }}>
-              {(createError as Error).message}
-            </p>
-          ) : null}
-          <button
-            className="btn btn-steel btn-block"
-            type="submit"
-            disabled={
-              isCreating ||
-              (linkType === 'project'
-                ? formalSites.length === 0
-                : repairCases.length === 0)
-            }
-          >
-            {isCreating ? '建立中…' : '建立報價草稿'}
-          </button>
-        </form>
-      </section>
-
-      <section className="panel stack">
-        <strong>報價列表</strong>
+        <strong>案件列表</strong>
+        {isLoading ? <p className="muted">載入中…</p> : null}
         {quotes.length === 0 ? (
-          <div className="empty">尚無報價</div>
+          <div className="empty">尚無報價案件</div>
         ) : (
-          quotes.map((q) => (
-            <QuoteCard
-              key={q.id}
-              quote={q}
-              canPublish={canPublish}
-              onPublish={publishQuote}
-              onAddItem={addQuoteItem}
-              onRemoveItem={removeQuoteItem}
-              saving={isSavingItem}
-            />
-          ))
+          <div className="stack">
+            {quotes.map((q) => (
+              <div key={q.id} className="site-link stack">
+                <div className="row between">
+                  <span className="badge steel">
+                    {QUOTE_WORKFLOW_LABELS[q.workflowStatus]}
+                  </span>
+                  <span className="badge">
+                    {CUSTOMER_ACCEPT_LABELS[q.workflowStatus]}
+                  </span>
+                </div>
+                <h3 style={{ margin: 0 }}>{q.title}</h3>
+                <p className="muted" style={{ margin: 0 }}>
+                  {q.quoteNumber}
+                  {q.currentVersion > 0 ? ` · v${q.currentVersion}` : ''}
+                </p>
+                <p style={{ margin: 0 }}>
+                  客戶：{q.customerName || '—'}
+                  <br />
+                  地址：{q.siteAddress || '—'}
+                  <br />
+                  總額：NT${q.amountAfterTax.toLocaleString()}
+                  <br />
+                  更新：{formatTaipei(q.updatedAt, 'MM/dd HH:mm')}
+                </p>
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <Link className="btn btn-steel" to={`/quotes/${q.id}`}>
+                    進入案件
+                  </Link>
+                  {canExport ? (
+                    <Link className="btn btn-ghost" to={`/quotes/${q.id}?export=1`}>
+                      匯出報價
+                    </Link>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </section>
     </div>

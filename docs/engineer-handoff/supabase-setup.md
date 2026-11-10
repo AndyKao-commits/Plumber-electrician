@@ -126,8 +126,15 @@ SQL：`20261110_line_bind_code_fix_random.sql`
 ## 4f. 報價細項（FIN-02）
 
 1. SQL：`supabase/migrations/20261111_quotation_items.sql`
-2. App：`/quotes` 草稿可新增材料／工資／其他細項；表頭金額由細項加總（不重複加總）
-3. 已發布（frozen）報價禁止改細項；至少一筆細項才能發布
+2. App：`/quotes` 案件細項可新增／編輯／刪除／排序；金額由細項加總
+
+## 4g. 報價案件中心＋匯出版本
+
+1. SQL：`supabase/migrations/20261111_quote_case_export.sql`
+2. 列表 `/quotes` → 詳情 `/quotes/:id`
+3. 匯出 PDF／CSV／列印會寫入 `quotation_versions`（不可覆寫）
+4. 僅「客戶已接受」計入有效合約；Admin／老闆可匯出與標記接受
+5. LINE 傳「報價」可查看案件與匯出連結（不在 LINE 編輯）
 
 ## 5. 驗證
 

@@ -123,13 +123,18 @@ describe('FIN-02 quote line items', () => {
     expect(summed.byKind.other).toBe(500)
   })
 
-  it('blocks edits on frozen quotes', () => {
-    expect(() => assertQuoteDraftEditable({ frozen: true })).toThrow(/不可修改/)
-    expect(() => assertQuoteDraftEditable({ status: 'published' })).toThrow(
-      /不可修改/,
-    )
+  it('blocks edits when accepted or cancelled', () => {
     expect(() =>
-      assertQuoteDraftEditable({ frozen: false, status: 'draft' }),
+      assertQuoteDraftEditable({ workflowStatus: 'accepted' }),
+    ).toThrow(/不可修改/)
+    expect(() =>
+      assertQuoteDraftEditable({ workflowStatus: 'cancelled' }),
+    ).toThrow(/不可修改/)
+    expect(() =>
+      assertQuoteDraftEditable({ workflowStatus: 'editing' }),
+    ).not.toThrow()
+    expect(() =>
+      assertQuoteDraftEditable({ workflowStatus: 'exported' }),
     ).not.toThrow()
   })
 })

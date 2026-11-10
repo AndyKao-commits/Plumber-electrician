@@ -190,9 +190,17 @@ export function sumQuoteItems(
 export function assertQuoteDraftEditable(input: {
   frozen?: boolean
   status?: string
+  workflowStatus?: string
 }): void {
-  if (input.frozen || input.status === 'published') {
-    throw new Error('已發布報價細項不可修改')
+  const ws = input.workflowStatus
+  if (ws) {
+    if (ws === 'accepted' || ws === 'cancelled') {
+      throw new Error('此狀態不可修改報價細項（已接受或已取消）')
+    }
+    return
+  }
+  if (input.status === 'void') {
+    throw new Error('已取消報價不可修改')
   }
 }
 
