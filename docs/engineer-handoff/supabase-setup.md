@@ -66,13 +66,26 @@ bash scripts/deploy-line-webhook.sh
 - 建議關閉 Messaging API 的「自動回應訊息／歡迎訊息」以免與 webhook 搶回覆
 - 主流程通知：只寫系統內通知；`safeNotify` **不**呼叫 `line-push`
 
-## 4b. 個人 LINE 綁定碼
+## 4b. 個人 LINE 綁定（LINE Login 為主）
 
-在 SQL Editor 執行：`supabase/migrations/20261110_line_bind_code.sql`（或整份 `apply.sql` 末段）。
+系統登入仍是 Email／密碼。LINE Login **只做綁定**，寫入 `profiles.line_user_id`。
 
-流程：App「今日團隊」→ 產生綁定碼 → LINE 傳「綁定 代碼」→ webhook 寫入 `profiles.line_user_id`。
+### LINE Login
+1. LINE Developers → LINE Login 頻道  
+2. Callback URL 加：`https://plumber-electrician-seven.vercel.app/line-bind-callback`  
+3. Supabase Edge Secrets：
+   - `LINE_LOGIN_CHANNEL_ID`
+   - `LINE_LOGIN_CHANNEL_SECRET`
+4. 部署：`bash scripts/deploy-line-login-exchange.sh`  
+5. Vercel 環境變數：`VITE_LINE_LOGIN_CHANNEL_ID`（與上相同 Channel ID）→ Redeploy  
+6. App「今日團隊」→ **用 LINE 綁定**
 
-重新部署 `line-webhook` 後才支援綁定指令。
+### 備援綁定碼
+SQL：`20261110_line_bind_code_fix_random.sql`  
+流程：產生綁定碼 → LINE 傳「綁定 代碼」。
+
+### Webhook
+`line-webhook` 不再對「你好」回長選單（圖文選單負責入口）；只處理綁定碼／加好友短提示。請重新 Deploy webhook（JWT 關）。
 
 ## 5. 驗證
 
