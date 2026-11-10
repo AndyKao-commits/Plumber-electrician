@@ -30,6 +30,7 @@ export const quoteKeys = {
   billing: (quoteId: string) => ['billing', quoteId] as const,
   billingAll: ['billing'] as const,
   payments: (quoteId: string) => ['payments', quoteId] as const,
+  refunds: (quoteId: string) => ['refunds', quoteId] as const,
 }
 
 export function useQuotes(userId: string | undefined) {
@@ -268,6 +269,9 @@ export function useQuoteDetail(quoteId: string | undefined) {
     void queryClient.invalidateQueries({ queryKey: quoteKeys.billingAll })
     void queryClient.invalidateQueries({
       queryKey: quoteKeys.payments(quoteId),
+    })
+    void queryClient.invalidateQueries({
+      queryKey: quoteKeys.refunds(quoteId),
     })
   }
 
@@ -665,6 +669,72 @@ export function useQuoteDetail(quoteId: string | undefined) {
     onSuccess: invalidateAll,
   })
 
+  const refundsQuery = useQuery({
+    queryKey: quoteId ? quoteKeys.refunds(quoteId) : ['refunds', 'none'],
+    enabled: Boolean(quoteId),
+    queryFn: async () => {
+      if (!quoteId) return { creditNotes: [], refunds: [] }
+      try {
+        if (formal) {
+          const [creditNotes, refunds] = await Promise.all([
+            supabaseRepos.listCustomerCreditNotes(quoteId),
+            supabaseRepos.listCustomerRefunds(quoteId),
+          ])
+          return { creditNotes, refunds }
+        }
+        return {
+          creditNotes: localDb.listCustomerCreditNotes(quoteId),
+          refunds: localDb.listCustomerRefunds(quoteId),
+        }
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入折讓／退款'))
+      }
+    },
+  })
+
+  const createCustomerCreditNote = useMutation({
+    mutationFn: async (input: {
+      amount: number
+      reason: string
+      billingDocumentId?: string | null
+    }) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.createCustomerCreditNote(user, {
+            quotationId: quoteId,
+            ...input,
+          })
+        : localDb.createCustomerCreditNote(
+            { id: user.id, role: user.role },
+            { quotationId: quoteId, ...input },
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const createCustomerRefund = useMutation({
+    mutationFn: async (input: {
+      paymentId: string
+      amount: number
+      method: PaymentMethod
+      reason: string
+    }) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.createCustomerRefund(user, {
+            quotationId: quoteId,
+            ...input,
+          })
+        : localDb.createCustomerRefund(
+            { id: user.id, role: user.role },
+            { quotationId: quoteId, ...input },
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
   return {
     quote: quoteQuery.data ?? null,
     items: itemsQuery.data ?? [],
@@ -676,6 +746,8 @@ export function useQuoteDetail(quoteId: string | undefined) {
     paymentAllocations: paymentsQuery.data?.allocations ?? [],
     advances: paymentsQuery.data?.advances ?? [],
     advanceApplications: paymentsQuery.data?.advanceApplications ?? [],
+    creditNotes: refundsQuery.data?.creditNotes ?? [],
+    refunds: refundsQuery.data?.refunds ?? [],
     isLoading: quoteQuery.isLoading || itemsQuery.isLoading,
     error: quoteQuery.error || itemsQuery.error,
     updateMeta: updateMeta.mutateAsync,
@@ -699,6 +771,8 @@ export function useQuoteDetail(quoteId: string | undefined) {
     allocatePayment: allocatePayment.mutateAsync,
     createCustomerAdvance: createCustomerAdvance.mutateAsync,
     applyCustomerAdvance: applyCustomerAdvance.mutateAsync,
+    createCustomerCreditNote: createCustomerCreditNote.mutateAsync,
+    createCustomerRefund: createCustomerRefund.mutateAsync,
     saving:
       updateMeta.isPending ||
       addItem.isPending ||
@@ -719,6 +793,8 @@ export function useQuoteDetail(quoteId: string | undefined) {
       createCustomerPayment.isPending ||
       allocatePayment.isPending ||
       createCustomerAdvance.isPending ||
-      applyCustomerAdvance.isPending,
+      applyCustomerAdvance.isPending ||
+      createCustomerCreditNote.isPending ||
+      createCustomerRefund.isPending,
   }
 }

@@ -404,6 +404,41 @@ export interface AdvanceApplication {
   createdBy: string
 }
 
+/** FIN-005: 折讓（減應收，非現金流出）。 */
+export type CustomerCreditNoteStatus = 'issued' | 'void'
+
+export interface CustomerCreditNote {
+  id: string
+  organizationId: string
+  quotationId: string
+  billingDocumentId?: string | null
+  creditNumber: string
+  amount: number
+  reason: string
+  status: CustomerCreditNoteStatus
+  issuedAt: string
+  createdAt: string
+  createdBy: string
+}
+
+/** FIN-005: 退款（現金流出；保留原收款紀錄）。 */
+export type CustomerRefundStatus = 'confirmed' | 'void'
+
+export interface CustomerRefund {
+  id: string
+  organizationId: string
+  quotationId: string
+  paymentId: string
+  refundNumber: string
+  amount: number
+  method: PaymentMethod
+  status: CustomerRefundStatus
+  reason: string
+  refundedAt: string
+  createdAt: string
+  createdBy: string
+}
+
 export interface MaterialStock {
   id: string
   organizationId: string
