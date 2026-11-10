@@ -1,6 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { REPAIR_STATUS_LABELS } from '@/domain/repairs'
-import type { RepairCaseStatus } from '@/domain/types'
+import { WARRANTY_ASSESSMENT_LABELS } from '@/domain/warranty'
+import type {
+  RepairCaseStatus,
+  WarrantyAssessmentClassification,
+} from '@/domain/types'
 import { useRepairs, useRepairHistory } from '@/hooks/useRepairs'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
@@ -12,10 +16,13 @@ export function RepairsPage() {
   const {
     repairs,
     isLoading,
+    warranties,
     createRepair,
     assign,
     recordVisit,
     setStatus,
+    createWarranty,
+    assessWarranty,
     saving,
   } = useRepairs()
 
@@ -26,6 +33,13 @@ export function RepairsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [assignNote, setAssignNote] = useState('')
   const [visitNote, setVisitNote] = useState('')
+  const [warTitle, setWarTitle] = useState('')
+  const [warEnds, setWarEnds] = useState('')
+  const [warExclusion, setWarExclusion] = useState('')
+  const [assessClass, setAssessClass] =
+    useState<WarrantyAssessmentClassification>('excluded')
+  const [assessReason, setAssessReason] = useState('')
+  const [assessWarId, setAssessWarId] = useState('')
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -283,6 +297,155 @@ export function RepairsPage() {
                   <br />
                   <span className="muted">
                     {formatTaipei(v.visitedAt, 'MM/dd HH:mm')}
+                  </span>
+                </p>
+              ))
+            )}
+          </div>
+
+          <form
+            className="stack"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void (async () => {
+                try {
+                  await createWarranty({
+                    title: warTitle,
+                    repairCaseId: selected.id,
+                    endsOn: warEnds || null,
+                    exclusionNotes: warExclusion || null,
+                  })
+                  setWarTitle('')
+                  setWarEnds('')
+                  setWarExclusion('')
+                  setMessage('已建立保固主檔（期間內不自動免費）')
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : '建立保固失敗')
+                }
+              })()
+            }}
+          >
+            <strong>保固主檔（WAR-001）</strong>
+            <div className="field">
+              <label>標題</label>
+              <input
+                value={warTitle}
+                onChange={(e) => setWarTitle(e.target.value)}
+                required
+              />
+            </div>
+            <div className="grid-2">
+              <div className="field">
+                <label>到期日</label>
+                <input
+                  type="date"
+                  value={warEnds}
+                  onChange={(e) => setWarEnds(e.target.value)}
+                />
+              </div>
+              <div className="field">
+                <label>排除項目</label>
+                <input
+                  value={warExclusion}
+                  onChange={(e) => setWarExclusion(e.target.value)}
+                  placeholder="例如：人為損壞"
+                />
+              </div>
+            </div>
+            <button className="btn btn-ghost" type="submit" disabled={saving}>
+              建立保固
+            </button>
+          </form>
+
+          <form
+            className="stack"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void (async () => {
+                try {
+                  await assessWarranty({
+                    repairCaseId: selected.id,
+                    warrantyId: assessWarId || null,
+                    classification: assessClass,
+                    rationale: assessReason,
+                  })
+                  setAssessReason('')
+                  setMessage('已登錄保固判定（人工判定，非自動免費）')
+                  await history.refetch()
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : '判定失敗')
+                }
+              })()
+            }}
+          >
+            <strong>保固判定</strong>
+            <p className="muted" style={{ margin: 0 }}>
+              保固期內排除項目不得自動免費；免費仍可另記成本。
+            </p>
+            <div className="field">
+              <label>關聯保固（選填）</label>
+              <select
+                value={assessWarId}
+                onChange={(e) => setAssessWarId(e.target.value)}
+              >
+                <option value="">不指定</option>
+                {warranties.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.title}
+                    {w.endsOn ? ` · 至 ${w.endsOn}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="grid-2">
+              <div className="field">
+                <label>判定</label>
+                <select
+                  value={assessClass}
+                  onChange={(e) =>
+                    setAssessClass(
+                      e.target.value as WarrantyAssessmentClassification,
+                    )
+                  }
+                >
+                  {(
+                    Object.keys(
+                      WARRANTY_ASSESSMENT_LABELS,
+                    ) as WarrantyAssessmentClassification[]
+                  ).map((c) => (
+                    <option key={c} value={c}>
+                      {WARRANTY_ASSESSMENT_LABELS[c]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>理由（必填）</label>
+                <input
+                  value={assessReason}
+                  onChange={(e) => setAssessReason(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+            <button className="btn btn-ghost" type="submit" disabled={saving}>
+              登錄判定
+            </button>
+          </form>
+
+          <div className="stack">
+            {history.assessments.length === 0 ? (
+              <p className="muted" style={{ margin: 0 }}>
+                尚無保固判定
+              </p>
+            ) : (
+              history.assessments.map((a) => (
+                <p key={a.id} style={{ margin: 0 }}>
+                  {WARRANTY_ASSESSMENT_LABELS[a.classification]} · {a.rationale}
+                  <br />
+                  <span className="muted">
+                    {a.assessedByName} ·{' '}
+                    {formatTaipei(a.assessedAt, 'MM/dd HH:mm')}
                   </span>
                 </p>
               ))
