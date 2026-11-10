@@ -1,5 +1,8 @@
 -- After publish: customer acceptance → counts toward effective contract amount.
 -- Boss-only publish remains an app-layer permission; this migration adds accept fields.
+--
+-- NOTE: PostgreSQL forbids using a newly-added enum label in the SAME transaction
+-- (55P04). Do not reference 'accepted' here after ADD VALUE — index is non-partial.
 
 do $$
 begin
@@ -21,6 +24,6 @@ alter table public.quotations
   add column if not exists accepted_by uuid references public.profiles (id),
   add column if not exists acceptance_note text;
 
-create index if not exists quotations_accepted_idx
-  on public.quotations (organization_id, status)
-  where status = 'accepted';
+-- Non-partial index only (safe in same txn as ADD VALUE)
+create index if not exists quotations_org_status_idx
+  on public.quotations (organization_id, status);

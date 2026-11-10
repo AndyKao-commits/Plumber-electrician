@@ -1662,7 +1662,7 @@ create trigger trg_recalc_quotation_amounts
   for each row execute function public.trg_recalc_quotation_amounts();
 
 -- After publish: customer acceptance → counts toward effective contract amount.
--- Boss-only publish remains an app-layer permission; this migration adds accept fields.
+-- NOTE: do not reference new enum label 'accepted' in same txn as ADD VALUE (55P04).
 
 do $$
 begin
@@ -1684,7 +1684,6 @@ alter table public.quotations
   add column if not exists accepted_by uuid references public.profiles (id),
   add column if not exists acceptance_note text;
 
-create index if not exists quotations_accepted_idx
-  on public.quotations (organization_id, status)
-  where status = 'accepted';
+create index if not exists quotations_org_status_idx
+  on public.quotations (organization_id, status);
 

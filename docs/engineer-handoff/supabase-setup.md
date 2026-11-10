@@ -132,7 +132,8 @@ SQL：`20261110_line_bind_code_fix_random.sql`
 
 ## 4g. 報價接受 → 有效合約
 
-1. SQL：`supabase/migrations/20261111_quotation_accept.sql`
+1. SQL：`supabase/migrations/20261111_quotation_accept.sql`  
+   （已避開 55P04：同交易不引用新建 enum 值 `accepted`）
 2. 發布後可「標記客戶已接受」→ 狀態 `accepted`，計入有效合約金額
 3. 追加減（FIN-03）下一批；未接受者不計入合約
 
