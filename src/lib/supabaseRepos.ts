@@ -1641,4 +1641,113 @@ export const supabaseRepos = {
     const { error } = await sb().from('site_defects').update(patch).eq('id', id)
     if (error) throw new AppError(toUserMessage(error, '更新缺失失敗'))
   },
+
+  /**
+   * Claim an idempotent sync slot (INT-10).
+   * Same client_operation_id + same hash → alreadyDone.
+   * Same id + different hash → conflict.
+   */
+  async claimSyncOperation(input: {
+    clientOperationId: string
+    operationType: string
+    requestHash: string
+    payload: Record<string, unknown>
+  }): Promise<{ alreadyDone: boolean; serverResourceId: string | null }> {
+    const me = await this.getCurrentUser()
+    if (!me) throw new AppError('尚未登入')
+    const clientOperationId = input.clientOperationId.trim()
+    if (!clientOperationId) throw new AppError('缺少操作識別碼')
+
+    const { data: existing, error: loadError } = await sb()
+      .from('sync_operations')
+      .select(
+        'id, client_operation_id, request_hash, status, server_resource_id',
+      )
+      .eq('user_id', me.id)
+      .eq('client_operation_id', clientOperationId)
+      .maybeSingle()
+    if (loadError) {
+      throw new AppError(toUserMessage(loadError, '無法讀取同步紀錄'))
+    }
+    if (existing) {
+      if (String(existing.request_hash) !== input.requestHash) {
+        throw new AppError('相同操作識別碼對應不同內容（IDEMPOTENCY_KEY_REUSED）')
+      }
+      // Only skip when a prior attempt already produced a server resource.
+      if (existing.server_resource_id) {
+        return {
+          alreadyDone: true,
+          serverResourceId: String(existing.server_resource_id),
+        }
+      }
+      await sb()
+        .from('sync_operations')
+        .update({
+          status: 'accepted',
+          error_message: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+      return { alreadyDone: false, serverResourceId: null }
+    }
+
+    const { error: insertError } = await sb().from('sync_operations').insert({
+      organization_id: me.organizationId,
+      user_id: me.id,
+      client_operation_id: clientOperationId,
+      operation_type: input.operationType,
+      request_hash: input.requestHash,
+      status: 'accepted',
+      payload: input.payload,
+    })
+    if (insertError) {
+      // Race: another tab inserted — re-read
+      if (String(insertError.code) === '23505') {
+        const { data: raced } = await sb()
+          .from('sync_operations')
+          .select('request_hash, server_resource_id')
+          .eq('user_id', me.id)
+          .eq('client_operation_id', clientOperationId)
+          .maybeSingle()
+        if (raced && String(raced.request_hash) !== input.requestHash) {
+          throw new AppError(
+            '相同操作識別碼對應不同內容（IDEMPOTENCY_KEY_REUSED）',
+          )
+        }
+        if (raced?.server_resource_id) {
+          return {
+            alreadyDone: true,
+            serverResourceId: String(raced.server_resource_id),
+          }
+        }
+        return { alreadyDone: false, serverResourceId: null }
+      }
+      throw new AppError(toUserMessage(insertError, '無法建立同步紀錄'))
+    }
+
+    return { alreadyDone: false, serverResourceId: null }
+  },
+
+  async completeSyncOperation(input: {
+    clientOperationId: string
+    serverResourceId: string | null
+    status: 'accepted' | 'conflict' | 'failed'
+    errorMessage?: string | null
+  }): Promise<void> {
+    const me = await this.getCurrentUser()
+    if (!me) return
+    const { error } = await sb()
+      .from('sync_operations')
+      .update({
+        status: input.status,
+        server_resource_id: input.serverResourceId,
+        error_message: input.errorMessage ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', me.id)
+      .eq('client_operation_id', input.clientOperationId)
+    if (error) {
+      console.warn('[sync] completeSyncOperation failed', error.message)
+    }
+  },
 }

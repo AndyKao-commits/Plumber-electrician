@@ -3,6 +3,8 @@ import type { AttendanceRecord, JobType } from '@/domain/types'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
+import { enqueueOfflineOp, isBrowserOnline } from '@/lib/offlineQueue'
+import { notifyOfflineQueueChanged } from '@/lib/offlineSync'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 
 export const attendanceKeys = {
@@ -77,6 +79,33 @@ export function useAttendance(userId: string | undefined) {
       if (!userId) throw new Error('尚未登入')
       const pos = await getPosition()
       try {
+        if (!isBrowserOnline()) {
+          const clockInAt = new Date().toISOString()
+          const item = enqueueOfflineOp({
+            operationType: 'attendance_clock_in',
+            payload: {
+              userId,
+              latitude: pos.latitude,
+              longitude: pos.longitude,
+              clockInAt,
+            },
+          })
+          notifyOfflineQueueChanged()
+          // Local optimistic pending shift (demo + formal offline draft)
+          const user = localDb.getUser(userId)
+          const record: AttendanceRecord = {
+            id: `pending-${item.clientOperationId}`,
+            organizationId: user?.organizationId ?? localDb.orgId,
+            userId,
+            status: 'clocked_in',
+            clockInAt,
+            latitude: pos.latitude,
+            longitude: pos.longitude,
+            note: '離線待驗證',
+          }
+          if (!formal) localDb.saveAttendance(record)
+          return record
+        }
         if (formal) {
           return await supabaseRepos.clockIn({
             userId,
@@ -107,6 +136,35 @@ export function useAttendance(userId: string | undefined) {
     mutationFn: async () => {
       if (!userId) throw new Error('尚未登入')
       try {
+        if (!isBrowserOnline()) {
+          const clockOutAt = new Date().toISOString()
+          enqueueOfflineOp({
+            operationType: 'attendance_clock_out',
+            payload: { userId, clockOutAt },
+          })
+          notifyOfflineQueueChanged()
+          if (!formal) {
+            const open = localDb.getOpenAttendance(userId)
+            if (!open) throw new Error('目前沒有進行中的班次')
+            const closed = {
+              ...open,
+              status: 'clocked_out' as const,
+              clockOutAt,
+              note: open.note ? `${open.note}；離線下班待驗證` : '離線待驗證',
+            }
+            localDb.saveAttendance(closed)
+            return closed
+          }
+          return {
+            id: `pending-out-${crypto.randomUUID()}`,
+            organizationId: '',
+            userId,
+            status: 'clocked_out' as const,
+            clockInAt: clockOutAt,
+            clockOutAt,
+            note: '離線待驗證',
+          }
+        }
         if (formal) return await supabaseRepos.clockOut(userId)
         const open = localDb.getOpenAttendance(userId)
         if (!open) throw new Error('目前沒有進行中的班次')
@@ -130,6 +188,30 @@ export function useAttendance(userId: string | undefined) {
       const siteId = input.siteId
       const jobType = (input.jobType as JobType | undefined) ?? 'project'
       try {
+        if (!isBrowserOnline()) {
+          enqueueOfflineOp({
+            operationType: 'attendance_assign_site',
+            payload: { userId, siteId, jobType },
+          })
+          notifyOfflineQueueChanged()
+          if (!formal) {
+            const open = localDb.getOpenAttendance(userId)
+            if (!open) throw new Error('請先上班再選擇工地')
+            const updated = { ...open, siteId, jobType }
+            localDb.saveAttendance(updated)
+            return updated
+          }
+          return {
+            id: `pending-site-${crypto.randomUUID()}`,
+            organizationId: '',
+            userId,
+            status: 'clocked_in' as const,
+            clockInAt: new Date().toISOString(),
+            siteId,
+            jobType,
+            note: '離線待驗證',
+          }
+        }
         if (formal) return await supabaseRepos.assignSite(userId, siteId)
         const open = localDb.getOpenAttendance(userId)
         if (!open) throw new Error('請先上班再選擇工地')

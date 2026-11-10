@@ -1,12 +1,14 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { PRODUCT, ROLES } from '@/domain/rules'
 import { useNotices } from '@/hooks/useNotices'
+import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { useUser } from '@/hooks/useUser'
 import { dataModeLabel } from '@/lib/dataMode'
 
 export function AppShell() {
   const { user, logout } = useUser()
   const { unreadCount } = useNotices(user?.id)
+  const { online, pendingCount, flush, flushing } = useOfflineQueue()
 
   return (
     <div className="app-shell">
@@ -30,6 +32,46 @@ export function AppShell() {
           </div>
         ) : null}
       </header>
+
+      {user && (!online || pendingCount > 0) ? (
+        <div
+          className="panel"
+          style={{
+            marginBottom: 16,
+            padding: '10px 14px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <div>
+            <strong style={{ fontSize: 14 }}>
+              {!online ? '目前離線' : '有待同步草稿'}
+            </strong>
+            <p className="muted" style={{ margin: '2px 0 0', fontSize: 13 }}>
+              {!online
+                ? '可暫存回報／待辦／出勤；採購與庫存需連線。'
+                : `${pendingCount} 筆將在連線時自動同步。`}
+            </p>
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            {online && pendingCount > 0 ? (
+              <button
+                type="button"
+                className="btn btn-steel"
+                disabled={flushing}
+                onClick={() => void flush()}
+              >
+                {flushing ? '同步中' : '同步'}
+              </button>
+            ) : null}
+            <NavLink to="/offline-queue" className="btn btn-ghost">
+              佇列
+            </NavLink>
+          </div>
+        </div>
+      ) : null}
 
       <Outlet />
 

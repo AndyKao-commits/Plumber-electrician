@@ -6,9 +6,11 @@ import {
   isWithinEmergencySingleLimit,
 } from '@/domain/rules'
 import type { PurchaseMode } from '@/domain/types'
+import { assertOnlineForOp } from '@/domain/offlineOps'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
+import { isBrowserOnline } from '@/lib/offlineQueue'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { noticeKeys } from '@/hooks/useNotices'
 import { useUser } from '@/hooks/useUser'
@@ -90,6 +92,7 @@ export function usePurchases(userId: string | undefined) {
       otherBuyerFees?: number
     }) => {
       if (!userId || !user) throw new Error('尚未登入')
+      assertOnlineForOp('purchase_create', isBrowserOnline())
       const finalPayable = calcFinalPayable(input)
       if (input.mode === 'emergency') {
         if (!isWithinEmergencySingleLimit(finalPayable)) {
@@ -116,6 +119,7 @@ export function usePurchases(userId: string | undefined) {
   const approveMutation = useMutation({
     mutationFn: async (purchaseId: string) => {
       if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('purchase_approve', isBrowserOnline())
       try {
         return formal
           ? await supabaseRepos.approvePurchase(user, purchaseId)
@@ -130,6 +134,7 @@ export function usePurchases(userId: string | undefined) {
   const rejectMutation = useMutation({
     mutationFn: async (input: { purchaseId: string; reason: string }) => {
       if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('purchase_reject', isBrowserOnline())
       try {
         return formal
           ? await supabaseRepos.rejectPurchase(user, input.purchaseId, input.reason)
@@ -175,6 +180,7 @@ export function usePurchases(userId: string | undefined) {
       unitCost?: number
     }) => {
       if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('inventory_inbound', isBrowserOnline())
       if (!formal) throw new Error('本機示範模式請到庫存頁模擬入庫')
       return supabaseRepos.purchaseInbound(user, input)
     },
