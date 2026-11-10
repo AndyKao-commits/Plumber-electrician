@@ -27,6 +27,14 @@ import {
   sumAllocations,
 } from '@/domain/payments'
 import {
+  assertCanManageRefunds,
+  assertCreditNoteFits,
+  assertRefundFits,
+  canIssueCreditOrRefund,
+  refundsOnPayment,
+  sumIssuedCredits,
+} from '@/domain/refunds'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   calcChangeOrderTotals,
@@ -61,7 +69,9 @@ import type {
   ChangeOrderKind,
   ChangeOrderStatus,
   CustomerAdvance,
+  CustomerCreditNote,
   CustomerPayment,
+  CustomerRefund,
   MaterialStock,
   PaymentAllocation,
   PaymentMethod,
@@ -102,6 +112,8 @@ const KEYS = {
   paymentAllocations: 'eg.paymentAllocations.v1',
   customerAdvances: 'eg.customerAdvances.v1',
   advanceApplications: 'eg.advanceApplications.v1',
+  customerCreditNotes: 'eg.customerCreditNotes.v1',
+  customerRefunds: 'eg.customerRefunds.v1',
   materials: 'eg.materials.v1',
 } as const
 
@@ -134,6 +146,8 @@ const emptyCustomerPayments: CustomerPayment[] = []
 const emptyPaymentAllocations: PaymentAllocation[] = []
 const emptyCustomerAdvances: CustomerAdvance[] = []
 const emptyAdvanceApplications: AdvanceApplication[] = []
+const emptyCustomerCreditNotes: CustomerCreditNote[] = []
+const emptyCustomerRefunds: CustomerRefund[] = []
 const emptyMaterials: MaterialStock[] = []
 
 function write<T>(key: string, value: T) {
@@ -336,6 +350,8 @@ function seedIfNeeded() {
   write(KEYS.paymentAllocations, emptyPaymentAllocations)
   write(KEYS.customerAdvances, emptyCustomerAdvances)
   write(KEYS.advanceApplications, emptyAdvanceApplications)
+  write(KEYS.customerCreditNotes, emptyCustomerCreditNotes)
+  write(KEYS.customerRefunds, emptyCustomerRefunds)
   write(KEYS.materials, seededMaterials)
   write(KEYS.shortcuts, [
     'clock',
@@ -1678,6 +1694,120 @@ export const localDb = {
     write(KEYS.customerAdvances, advances)
     // Explicitly do NOT create a customer_payment — no new cash inflow
     return row
+  },
+
+  listCustomerCreditNotes(quotationId: string): CustomerCreditNote[] {
+    return read(KEYS.customerCreditNotes, emptyCustomerCreditNotes)
+      .filter((n) => n.quotationId === quotationId)
+      .sort((a, b) => b.issuedAt.localeCompare(a.issuedAt))
+  },
+
+  listCustomerRefunds(quotationId: string): CustomerRefund[] {
+    return read(KEYS.customerRefunds, emptyCustomerRefunds)
+      .filter((r) => r.quotationId === quotationId)
+      .sort((a, b) => b.refundedAt.localeCompare(a.refundedAt))
+  },
+
+  createCustomerCreditNote(
+    actor: { id: string; role: string },
+    input: {
+      quotationId: string
+      amount: number
+      reason: string
+      billingDocumentId?: string | null
+    },
+  ): CustomerCreditNote {
+    assertCanManageRefunds(actor.role)
+    const quote = this.getQuotation(input.quotationId)
+    if (!quote) throw new Error('找不到報價')
+    const gate = canIssueCreditOrRefund(quote)
+    if (!gate.ok) throw new Error(gate.reason)
+    const billed = sumIssuedBillingAmount(
+      this.listBillingDocuments(quote.id),
+    )
+    assertCreditNoteFits({
+      billed,
+      alreadyCredited: sumIssuedCredits(
+        this.listCustomerCreditNotes(quote.id),
+      ),
+      crediting: input.amount,
+    })
+    if (input.billingDocumentId) {
+      const doc = this.listBillingDocuments(quote.id).find(
+        (d) => d.id === input.billingDocumentId,
+      )
+      if (!doc || doc.status !== 'issued') {
+        throw new Error('折讓僅能關聯已開立請款單')
+      }
+    }
+    const now = new Date().toISOString()
+    const id = `cn-${crypto.randomUUID()}`
+    const note: CustomerCreditNote = {
+      id,
+      organizationId: ORG_ID,
+      quotationId: quote.id,
+      billingDocumentId: input.billingDocumentId ?? null,
+      creditNumber: `CN-${now.slice(0, 10).replace(/-/g, '')}-${id.slice(-4).toUpperCase()}`,
+      amount: Number(input.amount),
+      reason: input.reason.trim() || '折讓',
+      status: 'issued',
+      issuedAt: now,
+      createdAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.customerCreditNotes, emptyCustomerCreditNotes)
+    all.unshift(note)
+    write(KEYS.customerCreditNotes, all)
+    return note
+  },
+
+  createCustomerRefund(
+    actor: { id: string; role: string },
+    input: {
+      quotationId: string
+      paymentId: string
+      amount: number
+      method: PaymentMethod
+      reason: string
+    },
+  ): CustomerRefund {
+    assertCanManageRefunds(actor.role)
+    const quote = this.getQuotation(input.quotationId)
+    if (!quote) throw new Error('找不到報價')
+    const gate = canIssueCreditOrRefund(quote)
+    if (!gate.ok) throw new Error(gate.reason)
+    const payment = this.listCustomerPayments(quote.id).find(
+      (p) => p.id === input.paymentId,
+    )
+    if (!payment || payment.status !== 'confirmed') {
+      throw new Error('退款必須對應已確認的原收款（原收款保留）')
+    }
+    const prior = this.listCustomerRefunds(quote.id)
+    assertRefundFits({
+      paymentAmount: payment.amount,
+      alreadyRefundedOnPayment: refundsOnPayment(payment.id, prior),
+      refunding: input.amount,
+    })
+    const now = new Date().toISOString()
+    const id = `ref-${crypto.randomUUID()}`
+    const refund: CustomerRefund = {
+      id,
+      organizationId: ORG_ID,
+      quotationId: quote.id,
+      paymentId: payment.id,
+      refundNumber: `REF-${now.slice(0, 10).replace(/-/g, '')}-${id.slice(-4).toUpperCase()}`,
+      amount: Number(input.amount),
+      method: input.method,
+      status: 'confirmed',
+      reason: input.reason.trim() || '退款',
+      refundedAt: now,
+      createdAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.customerRefunds, emptyCustomerRefunds)
+    all.unshift(refund)
+    write(KEYS.customerRefunds, all)
+    return refund
   },
 
   softDeleteQuotation(

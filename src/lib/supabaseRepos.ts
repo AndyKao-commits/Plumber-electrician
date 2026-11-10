@@ -39,6 +39,14 @@ import {
   sumAllocations,
 } from '@/domain/payments'
 import {
+  assertCanManageRefunds,
+  assertCreditNoteFits,
+  assertRefundFits,
+  canIssueCreditOrRefund,
+  refundsOnPayment,
+  sumIssuedCredits,
+} from '@/domain/refunds'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   canCreateChangeOrder,
@@ -67,7 +75,9 @@ import type {
   ChangeOrderKind,
   ChangeOrderStatus,
   CustomerAdvance,
+  CustomerCreditNote,
   CustomerPayment,
+  CustomerRefund,
   MaterialStock,
   PaymentAllocation,
   PaymentMethod,
@@ -304,6 +314,41 @@ function mapAdvanceApplicationRow(
     advanceId: String(row.advance_id),
     billingDocumentId: String(row.billing_document_id),
     amount: Number(row.amount),
+    createdAt: String(row.created_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapCustomerCreditNoteRow(
+  row: Record<string, unknown>,
+): CustomerCreditNote {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    quotationId: String(row.quotation_id),
+    billingDocumentId: (row.billing_document_id as string | null) ?? null,
+    creditNumber: String(row.credit_number),
+    amount: Number(row.amount),
+    reason: String(row.reason),
+    status: row.status as CustomerCreditNote['status'],
+    issuedAt: String(row.issued_at),
+    createdAt: String(row.created_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapCustomerRefundRow(row: Record<string, unknown>): CustomerRefund {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    quotationId: String(row.quotation_id),
+    paymentId: String(row.payment_id),
+    refundNumber: String(row.refund_number),
+    amount: Number(row.amount),
+    method: row.method as PaymentMethod,
+    status: row.status as CustomerRefund['status'],
+    reason: String(row.reason),
+    refundedAt: String(row.refunded_at),
     createdAt: String(row.created_at),
     createdBy: String(row.created_by ?? ''),
   }
@@ -2079,6 +2124,132 @@ export const supabaseRepos = {
       })
       .eq('id', advance.id)
     return mapAdvanceApplicationRow(data as Record<string, unknown>)
+  },
+
+  async listCustomerCreditNotes(
+    quotationId: string,
+  ): Promise<CustomerCreditNote[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('customer_credit_notes')
+      .select(
+        'id, organization_id, quotation_id, billing_document_id, credit_number, amount, reason, status, issued_at, created_at, created_by',
+      )
+      .eq('quotation_id', qid)
+      .order('issued_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入折讓'))
+    return (data ?? []).map((row) =>
+      mapCustomerCreditNoteRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listCustomerRefunds(quotationId: string): Promise<CustomerRefund[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('customer_refunds')
+      .select(
+        'id, organization_id, quotation_id, payment_id, refund_number, amount, method, status, reason, refunded_at, created_at, created_by',
+      )
+      .eq('quotation_id', qid)
+      .order('refunded_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入退款'))
+    return (data ?? []).map((row) =>
+      mapCustomerRefundRow(row as Record<string, unknown>),
+    )
+  },
+
+  async createCustomerCreditNote(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      amount: number
+      reason: string
+      billingDocumentId?: string | null
+    },
+  ): Promise<CustomerCreditNote> {
+    assertCanManageRefunds(actor.role)
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canIssueCreditOrRefund(quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const docs = await this.listBillingDocuments(quote.id)
+    const notes = await this.listCustomerCreditNotes(quote.id)
+    assertCreditNoteFits({
+      billed: sumIssuedBillingAmount(docs),
+      alreadyCredited: sumIssuedCredits(notes),
+      crediting: input.amount,
+    })
+    if (input.billingDocumentId) {
+      const doc = docs.find((d) => d.id === input.billingDocumentId)
+      if (!doc || doc.status !== 'issued') {
+        throw new AppError('折讓僅能關聯已開立請款單')
+      }
+    }
+    const creditNumber = `CN-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+    const { data, error } = await sb()
+      .from('customer_credit_notes')
+      .insert({
+        quotation_id: quote.id,
+        billing_document_id: input.billingDocumentId || null,
+        credit_number: creditNumber,
+        amount: Number(input.amount),
+        reason: input.reason.trim() || '折讓',
+        status: 'issued',
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, quotation_id, billing_document_id, credit_number, amount, reason, status, issued_at, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法開立折讓'))
+    return mapCustomerCreditNoteRow(data as Record<string, unknown>)
+  },
+
+  async createCustomerRefund(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      paymentId: string
+      amount: number
+      method: PaymentMethod
+      reason: string
+    },
+  ): Promise<CustomerRefund> {
+    assertCanManageRefunds(actor.role)
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canIssueCreditOrRefund(quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const payments = await this.listCustomerPayments(quote.id)
+    const payment = payments.find((p) => p.id === input.paymentId)
+    if (!payment || payment.status !== 'confirmed') {
+      throw new AppError('退款必須對應已確認的原收款（原收款保留）')
+    }
+    const prior = await this.listCustomerRefunds(quote.id)
+    assertRefundFits({
+      paymentAmount: payment.amount,
+      alreadyRefundedOnPayment: refundsOnPayment(payment.id, prior),
+      refunding: input.amount,
+    })
+    const refundNumber = `REF-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+    const { data, error } = await sb()
+      .from('customer_refunds')
+      .insert({
+        quotation_id: quote.id,
+        payment_id: payment.id,
+        refund_number: refundNumber,
+        amount: Number(input.amount),
+        method: input.method,
+        status: 'confirmed',
+        reason: input.reason.trim() || '退款',
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, quotation_id, payment_id, refund_number, amount, method, status, reason, refunded_at, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登錄退款'))
+    return mapCustomerRefundRow(data as Record<string, unknown>)
   },
 
   async listQuotationItems(quotationId: string): Promise<QuotationItem[]> {

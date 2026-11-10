@@ -32,6 +32,7 @@ import { formatTaipei } from '@/lib/time'
 import { BillingPanel } from '@/pages/BillingPanel'
 import { ChangeOrdersPanel } from '@/pages/ChangeOrdersPanel'
 import { PaymentsPanel } from '@/pages/PaymentsPanel'
+import { RefundsPanel } from '@/pages/RefundsPanel'
 
 export function QuoteDetailPage() {
   const { quoteId = '' } = useParams()
@@ -72,6 +73,10 @@ export function QuoteDetailPage() {
     allocatePayment,
     createCustomerAdvance,
     applyCustomerAdvance,
+    creditNotes,
+    refunds,
+    createCustomerCreditNote,
+    createCustomerRefund,
     saving,
   } = useQuoteDetail(quoteId)
 
@@ -848,6 +853,21 @@ export function QuoteDetailPage() {
         allocatePayment={allocatePayment}
         createCustomerAdvance={createCustomerAdvance}
         applyCustomerAdvance={applyCustomerAdvance}
+        onError={setActionError}
+        onSuccess={setActionSuccess}
+      />
+
+      <RefundsPanel
+        quote={quote}
+        changeOrders={changeOrders}
+        billingDocuments={billingDocuments}
+        payments={payments}
+        creditNotes={creditNotes}
+        refunds={refunds}
+        userRole={user?.role || 'member'}
+        saving={busy}
+        createCustomerCreditNote={createCustomerCreditNote}
+        createCustomerRefund={createCustomerRefund}
         onError={setActionError}
         onSuccess={setActionSuccess}
       />
