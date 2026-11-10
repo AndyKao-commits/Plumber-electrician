@@ -1,0 +1,229 @@
+水電工程管理系統
+DOC-03｜資料庫設計規格與 Migration 契約
+版本 0.9｜2026-11-10｜狀態：設計草案／尚未執行 SQL／未開發
+依據 DOC-01 PRD 與 P0.3–P0.9 決策整理。本文提供可交給工程師實作的資料模型、欄位規範、交易約束與遷移順序；並非已通過執行驗證的完整 PostgreSQL DDL。
+1. 範圍、技術假設與已確認政策
+領域
+設計基準
+資料庫
+PostgreSQL（擬使用 Supabase；尚未部署）
+租戶隔離
+organization_id + RLS + 後端授權 + 同組織外鍵
+時間
+TIMESTAMPTZ 儲存 UTC；業務日以 Asia/Taipei 計算
+金額／數量
+NUMERIC；API 傳十進位字串；不得用浮點數入帳
+採購門檻
+最終應付金額 ≥ NT$3,000 需事前核准
+緊急採購
+單次 ≤ NT$5,000；每人每台灣業務日累計 ≤ NT$10,000
+材料成本
+一般數量型採移動加權平均；序號型個別成本
+報價稅務
+每次建立報價時選擇；發布後凍結快照
+復原目標
+RPO ≤ 1 小時／RTO ≤ 4 小時；需實測證明
+2. 共用欄位、索引與資料治理
+所有組織業務表原則包含 id UUID PRIMARY KEY、organization_id UUID NOT NULL、created_at/updated_at TIMESTAMPTZ、version INTEGER NOT NULL DEFAULT 1。事件流水帳可採不可變事件時間欄位，不必機械套用 updated_at。
+跨表關聯須驗證相同 organization_id；建議使用 UNIQUE(organization_id,id) 配合複合外鍵，並建立對應索引。
+所有正式帳務、庫存、稽核與已發布快照採 append-only；修正用 reversal / compensating entry，不能 UPDATE 原始過帳金額。
+刪除採分級政策：一般草稿可軟刪；已過帳資料不可硬刪；個資刪除須遵循保存與匿名化政策，不能破壞稽核。
+重要唯一鍵：組織內單號、邀請有效 token 雜湊、冪等鍵作用域、同一正式事件來源識別碼。
+3. 資料表清單與關聯
+IAM 身分與稽核
+user_profiles, organizations, organization_members, organization_invitations, permission_grants, organization_settings, audit_events, security_events, idempotency_records, system_jobs
+CRM 客戶與地址
+customers, customer_contacts, sites, customer_site_links, site_access_secrets
+PRJ 工程現場
+projects, project_tasks, task_assignments, schedules, attendance_shifts, attendance_events, work_site_sessions, attendance_corrections, construction_reports, media_assets, media_links, defects, defect_inspections, daily_logs, daily_log_versions
+INV 材料庫存
+materials, material_units, material_serials, stock_locations, stock_movements, stock_movement_lines, stock_reservations, material_usage, stock_counts, stock_count_items, inventory_cost_entries
+PUR 採購與供應商
+purchase_requests, purchase_request_items, purchase_orders, purchase_order_items, purchase_receipts, purchase_receipt_items, suppliers, supplier_statements, supplier_statement_lines, supplier_payables, supplier_payments, supplier_payment_allocations, supplier_reconciliation_issues, purchase_returns, purchase_return_items, purchase_return_shipments, supplier_credit_notes, supplier_refunds, supplier_refund_allocations
+FIN 報價與帳款
+quotation_templates, quotations, quotation_versions, quotation_items, quotation_item_details, quotation_acceptances, change_orders, change_order_items, billing_milestones, billing_documents, billing_document_items, payments, payment_allocations, customer_advances, advance_applications, customer_credit_notes, customer_refunds
+REP 維修保固
+repair_cases, repair_assignments, repair_visits, repair_actions, warranties, warranty_assessments, related_cases, complaints
+OPS 離線
+sync_operations
+4. 關鍵資料表欄位契約
+資料表
+關鍵欄位（除共用欄位）
+必要約束
+organization_members
+user_id, role, status, joined_at
+組織＋使用者唯一；Owner 移轉受控
+projects
+name, status, customer_id?, site_id?
+name 必填；P0 缺失阻擋一般結案
+repair_cases
+case_number, problem_description, status, customer_id?, site_id?, project_id?
+僅問題描述為業務必填；組織內單號唯一
+customers
+name, customer_type?, notes?
+name 必填
+sites
+address?, label?, notes?
+可先建立不完整地址；敏感密碼不得放 notes
+site_access_secrets
+site_id, ciphertext, key_version, access_policy
+加密保存；讀取獨立授權及稽核
+materials
+sku, name, tracking_mode, base_unit_id
+SKU 組織內唯一；單位換算受控
+stock_movements
+movement_type, source_type, source_id, posted_at, reversal_of?
+正式過帳不可變；來源事件唯一
+stock_movement_lines
+movement_id, material_id, location_id, qty, unit_cost
+不得負庫存；數量與成本精確
+purchase_requests
+requester_id, mode, final_payable, approval_status, business_date
+門檻與每日額度交易內驗證
+inventory_cost_entries
+material_id, location_id?, quantity_delta, value_delta, unit_cost
+移動加權平均；調撥不重估
+quotations
+project_id?, repair_case_id?, status, tax_mode
+project XOR repair；草稿建立時選稅模式
+quotation_versions
+quotation_id, version_no, issued_at, tax_snapshot, total_amount
+已發布版本不可變
+payments
+received_at, amount, method, status
+確認收款 ≠ 已分配；不可超額分配
+payment_allocations
+payment_id, billing_document_id, amount
+交易鎖定避免超額
+warranty_assessments
+warranty_id?, repair_case_id, classification, rationale, assessed_by
+期間內不自動免費
+sync_operations
+client_operation_id, request_hash, status, server_resource_id
+組織＋使用者＋操作 ID 唯一
+5. 必須以資料庫保障的不變條件
+報價目標 XOR：CHECK ((project_id IS NOT NULL) <> (repair_case_id IS NOT NULL))；兩端同組織。
+正式庫存可用量 = 現有量 − 有效預留量；交易鎖定相關餘額行；不得產生負可用量或負實存。
+採購金額 final_payable = 折扣後商品金額 + 稅 + 運費 + 其他應付費用；已核准金額變動後必須重新評估。
+緊急額度使用單一交易內的員工日額度占用表或可鎖定彙總行，防止兩筆同時通過。
+收款分配合計 ≤ 已確認可分配收款；退款、預收款抵充及折讓各自保留獨立來源。
+正式發布的報價、已確認的庫存流水、金流、稽核事件不得覆寫；用版本或反向事件修正。
+缺失、保固、客訴與維修結案均需按狀態機檢查，P0 安全問題不得直接一般結案。
+6. Migration 批次與相依性
+批次
+內容
+前置條件
+001
+組織、使用者、權限、稽核與冪等
+Auth 整合方案確定
+002
+客戶、聯絡人、地址、敏感資訊
+001
+003
+工程、任務、行程
+002
+004
+出勤、回報、照片、缺失、日誌
+003
+005
+材料、庫存、成本
+003
+006
+供應商、採購、收貨、退貨、月結
+005
+007
+維修、派工、保固、客訴
+002、003、005；若報價 FK 依賴維修，先建 repair_cases
+008
+報價、合約、追加減
+003、007
+009
+請款、收款、預收、折讓、退款
+008
+010
+離線同步、分析視圖、排程
+001–009
+011
+RLS、複合外鍵、索引與效能驗證
+隨各批次先建最低安全策略；本批為最終補強
+重要：RLS 不應等到 011 才啟用。每批新增含組織資料的表，必須同步建立最小可用 RLS，避免遷移期間裸露資料。
+7. 交易隔離、鎖定與冪等
+操作
+建議交易策略
+拒絕條件
+庫存扣料
+鎖定庫存餘額、唯一來源事件
+庫存不足／重複來源
+緊急採購
+鎖定員工日額度行、計入有效承諾
+單次或每日超額
+一般採購核准
+驗證最終金額與審核人權限
+未核准先購／金額改變
+收款分配
+鎖定付款及帳單餘額
+超額分配
+發布報價
+寫入不可變版本與稅務快照
+稅務未選／版本衝突
+離線同步
+唯一 client_operation_id + request_hash
+相同鍵不同請求內容
+8. RLS 與敏感資料策略
+資料庫 RLS 以 active organization_members 與細項 permission_grants 判斷；前端權限僅作體驗，不是安全邊界。
+對財務、薪資、門禁資訊採最小權限；必要時用獨立表、受控視圖或服務端查詢避免欄位外洩。
+Storage 私有檔案以組織與資源授權產生短效連結；移除 EXIF 位置資訊再公開匯出。
+Service Role 僅後端使用；每個管理操作仍需驗證呼叫者權限並留下稽核。
+跨組織外鍵、查詢與匯出均需測試；對無權資源避免暴露存在性。
+9. 索引、效能與維護
+常用索引：organization_id + status + created_at；organization_id + project_id；organization_id + customer_id；organization_id + business_date。
+流水帳索引：organization_id + material_id + posted_at；organization_id + source_type + source_id（唯一）；金流來源及分配索引。
+照片檔案與資料列分離；資料庫保存 Storage 路徑、雜湊、媒體類型、權限與引用關係。
+備份需包含資料庫、私有檔案與設定；RPO 1h／RTO 4h 必須在實際選定的服務方案做復原演練。
+10. 資料庫驗收清單
+測試 ID
+驗收項目
+成功標準
+DB-01
+跨組織讀寫
+RLS 與 FK 拒絕
+DB-02
+重複庫存耗用
+只過帳一次
+DB-03
+並行庫存扣除
+不出現負庫存
+DB-04
+並行緊急採購
+每日總額不超過 10,000
+DB-05
+一般採購門檻
+最終金額 3,000 含以上需核准
+DB-06
+移動加權平均
+入庫後成本精確
+DB-07
+報價目標 XOR
+同時空值或同時非空皆拒絕
+DB-08
+已發布報價
+不可直接覆寫
+DB-09
+收款並行分配
+不超過已收款
+DB-10
+離線重送
+相同操作只落地一次
+DB-11
+敏感資訊
+無權讀取拒絕並稽核
+DB-12
+備份復原
+實測達 RPO/RTO 目標
+11. 待決政策與實作前檢查
+人工成本計算、會計收入認列、保固期間與排除條款、供應商結帳日、稅額進位規則，保留組織／契約層級設定，不自行假設。
+須先確定資料刪除保留政策、資料庫高精度 NUMERIC 規模、是否跨幣別及稅務發票資料欄位。
+正式 DDL 應另附每表完整 CREATE TABLE、外鍵、CHECK、索引、RLS policy、回滾方案與 migration 測試；本文件是設計契約，不冒充完整 SQL。
+12. 變更管理與交付狀態
+追溯鏈：DOC-01 需求 → DOC-03 資料表／約束 → DOC-02 API → DOC-05 測試 → DOC-06 工作票。任何已確認政策變更需有日期、原因、影響與驗收修訂。
+狀態：文件已產出；SQL 未執行、Migration 未建立、RLS 未部署、資料未修改、測試未執行。

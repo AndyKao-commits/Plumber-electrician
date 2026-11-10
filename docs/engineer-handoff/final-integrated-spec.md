@@ -1,0 +1,138 @@
+# 最終整合開發規格（官方 Word 全文文字版）
+
+來源：`original/chatgpt-part1/Word/00_最終整合開發規格.docx`  
+狀態：整合完成、尚未技術封版；未開發、未測試、未部署。
+
+```text
+水電工程管理系統
+最終整合開發規格｜單一交付基準（待開發授權）
+版本 1.0-RC｜2026-11-10｜文件狀態：整合完成、尚未技術封版；未開發、未測試、未部署
+文件用途：將 DOC-01～DOC-09 的有效規則整合為單一可交付基準。遇到衝突，以使用者明確確認的政策優先，其次採本文件明示的安全預設；未決政策不得視為已核准。此文件不代表 SQL DDL、OpenAPI 或程式碼已完成。
+1｜產品範圍與不做事項
+目標：為小型水電工程團隊提供繁體中文、手機優先、台灣時區（Asia/Taipei）及新台幣的工程管理系統。底部分頁：首頁／工程／行程／待辦／更多。
+模組
+必備範圍
+IAM
+組織、Owner/Admin/Member、邀請、細項權限、稽核與安全事件
+工程現場
+工程、任務、派工、行程、跨日出勤、施工回報、照片、缺失、施工日誌
+材料採購
+材料、倉庫、工地庫存、預留、耗用、採購核准、緊急採購、供應商月結、退貨退款
+零用金
+員工補充申請、Owner 核准、實際撥款、流水帳、憑證、對帳
+財務
+報價版本、追加減、分期請款、收款、預收抵充、折讓、退款、工程成本
+售後
+客戶、地址、獨立維修、派工、保固判定、客訴、重複維修關聯
+平台
+離線草稿與同步、私有媒體、統計、匯出、備份復原
+第一版不自動開立官方電子發票；不把出勤時數直接等同薪資；不把收款等同會計收入；不自動以保固日期判定免費；不加入 LINE/SMS/Email 主動通知。
+2｜已核准業務政策（不得擅改）
+ID
+正式政策
+可驗收規則
+POL-001
+一般採購：最終應付金額 ≥ NT$3,000 事前核准
+金額含折扣、稅、運費及其他應付費用；等於門檻須核准
+POL-002
+緊急採購：單次 ≤ NT$5,000；每員工每日 ≤ NT$10,000
+按組織／員工／Asia/Taipei 原始業務日原子占額；必填理由、事後核對
+POL-003
+一般數量型材料採移動加權平均
+入庫調整成本；庫位調撥不重算；序號型採個別成本
+POL-004
+每次建立報價時選稅務模式
+POST quotations 缺 tax_mode 回 422；發布凍結稅務快照
+POL-005
+RPO ≤1 小時；RTO ≤4 小時
+包含資料庫、附件、設定；正式上線前實際復原演練通過
+3｜業務流程與狀態契約
+3.1 工程與現場
+工程只需名稱即可建立；狀態：籌備中／施工中／待驗收／已結案／暫停。任務可有主要負責人，行程是計畫、出勤是實際紀錄。跨午夜同一班次，不自動午夜下班；切換工地不產生新班次。施工回報「照片或文字」擇一即可，空白不行。P0 安全缺失未解不得一般結案。
+3.2 客戶與維修
+客戶只需名稱；維修案件只需問題描述，不強制建立客戶、地址或工程。維修狀態：待安排／已安排／處理中／待確認／已結案，另可暫停、取消、稽核後重開。到場紀錄不自動產生出勤。維修與工程共用庫存及財務。保固須人工判定範圍、排除與責任；免費維修仍記成本。
+3.3 庫存與採購
+領料或庫位調撥 ≠ 實際耗用；庫存正式流水帳不可變、禁止負庫存。一般採購核准 ≠ 收貨 ≠ 付款；供應商退貨 ≠ 折讓 ≠ 退款。緊急額度採不可變 RESERVE／RELEASE／ADJUST 事件；退款不得自動恢復原日額度。
+3.4 報價與金流
+正式報價必須關聯 project_id 與 repair_case_id 恰好一者（XOR）；報價模板獨立。已發布報價、客戶接受、追加減及正式金流保留不可變版本或沖銷。有效合約＝已接受報價＋已接受追加－已接受追減。請款、實際收款、預收抵充、折讓、退款與會計收入分開計算，不重複扣減。
+4｜資料模型與建立順序
+群組
+核心資料表（節錄，非完整 DDL）
+組織
+organizations, organization_members, permission_grants, audit_events, idempotency_records
+客戶／維修最小主檔
+customers, sites, customer_site_links, site_access_secrets, repair_cases
+工程／現場
+projects, project_tasks, schedules, attendance_shifts, construction_reports, defects, media_assets
+庫存／採購
+materials, stock_locations, stock_movements, stock_movement_lines, material_usage, purchase_requests, purchase_orders, purchase_receipts
+額度／零用金
+emergency_limit_events, petty_cash_accounts, petty_cash_top_up_requests, petty_cash_disbursements, petty_cash_ledger_entries, petty_cash_reconciliations, petty_cash_receipts
+財務
+quotations, quotation_versions, change_orders, billing_documents, payments, payment_allocations, customer_advances, advance_applications, customer_refunds
+售後／平台
+repair_visits, repair_actions, warranties, warranty_assessments, complaints, sync_operations
+依賴修正：先建立 customers/sites、repair_cases 最小主檔及 projects，才能建立 quotations 的雙外鍵與 XOR 約束。每批含租戶資料的 Migration 必須同批啟用 RLS、預設拒絕、組織外鍵與跨組織測試；最後批次只做總複核。
+建議共用欄位：UUID id、organization_id、created_at、適用時 updated_at/version。跨表關聯以同組織複合外鍵或同等資料庫保證；NUMERIC 精確金額／數量，TIMESTAMPTZ 存 UTC。正式帳務與庫存採 append-only／補償事件。
+5｜API、授權與同步契約
+API 前綴 /api/v1；成功 {data,meta}，錯誤 {error:{code,message,details,request_id}}；401/403/404/409/422/429。金額用十進位字串。關鍵 POST 需 Idempotency-Key；版本衝突回 409；同鍵不同請求摘要亦回 409。
+類型
+代表端點／必要驗證
+組織
+/me、/organizations、/members、/permissions；有效成員＋細項權限
+工程
+/projects、/tasks、/schedules、/attendance、/reports、/defects
+採購庫存
+/materials、/stock-movements、/purchase-requests、/emergency-purchases
+財務
+/quotations、/change-orders、/billing-documents、/payments、/customer-advances、/customer-refunds
+維修
+/customers、/sites、/repairs、/warranties、/complaints
+同步媒體
+/sync-operations、/media；私有簽名連結、授權驗證
+Owner/Admin/Member 為基礎角色，明確拒絕優先。一般工程資料可依有效組織成員權限共享；財務、薪資、門禁與敏感匯出必須顯式授權。安全預設：不得自行核准同筆採購；Admin 不預設有財務、薪資及門禁權限。前端隱藏按鈕不能代替 API/RLS 授權。
+離線允許施工回報、照片、維修及待辦草稿；打卡為待驗證事件。庫存正式過帳、核准、收款、退款、報價發布必須連線完成。衝突以版本檢查處理，不靜默覆寫。
+6｜工作依賴與最小可交付順序
+順序
+交付與阻擋門檻
+A 基礎
+技術選型核准、CI、環境隔離、組織／權限／RLS／稽核、備份方案可行性
+B 主檔
+客戶／地址／維修最小主檔、工程主檔；避免報價 FK 依賴循環
+C 現場
+任務、行程、跨日出勤、回報、照片、缺失及離線草稿
+D 庫存採購
+材料流水帳、緊急額度事件、採購、供應商、零用金；並行測試
+E 財務
+報價 XOR、稅務快照、追加減、請款、預收、收退款與餘額核對
+F 售後整合
+維修派工、保固、客訴、統計與匯出；全流程回歸
+G 發布驗收
+權限與交易測試、八條 E2E、Owner UAT、RPO/RTO 演練、回滾方案
+7｜驗收與上線阻擋
+八條必測 E2E：完整工程、緊急採購、獨立維修、供應商退貨月結、離線施工、跨日出勤、合約追加減、預收及退款。各流程涵蓋正常、越權、重送、並行與失敗恢復。
+阻擋上線：P0/P1 未解、跨組織洩漏、負庫存、採購超額、重複收款／退款、正式事件被覆寫、缺失結案繞過、附件外洩、備份演練未達 RPO/RTO。
+測試數量以逐項唯一 ID 的可機器核對清冊為準。DOC-05 摘要曾標 75，DOC-08 靜態抽取為 68 個一般案例＋8 個 E2E＝76；目前尚未建立經逐票驗證的唯一清冊，因此不能把 76 宣稱為最終完整測試總數。DOC-06 所述 47 張工作票亦須在正式建票時逐項校驗。
+8｜待決政策：安全預設，不擴充範圍
+事項
+未核准前處理
+人工成本／會計收入
+只記已確認營運成本與帳款；不自動認列薪資或會計收入
+保固期限與排除
+依個別工程／維修契約設定；未定則人工審核
+稅率、捨入、發票
+建立報價須選稅務模式；未確定稅法適用時不得發布
+供應商結帳／信用
+依供應商設定，未核准信用額度不得假設可賒帳
+採購自我核准
+預設禁止，Owner 核准例外政策前不得開放
+個資保留／敏感匯出
+預設禁止批量正式匯出；保留／刪除政策須確認
+成本精度／成本池
+暫建議組織＋材料成本池；精度與特殊退貨差額需技術驗證
+供應商備份能力／費用
+必須證明資料庫＋附件可在 1h/4h 目標內復原
+9｜交付狀態與啟動條件
+本文件已整合 DOC-01～DOC-09 的核心規格並明示衝突修正，但仍非完整 SQL DDL、OpenAPI 3.1、逐表欄位字典或已驗證的測試清冊。後續工程可據此實作；實作前需完成技術選型、關鍵待決政策處置及可機器驗證契約。
+未經使用者明確授權：不建立／修改 GitHub 程式或 Issues，不修改 Supabase、Vercel，不執行 Migration、測試或部署。此為單一整合交付文件，不再另設無止境的規劃階段。
+```

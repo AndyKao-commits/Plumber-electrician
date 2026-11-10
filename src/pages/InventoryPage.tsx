@@ -1,0 +1,102 @@
+import { useState, type FormEvent } from 'react'
+import { useInventory } from '@/hooks/useInventory'
+import { useUser } from '@/hooks/useUser'
+import { formatTaipei } from '@/lib/time'
+
+export function InventoryPage() {
+  const { user } = useUser()
+  const { materials, inbound, isInbound, inboundError } = useInventory(user?.id)
+  const [materialId, setMaterialId] = useState('mat-pipe')
+  const [qty, setQty] = useState('10')
+  const [unitCost, setUnitCost] = useState('50')
+
+  async function onSubmit(event: FormEvent) {
+    event.preventDefault()
+    await inbound({
+      materialId,
+      qty: Number(qty) || 0,
+      unitCost: Number(unitCost) || 0,
+    })
+  }
+
+  return (
+    <div className="stack fade-up">
+      <section className="panel stack">
+        <strong>庫存成本（移動加權平均）</strong>
+        <p className="muted" style={{ margin: 0 }}>
+          成本池＝組織＋材料（REV-06）。一般採購入庫才更新平均成本；零庫存再入庫採新批成本。
+        </p>
+      </section>
+
+      <section className="panel stack">
+        <strong>材料現況</strong>
+        {materials.map((m) => (
+          <div key={m.id} className="site-link">
+            <div className="row between">
+              <h3 style={{ margin: 0 }}>{m.name}</h3>
+              <span className="badge">{m.unit}</span>
+            </div>
+            <p>
+              數量 {m.qty} · 單位成本 NT${m.unitCost.toLocaleString()}
+            </p>
+            <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+              更新 {formatTaipei(m.updatedAt, 'MM/dd HH:mm')}
+            </p>
+          </div>
+        ))}
+      </section>
+
+      <section className="panel stack">
+        <strong>模擬入庫</strong>
+        <form className="stack" onSubmit={(e) => void onSubmit(e)}>
+          <div className="field">
+            <label htmlFor="inv-mat">材料</label>
+            <select
+              id="inv-mat"
+              value={materialId}
+              onChange={(e) => setMaterialId(e.target.value)}
+            >
+              {materials.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="grid-2">
+            <div className="field">
+              <label htmlFor="inv-qty">數量</label>
+              <input
+                id="inv-qty"
+                type="number"
+                min="1"
+                step="1"
+                value={qty}
+                onChange={(e) => setQty(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="inv-cost">入庫單價</label>
+              <input
+                id="inv-cost"
+                type="number"
+                min="0"
+                step="0.01"
+                value={unitCost}
+                onChange={(e) => setUnitCost(e.target.value)}
+              />
+            </div>
+          </div>
+          {inboundError ? (
+            <p style={{ color: 'var(--danger)', margin: 0 }}>
+              {(inboundError as Error).message}
+            </p>
+          ) : null}
+          <button className="btn btn-steel btn-block" type="submit" disabled={isInbound}>
+            {isInbound ? '入庫中…' : '入庫並重算平均成本'}
+          </button>
+        </form>
+      </section>
+    </div>
+  )
+}
