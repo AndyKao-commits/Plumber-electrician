@@ -29,6 +29,9 @@ export function toUserMessage(error: unknown, fallback = '操作失敗，請稍�
   if (/check constraint|23514/i.test(msg) || code === '23514') {
     return '資料不符合規則，請檢查後再試'
   }
+  if (/invalid input syntax for type uuid/i.test(msg) || code === '22P02') {
+    return '選取的資料 ID 無效，請重新選擇工地／案件後再送出'
+  }
   if (/network|Failed to fetch|fetch/i.test(msg)) {
     return '網路連線失敗，請檢查網路後再試'
   }

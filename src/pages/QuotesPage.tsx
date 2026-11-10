@@ -21,12 +21,24 @@ export function QuotesPage() {
   const canPublish =
     Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_PUBLISH)
 
+  const formalSites = sites.filter((s) => s.kind === 'formal')
+
   const [title, setTitle] = useState('')
   const [linkType, setLinkType] = useState<'project' | 'repair'>('project')
-  const [projectId, setProjectId] = useState('site-a')
-  const [repairCaseId, setRepairCaseId] = useState('repair-1')
+  const [projectId, setProjectId] = useState('')
+  const [repairCaseId, setRepairCaseId] = useState('')
   const [taxMode, setTaxMode] = useState<TaxMode>('exclusive')
   const [amount, setAmount] = useState('10000')
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const selectedProjectId =
+    projectId && formalSites.some((s) => s.id === projectId)
+      ? projectId
+      : (formalSites[0]?.id ?? '')
+  const selectedRepairId =
+    repairCaseId && repairCases.some((r) => r.id === repairCaseId)
+      ? repairCaseId
+      : (repairCases[0]?.id ?? '')
 
   const preview = calcQuoteTax({
     amountBeforeTax: Number(amount) || 0,
@@ -35,12 +47,26 @@ export function QuotesPage() {
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
+    setFormError(null)
+
+    const nextProjectId = linkType === 'project' ? selectedProjectId : null
+    const nextRepairId = linkType === 'repair' ? selectedRepairId : null
+
+    if (linkType === 'project' && !nextProjectId) {
+      setFormError('請先選擇正式工程（尚無可用工地）')
+      return
+    }
+    if (linkType === 'repair' && !nextRepairId) {
+      setFormError('請先選擇維修案件（尚無可用案件）')
+      return
+    }
+
     await createQuote({
       title,
       taxMode,
       amountBeforeTax: Number(amount) || 0,
-      projectId: linkType === 'project' ? projectId : null,
-      repairCaseId: linkType === 'repair' ? repairCaseId : null,
+      projectId: nextProjectId,
+      repairCaseId: nextRepairId,
     })
     setTitle('')
   }
@@ -99,16 +125,19 @@ export function QuotesPage() {
               <label htmlFor="q-project">工程</label>
               <select
                 id="q-project"
-                value={projectId}
+                value={selectedProjectId}
                 onChange={(e) => setProjectId(e.target.value)}
+                required
+                disabled={formalSites.length === 0}
               >
-                {sites
-                  .filter((s) => s.kind === 'formal')
-                  .map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
+                {formalSites.length === 0 ? (
+                  <option value="">尚無正式工程</option>
+                ) : null}
+                {formalSites.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
               </select>
             </div>
           ) : (
@@ -116,9 +145,14 @@ export function QuotesPage() {
               <label htmlFor="q-repair">維修案件</label>
               <select
                 id="q-repair"
-                value={repairCaseId}
+                value={selectedRepairId}
                 onChange={(e) => setRepairCaseId(e.target.value)}
+                required
+                disabled={repairCases.length === 0}
               >
+                {repairCases.length === 0 ? (
+                  <option value="">尚無維修案件</option>
+                ) : null}
                 {repairCases.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.title}（{r.customerName}）
@@ -145,12 +179,22 @@ export function QuotesPage() {
               {preview.amountAfterTax.toLocaleString()}
             </h3>
           </div>
+          {formError ? (
+            <p style={{ color: 'var(--danger)', margin: 0 }}>{formError}</p>
+          ) : null}
           {createError ? (
             <p style={{ color: 'var(--danger)', margin: 0 }}>
               {(createError as Error).message}
             </p>
           ) : null}
-          <button className="btn btn-steel btn-block" type="submit" disabled={isCreating}>
+          <button
+            className="btn btn-steel btn-block"
+            type="submit"
+            disabled={
+              isCreating ||
+              (linkType === 'project' ? formalSites.length === 0 : repairCases.length === 0)
+            }
+          >
             {isCreating ? '建立中…' : '建立報價草稿'}
           </button>
         </form>
