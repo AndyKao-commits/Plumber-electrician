@@ -10,7 +10,14 @@ ChatGPT 端已宣告：**需求規劃結束，不再擴充規劃階段**。
 
 Library 分享連結（需 ChatGPT 登入，Cloud Agent 目前無法直接下載）：  
 https://chatgpt.com/library/share/libfile_d90ffd0208408191be60ac1c4cb26eb3?account_id=personal  
-請改上傳附件或放到 `docs/engineer-handoff/original/`。
+
+對話後續：ZIP 無法下載 → ChatGPT 提供英文檔名  
+`electrical_project_engineering_package.zip`／`electrical_project_combined_spec.pdf`  
+（仍為 sandbox，此環境同樣抓不到）。
+
+**本 repo 已提供可下載替代包：**  
+`docs/engineer-handoff/original/electrical_project_engineering_package.zip`  
+（由對話重建的 Markdown／SQL 交付包，非 ChatGPT 原始 Word／PDF）。
 
 ## 建議閱讀順序
 
