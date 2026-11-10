@@ -17,6 +17,18 @@ export function toUserMessage(error: unknown, fallback = '操作失敗，請稍�
   if (/JWT|not authenticated|Auth session missing/i.test(msg) || code === '401') {
     return '尚未登入或登入已過期，請重新登入'
   }
+  if (/User already registered|already been registered/i.test(msg)) {
+    return '此 Email 已註冊，請改為登入'
+  }
+  if (/Password should be at least/i.test(msg)) {
+    return '密碼至少 6 碼'
+  }
+  if (/Email not confirmed/i.test(msg)) {
+    return 'Email 尚未驗證，請先完成信箱確認或請管理員關閉 Confirm email'
+  }
+  if (/signup.*disabled|Signups not allowed/i.test(msg)) {
+    return '目前未開放自行註冊，請聯絡管理員'
+  }
   if (/permission denied|row-level security|RLS|42501/i.test(msg) || code === '42501') {
     return '權限不足，無法存取此資料'
   }

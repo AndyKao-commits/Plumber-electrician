@@ -164,6 +164,58 @@ export const supabaseRepos = {
     return mapUser({ ...profile, email: profile.email ?? data.user.email ?? null })
   },
 
+  /**
+   * Self-serve signup: Auth user + complete_signup RPC for org/profile.
+   * - organizationName empty → join oldest existing org (or create default)
+   * - organizationName set → create new company; first user becomes Owner
+   */
+  async signUp(input: {
+    name: string
+    email: string
+    password: string
+    organizationName?: string | null
+  }): Promise<AppUser> {
+    const client = sb()
+    const name = input.name.trim()
+    const email = input.email.trim()
+    if (!name) throw new AppError('請填寫姓名')
+    if (!email) throw new AppError('請填寫 Email')
+    if (input.password.length < 6) throw new AppError('密碼至少 6 碼')
+
+    const { data, error } = await client.auth.signUp({
+      email,
+      password: input.password,
+      options: {
+        data: { name },
+      },
+    })
+    if (error) throw new AppError(toUserMessage(error, '建立帳號失敗'))
+    if (!data.user) throw new AppError('建立帳號失敗')
+
+    // Email confirmation enabled → no session yet
+    if (!data.session) {
+      throw new AppError(
+        '帳號已建立，請至信箱完成驗證後再登入（若未收到信，請在 Supabase Auth 關閉「Confirm email」）',
+      )
+    }
+
+    const { data: profile, error: profileError } = await client.rpc('complete_signup', {
+      p_name: name,
+      p_org_name: input.organizationName?.trim() || null,
+    })
+    if (profileError) {
+      throw new AppError(toUserMessage(profileError, '帳號已建立，但無法建立個人資料'))
+    }
+
+    // rpc may return object or array depending on PostgREST
+    const row = Array.isArray(profile) ? profile[0] : profile
+    if (!row) throw new AppError('帳號已建立，但無法讀取個人資料')
+    return mapUser({
+      ...row,
+      email: row.email ?? data.user.email ?? email,
+    })
+  },
+
   async signOut(): Promise<void> {
     const { error } = await sb().auth.signOut()
     if (error) throw new AppError(toUserMessage(error, '登出失敗'))

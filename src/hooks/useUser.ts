@@ -52,6 +52,19 @@ export function useUser() {
     onSuccess: (user) => queryClient.setQueryData(userKeys.me(), user),
   })
 
+  const signUpMutation = useMutation({
+    mutationFn: async (input: {
+      name: string
+      email: string
+      password: string
+      organizationName?: string | null
+    }) => {
+      if (!formal) throw new Error('本機示範模式請直接選擇示範身分')
+      return supabaseRepos.signUp(input)
+    },
+    onSuccess: (user) => queryClient.setQueryData(userKeys.me(), user),
+  })
+
   const logoutMutation = useMutation({
     mutationFn: async () => {
       if (formal) await supabaseRepos.signOut()
@@ -81,6 +94,11 @@ export function useUser() {
     passwordLoginError: loginPassword.error
       ? new Error(toUserMessage(loginPassword.error))
       : null,
+    signUp: signUpMutation.mutateAsync,
+    signUpError: signUpMutation.error
+      ? new Error(toUserMessage(signUpMutation.error))
+      : null,
+    isSigningUp: signUpMutation.isPending,
     isLoggingIn: loginLocal.isPending || loginPassword.isPending,
     logout: logoutMutation.mutateAsync,
     isLoggingOut: logoutMutation.isPending,
