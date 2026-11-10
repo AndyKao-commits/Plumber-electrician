@@ -205,9 +205,9 @@ describe('權限與組織隔離', () => {
   it('member 預設無敏感財務', () => {
     expect(hasPermission('employee', PERMISSIONS.SENSITIVE_FINANCE)).toBe(false)
   })
-  it('Admin 可核准採購與發布報價，但無 finance.*', () => {
+  it('Admin 可核准採購，但不可發布報價，且無 finance.*', () => {
     expect(hasPermission('admin', PERMISSIONS.PURCHASE_APPROVE)).toBe(true)
-    expect(hasPermission('admin', PERMISSIONS.QUOTE_PUBLISH)).toBe(true)
+    expect(hasPermission('admin', PERMISSIONS.QUOTE_PUBLISH)).toBe(false)
     expect(hasPermission('admin', PERMISSIONS.FINANCE_READ)).toBe(false)
     expect(hasPermission('admin', PERMISSIONS.FINANCE_COST_READ)).toBe(false)
     expect(hasPermission('admin', PERMISSIONS.FINANCE_WRITE)).toBe(false)
@@ -246,10 +246,11 @@ describe('權限與組織隔離', () => {
       }),
     ).toThrow(/自行核准/)
   })
-  it('Member 不可發布報價；Admin/Owner 可以', () => {
+  it('Member／Admin 不可發布報價；僅 Owner／老闆可以', () => {
     expect(hasPermission('employee', PERMISSIONS.QUOTE_PUBLISH)).toBe(false)
-    expect(hasPermission('admin', PERMISSIONS.QUOTE_PUBLISH)).toBe(true)
+    expect(hasPermission('admin', PERMISSIONS.QUOTE_PUBLISH)).toBe(false)
     expect(hasPermission('boss', PERMISSIONS.QUOTE_PUBLISH)).toBe(true)
+    expect(hasPermission('owner', PERMISSIONS.QUOTE_PUBLISH)).toBe(true)
   })
   it('跨組織拒絕', () => {
     expect(() => assertSameOrganization('org-a', 'org-b')).toThrow(/其他組織/)

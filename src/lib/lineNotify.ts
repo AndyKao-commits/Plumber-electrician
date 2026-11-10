@@ -5,6 +5,7 @@ export type LineNotifyEvent =
   | 'purchase.approved'
   | 'purchase.rejected'
   | 'quote.published'
+  | 'quote.accepted'
   | 'attendance.clock_in'
   | 'attendance.clock_out'
   | 'notice.created'

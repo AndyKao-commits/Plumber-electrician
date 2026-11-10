@@ -10,11 +10,13 @@ import {
   applyReturnAgainstInbound,
 } from './inventoryCost'
 import {
+  assertQuoteAcceptable,
   assertQuoteAssociation,
   assertQuoteDraftEditable,
   calcFinalPayable,
   calcQuoteItemAmount,
   calcQuoteTax,
+  effectiveContractAmount,
   requiresPreApproval,
   sumQuoteItems,
 } from './rules'
@@ -131,6 +133,31 @@ describe('FIN-02 quote line items', () => {
     expect(() =>
       assertQuoteDraftEditable({ frozen: false, status: 'draft' }),
     ).not.toThrow()
+  })
+})
+
+describe('quote accept / effective contract', () => {
+  it('only published+frozen can be accepted', () => {
+    expect(() =>
+      assertQuoteAcceptable({ status: 'draft', frozen: false }),
+    ).toThrow(/已發布/)
+    expect(() =>
+      assertQuoteAcceptable({ status: 'published', frozen: true }),
+    ).not.toThrow()
+    expect(() =>
+      assertQuoteAcceptable({ status: 'accepted', frozen: true }),
+    ).toThrow(/已接受/)
+  })
+
+  it('effective contract sums accepted only', () => {
+    expect(
+      effectiveContractAmount([
+        { status: 'draft', amountAfterTax: 1000 },
+        { status: 'published', amountAfterTax: 2000 },
+        { status: 'accepted', amountAfterTax: 5000 },
+        { status: 'accepted', amountAfterTax: 1500 },
+      ]),
+    ).toBe(6500)
   })
 })
 

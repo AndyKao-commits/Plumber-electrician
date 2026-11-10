@@ -3,6 +3,7 @@ import { hasPermission, PERMISSIONS } from '@/domain/permissions'
 import {
   calcQuoteItemAmount,
   calcQuoteTax,
+  effectiveContractAmount,
   QUOTE_ITEM_KIND_LABELS,
   sumQuoteItems,
 } from '@/domain/rules'
@@ -15,7 +16,9 @@ import { formatTaipei } from '@/lib/time'
 function QuoteCard(props: {
   quote: Quotation
   canPublish: boolean
+  canAccept: boolean
   onPublish: (id: string) => Promise<unknown>
+  onAccept: (input: { quoteId: string; note?: string }) => Promise<unknown>
   onAddItem: (input: {
     quotationId: string
     kind: QuotationItemKind
@@ -73,6 +76,19 @@ function QuoteCard(props: {
         {formatTaipei(quote.createdAt, 'MM/dd HH:mm')}
         {quote.frozen ? ' · 已凍結' : ''}
       </p>
+      {quote.status === 'accepted' && quote.acceptedAt ? (
+        <p className="muted" style={{ margin: 0 }}>
+          客戶已接受 · {formatTaipei(quote.acceptedAt, 'MM/dd HH:mm')}
+          {quote.acceptanceNote ? ` · ${quote.acceptanceNote}` : ''}
+          <br />
+          計入有效合約金額 NT${quote.amountAfterTax.toLocaleString()}
+        </p>
+      ) : null}
+      {quote.status === 'published' ? (
+        <p className="muted" style={{ margin: 0 }}>
+          已發布凍結；待客戶接受後才計入有效合約金額
+        </p>
+      ) : null}
       <p className="muted" style={{ margin: 0 }}>
         材料 NT${breakdown.byKind.material.toLocaleString()} · 工資 NT$
         {breakdown.byKind.labor.toLocaleString()} · 其他 NT$
@@ -208,7 +224,23 @@ function QuoteCard(props: {
             )
           }
         >
-          發布並凍結稅務
+          發布並凍結（僅老闆）
+        </button>
+      ) : null}
+
+      {quote.status === 'published' && props.canAccept ? (
+        <button
+          type="button"
+          className="btn btn-steel"
+          onClick={() =>
+            void props
+              .onAccept({ quoteId: quote.id })
+              .catch((e: unknown) =>
+                setError(e instanceof Error ? e.message : '登記失敗'),
+              )
+          }
+        >
+          標記客戶已接受
         </button>
       ) : null}
     </div>
@@ -225,6 +257,7 @@ export function QuotesPage() {
     isCreating,
     createError,
     publishQuote,
+    acceptQuote,
     createRepairCase,
     isCreatingRepair,
     createRepairError,
@@ -234,6 +267,9 @@ export function QuotesPage() {
   } = useQuotes(user?.id)
   const canPublish =
     Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_PUBLISH)
+  const canAccept =
+    Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_CREATE)
+  const contractTotal = effectiveContractAmount(quotes)
 
   const formalSites = sites.filter((s) => s.kind === 'formal')
 
@@ -293,8 +329,12 @@ export function QuotesPage() {
         <strong>報價</strong>
         <p className="muted" style={{ margin: 0 }}>
           建立時必須選擇稅務模式（REV-03）；必須恰好關聯工程或維修案件其一（REV-01）。
-          細項可拆材料／工資（FIN-02），合計只加總一次；發布後凍結。
+          細項可拆材料／工資（FIN-02）；僅老闆可發布凍結；發布後登記客戶接受才計入合約。
         </p>
+        <div className="site-link">
+          <p>有效合約金額（已接受）</p>
+          <h3>NT${contractTotal.toLocaleString()}</h3>
+        </div>
       </section>
 
       <section className="panel stack">
@@ -487,7 +527,9 @@ export function QuotesPage() {
               key={q.id}
               quote={q}
               canPublish={canPublish}
+              canAccept={canAccept}
               onPublish={publishQuote}
+              onAccept={acceptQuote}
               onAddItem={addQuoteItem}
               onRemoveItem={removeQuoteItem}
               saving={isSavingItem}

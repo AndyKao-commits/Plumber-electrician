@@ -76,9 +76,34 @@ export function useQuotes(userId: string | undefined) {
       try {
         return formal
           ? await supabaseRepos.publishQuotation(user, quoteId)
-          : localDb.publishQuotation(quoteId)
+          : localDb.publishQuotation(quoteId, user.role)
       } catch (e) {
         throw new Error(toUserMessage(e, '發布報價失敗'))
+      }
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: quoteKeys.all })
+    },
+  })
+
+  const acceptMutation = useMutation({
+    mutationFn: async (input: { quoteId: string; note?: string }) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      try {
+        return formal
+          ? await supabaseRepos.acceptQuotation(
+              user,
+              input.quoteId,
+              input.note,
+            )
+          : localDb.acceptQuotation(
+              input.quoteId,
+              { id: user.id, role: user.role },
+              input.note,
+            )
+      } catch (e) {
+        throw new Error(toUserMessage(e, '登記接受失敗'))
       }
     },
     onSuccess: () => {
@@ -154,6 +179,7 @@ export function useQuotes(userId: string | undefined) {
     isCreating: createMutation.isPending,
     createError: createMutation.error,
     publishQuote: publishMutation.mutateAsync,
+    acceptQuote: acceptMutation.mutateAsync,
     createRepairCase: createRepairMutation.mutateAsync,
     isCreatingRepair: createRepairMutation.isPending,
     createRepairError: createRepairMutation.error

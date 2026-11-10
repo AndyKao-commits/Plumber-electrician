@@ -211,7 +211,7 @@ do $$ begin
 exception when duplicate_object then null;
 end $$;
 do $$ begin
-  create type public.quote_status as enum ('draft', 'published', 'void');
+  create type public.quote_status as enum ('draft', 'published', 'accepted', 'void');
 exception when duplicate_object then null;
 end $$;
 do $$ begin
@@ -259,6 +259,9 @@ create table if not exists public.quotations (
   frozen boolean not null default false,
   created_at timestamptz not null default now(),
   published_at timestamptz,
+  accepted_at timestamptz,
+  accepted_by uuid references public.profiles (id),
+  acceptance_note text,
   created_by uuid references public.profiles (id),
   constraint quotations_project_xor_repair check (
     (project_id is not null and repair_case_id is null)

@@ -128,6 +128,13 @@ SQL：`20261110_line_bind_code_fix_random.sql`
 1. SQL：`supabase/migrations/20261111_quotation_items.sql`
 2. App：`/quotes` 草稿可新增材料／工資／其他細項；表頭金額由細項加總（不重複加總）
 3. 已發布（frozen）報價禁止改細項；至少一筆細項才能發布
+4. **僅老闆**可「發布並凍結」
+
+## 4g. 報價接受 → 有效合約
+
+1. SQL：`supabase/migrations/20261111_quotation_accept.sql`
+2. 發布後可「標記客戶已接受」→ 狀態 `accepted`，計入有效合約金額
+3. 追加減（FIN-03）下一批；未接受者不計入合約
 
 ## 5. 驗證
 

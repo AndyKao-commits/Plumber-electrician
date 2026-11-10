@@ -5,7 +5,9 @@ import {
   type EmergencyLimitEvent,
 } from '@/domain/emergencyLimits'
 import { applyInboundMovingAverage } from '@/domain/inventoryCost'
+import { assertCanAcceptQuote, assertCanPublishQuote } from '@/domain/permissions'
 import {
+  assertQuoteAcceptable,
   assertQuoteAssociation,
   assertQuoteDraftEditable,
   calcFinalPayable,
@@ -662,7 +664,8 @@ export const localDb = {
     this.recalcQuoteHeader(item.quotationId)
   },
 
-  publishQuotation(quoteId: string): Quotation {
+  publishQuotation(quoteId: string, actorRole: string = 'boss'): Quotation {
+    assertCanPublishQuote(actorRole)
     const all = this.getQuotations()
     const idx = all.findIndex((q) => q.id === quoteId)
     if (idx < 0) throw new Error('找不到報價')
@@ -679,6 +682,29 @@ export const localDb = {
     all[idx] = published
     write(KEYS.quotations, all)
     return published
+  },
+
+  acceptQuotation(
+    quoteId: string,
+    actor: { id: string; role: string },
+    note?: string | null,
+  ): Quotation {
+    assertCanAcceptQuote(actor.role)
+    const all = this.getQuotations()
+    const idx = all.findIndex((q) => q.id === quoteId)
+    if (idx < 0) throw new Error('找不到報價')
+    const current = all[idx]
+    assertQuoteAcceptable(current)
+    const accepted: Quotation = {
+      ...current,
+      status: 'accepted',
+      acceptedAt: new Date().toISOString(),
+      acceptedBy: actor.id,
+      acceptanceNote: note?.trim() || null,
+    }
+    all[idx] = accepted
+    write(KEYS.quotations, all)
+    return accepted
   },
 
   getMaterials(): MaterialStock[] {

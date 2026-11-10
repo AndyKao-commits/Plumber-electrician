@@ -98,7 +98,7 @@ export interface PurchaseRecord {
 
 export type TaxMode = 'inclusive' | 'exclusive' | 'zero'
 
-export type QuoteStatus = 'draft' | 'published' | 'void'
+export type QuoteStatus = 'draft' | 'published' | 'accepted' | 'void'
 
 export interface RepairCase {
   id: string
@@ -127,6 +127,10 @@ export interface Quotation {
   frozen?: boolean
   createdAt: string
   publishedAt?: string | null
+  /** Customer acceptance after publish */
+  acceptedAt?: string | null
+  acceptedBy?: string | null
+  acceptanceNote?: string | null
   createdBy: string
 }
 

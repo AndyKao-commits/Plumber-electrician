@@ -214,7 +214,7 @@ do $$ begin
 exception when duplicate_object then null;
 end $$;
 do $$ begin
-  create type public.quote_status as enum ('draft', 'published', 'void');
+  create type public.quote_status as enum ('draft', 'published', 'accepted', 'void');
 exception when duplicate_object then null;
 end $$;
 do $$ begin
@@ -262,6 +262,9 @@ create table if not exists public.quotations (
   frozen boolean not null default false,
   created_at timestamptz not null default now(),
   published_at timestamptz,
+  accepted_at timestamptz,
+  accepted_by uuid references public.profiles (id),
+  acceptance_note text,
   created_by uuid references public.profiles (id),
   constraint quotations_project_xor_repair check (
     (project_id is not null and repair_case_id is null)
@@ -1657,4 +1660,31 @@ drop trigger if exists trg_recalc_quotation_amounts on public.quotation_items;
 create trigger trg_recalc_quotation_amounts
   after insert or update or delete on public.quotation_items
   for each row execute function public.trg_recalc_quotation_amounts();
+
+-- After publish: customer acceptance → counts toward effective contract amount.
+-- Boss-only publish remains an app-layer permission; this migration adds accept fields.
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_enum e
+    join pg_type t on t.oid = e.enumtypid
+    join pg_namespace n on n.oid = t.typnamespace
+    where n.nspname = 'public'
+      and t.typname = 'quote_status'
+      and e.enumlabel = 'accepted'
+  ) then
+    alter type public.quote_status add value 'accepted';
+  end if;
+end $$;
+
+alter table public.quotations
+  add column if not exists accepted_at timestamptz,
+  add column if not exists accepted_by uuid references public.profiles (id),
+  add column if not exists acceptance_note text;
+
+create index if not exists quotations_accepted_idx
+  on public.quotations (organization_id, status)
+  where status = 'accepted';
 

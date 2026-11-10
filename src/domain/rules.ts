@@ -1,6 +1,7 @@
 import { roundMoney } from './money'
 import type {
   PurchaseRuleSnapshot,
+  Quotation,
   QuotationItem,
   QuotationItemKind,
   TaxMode,
@@ -191,9 +192,40 @@ export function assertQuoteDraftEditable(input: {
   frozen?: boolean
   status?: string
 }): void {
-  if (input.frozen || input.status === 'published') {
+  if (
+    input.frozen ||
+    input.status === 'published' ||
+    input.status === 'accepted'
+  ) {
     throw new Error('已發布報價細項不可修改')
   }
+}
+
+export function assertQuoteAcceptable(input: {
+  status?: string
+  frozen?: boolean
+}): void {
+  if (input.status === 'accepted') {
+    throw new Error('此報價已接受')
+  }
+  if (input.status !== 'published' || !input.frozen) {
+    throw new Error('僅已發布並凍結的報價可登記客戶接受')
+  }
+}
+
+/**
+ * Effective contract = sum of accepted quotes (FIN-03 change orders later).
+ * Unpublished / published-but-not-accepted do not count.
+ */
+export function effectiveContractAmount(
+  quotes: Array<Pick<Quotation, 'status' | 'amountAfterTax'>>,
+): number {
+  let total = 0
+  for (const q of quotes) {
+    if (q.status !== 'accepted') continue
+    total = roundMoney(total + (Number(q.amountAfterTax) || 0))
+  }
+  return total
 }
 
 export function requiresPreApproval(finalPayableNtd: number): boolean {

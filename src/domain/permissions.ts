@@ -5,7 +5,8 @@ export type SpecRole = 'owner' | 'admin' | 'member'
 
 /**
  * Permission dictionary — ops vs sensitive finance are separate.
- * Admin may approve purchases / publish quotes without finance.* grants.
+ * Admin may approve purchases without finance.* grants.
+ * Quote publish/freeze is Owner／老闆 only（product decision）.
  */
 export const PERMISSIONS = {
   ORG_READ: 'org.read',
@@ -85,7 +86,7 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.PURCHASE_CREATE,
     PERMISSIONS.PURCHASE_APPROVE,
     PERMISSIONS.QUOTE_CREATE,
-    PERMISSIONS.QUOTE_PUBLISH,
+    // NO QUOTE_PUBLISH — only Owner／老闆 may freeze
     PERMISSIONS.INVENTORY_READ,
     PERMISSIONS.INVENTORY_INBOUND,
     PERMISSIONS.INVENTORY_ADJUST,
@@ -158,7 +159,16 @@ export function assertCanPublishQuote(
   role: UserRole | SpecRole | string,
 ): void {
   if (!hasPermission(role, PERMISSIONS.QUOTE_PUBLISH)) {
-    throw new Error('無權發布報價')
+    throw new Error('無權發布／凍結報價（僅老闆）')
+  }
+}
+
+/** Record customer acceptance after publish — team with quote.create may mark. */
+export function assertCanAcceptQuote(
+  role: UserRole | SpecRole | string,
+): void {
+  if (!hasPermission(role, PERMISSIONS.QUOTE_CREATE)) {
+    throw new Error('無權登記報價接受')
   }
 }
 

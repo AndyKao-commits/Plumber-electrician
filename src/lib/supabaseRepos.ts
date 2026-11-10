@@ -1,4 +1,5 @@
 import {
+  assertCanAcceptQuote,
   assertCanApprovePurchase,
   assertCanPublishQuote,
   assertPermission,
@@ -14,6 +15,7 @@ import {
 } from '@/domain/emergencyLimits'
 import { applyInboundMovingAverage } from '@/domain/inventoryCost'
 import {
+  assertQuoteAcceptable,
   assertQuoteAssociation,
   assertQuoteDraftEditable,
   calcFinalPayable,
@@ -48,6 +50,32 @@ import { supabase } from '@/lib/supabase'
 function sb() {
   if (!supabase) throw new AppError('尚未設定 Supabase，無法使用正式模式')
   return supabase
+}
+
+const QUOTE_SELECT =
+  'id, organization_id, project_id, repair_case_id, title, status, tax_mode, tax_rate, amount_before_tax, tax_amount, amount_after_tax, frozen, created_at, published_at, accepted_at, accepted_by, acceptance_note, created_by'
+
+function mapQuotationRow(row: Record<string, unknown>): Quotation {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    projectId: (row.project_id as string | null) ?? null,
+    repairCaseId: (row.repair_case_id as string | null) ?? null,
+    title: String(row.title),
+    status: row.status as Quotation['status'],
+    taxMode: row.tax_mode as TaxMode,
+    taxRate: Number(row.tax_rate),
+    amountBeforeTax: Number(row.amount_before_tax),
+    taxAmount: Number(row.tax_amount),
+    amountAfterTax: Number(row.amount_after_tax),
+    frozen: Boolean(row.frozen),
+    createdAt: String(row.created_at),
+    publishedAt: (row.published_at as string | null) ?? null,
+    acceptedAt: (row.accepted_at as string | null) ?? null,
+    acceptedBy: (row.accepted_by as string | null) ?? null,
+    acceptanceNote: (row.acceptance_note as string | null) ?? null,
+    createdBy: String(row.created_by ?? ''),
+  }
 }
 
 function mapUser(row: {
@@ -752,27 +780,13 @@ export const supabaseRepos = {
     const { data, error } = await sb()
       .from('quotations')
       .select(
-        'id, organization_id, project_id, repair_case_id, title, status, tax_mode, tax_rate, amount_before_tax, tax_amount, amount_after_tax, frozen, created_at, published_at, created_by',
+        QUOTE_SELECT,
       )
       .order('created_at', { ascending: false })
     if (error) throw new AppError(toUserMessage(error, '無法載入報價'))
-    return (data ?? []).map((row) => ({
-      id: String(row.id),
-      organizationId: String(row.organization_id),
-      projectId: (row.project_id as string | null) ?? null,
-      repairCaseId: (row.repair_case_id as string | null) ?? null,
-      title: String(row.title),
-      status: row.status as Quotation['status'],
-      taxMode: row.tax_mode as TaxMode,
-      taxRate: Number(row.tax_rate),
-      amountBeforeTax: Number(row.amount_before_tax),
-      taxAmount: Number(row.tax_amount),
-      amountAfterTax: Number(row.amount_after_tax),
-      frozen: Boolean(row.frozen),
-      createdAt: String(row.created_at),
-      publishedAt: (row.published_at as string | null) ?? null,
-      createdBy: String(row.created_by),
-    }))
+    return (data ?? []).map((row) =>
+      mapQuotationRow(row as Record<string, unknown>),
+    )
   },
 
   async createQuotation(
@@ -815,28 +829,10 @@ export const supabaseRepos = {
         frozen: false,
         created_by: actor.id,
       })
-      .select(
-        'id, organization_id, project_id, repair_case_id, title, status, tax_mode, tax_rate, amount_before_tax, tax_amount, amount_after_tax, frozen, created_at, published_at, created_by',
-      )
+      .select(QUOTE_SELECT)
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法建立報價'))
-    const quote = {
-      id: String(data.id),
-      organizationId: String(data.organization_id),
-      projectId: (data.project_id as string | null) ?? null,
-      repairCaseId: (data.repair_case_id as string | null) ?? null,
-      title: String(data.title),
-      status: data.status as Quotation['status'],
-      taxMode: data.tax_mode as TaxMode,
-      taxRate: Number(data.tax_rate),
-      amountBeforeTax: Number(data.amount_before_tax),
-      taxAmount: Number(data.tax_amount),
-      amountAfterTax: Number(data.amount_after_tax),
-      frozen: Boolean(data.frozen),
-      createdAt: String(data.created_at),
-      publishedAt: (data.published_at as string | null) ?? null,
-      createdBy: String(data.created_by),
-    }
+    const quote = mapQuotationRow(data as Record<string, unknown>)
     assertSameOrganization(actor.organizationId, quote.organizationId)
     return quote
   },
@@ -846,15 +842,17 @@ export const supabaseRepos = {
     const qid = requireUuid(quoteId, '報價')
     const { data: current, error: loadError } = await sb()
       .from('quotations')
-      .select(
-        'id, organization_id, project_id, repair_case_id, title, status, tax_mode, tax_rate, amount_before_tax, tax_amount, amount_after_tax, frozen, created_at, published_at, created_by',
-      )
+      .select(QUOTE_SELECT)
       .eq('id', qid)
       .maybeSingle()
     if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取報價'))
     if (!current) throw new AppError('找不到報價')
     assertSameOrganization(actor.organizationId, String(current.organization_id))
-    if (current.frozen || current.status === 'published') {
+    if (
+      current.frozen ||
+      current.status === 'published' ||
+      current.status === 'accepted'
+    ) {
       throw new AppError('報價已發布，稅務快照不可覆寫')
     }
     if (!current.tax_mode) throw new AppError('發布前必須已有稅務模式')
@@ -879,28 +877,10 @@ export const supabaseRepos = {
       })
       .eq('id', qid)
       .eq('frozen', false)
-      .select(
-        'id, organization_id, project_id, repair_case_id, title, status, tax_mode, tax_rate, amount_before_tax, tax_amount, amount_after_tax, frozen, created_at, published_at, created_by',
-      )
+      .select(QUOTE_SELECT)
       .single()
     if (error) throw new AppError(toUserMessage(error, '發布報價失敗'))
-    const quote = {
-      id: String(data.id),
-      organizationId: String(data.organization_id),
-      projectId: (data.project_id as string | null) ?? null,
-      repairCaseId: (data.repair_case_id as string | null) ?? null,
-      title: String(data.title),
-      status: data.status as Quotation['status'],
-      taxMode: data.tax_mode as TaxMode,
-      taxRate: Number(data.tax_rate),
-      amountBeforeTax: Number(data.amount_before_tax),
-      taxAmount: Number(data.tax_amount),
-      amountAfterTax: Number(data.amount_after_tax),
-      frozen: Boolean(data.frozen),
-      createdAt: String(data.created_at),
-      publishedAt: (data.published_at as string | null) ?? null,
-      createdBy: String(data.created_by),
-    }
+    const quote = mapQuotationRow(data as Record<string, unknown>)
     void safeNotifyApprovers({
       eventType: 'quote.published',
       title: `報價已發布：${quote.title}`,
@@ -914,6 +894,53 @@ export const supabaseRepos = {
         eventType: 'quote.published',
         title: `報價已發布：${quote.title}`,
         detail: `稅後金額 NT$${quote.amountAfterTax.toLocaleString()}`,
+        href: '/quotes',
+        asTodo: false,
+      })
+    }
+    return quote
+  },
+
+  async acceptQuotation(
+    actor: AppUser,
+    quoteId: string,
+    note?: string | null,
+  ): Promise<Quotation> {
+    assertCanAcceptQuote(actor.role)
+    const qid = requireUuid(quoteId, '報價')
+    const { data: current, error: loadError } = await sb()
+      .from('quotations')
+      .select(QUOTE_SELECT)
+      .eq('id', qid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取報價'))
+    if (!current) throw new AppError('找不到報價')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+    assertQuoteAcceptable({
+      status: String(current.status),
+      frozen: Boolean(current.frozen),
+    })
+
+    const { data, error } = await sb()
+      .from('quotations')
+      .update({
+        status: 'accepted',
+        accepted_at: new Date().toISOString(),
+        accepted_by: actor.id,
+        acceptance_note: note?.trim() || null,
+      })
+      .eq('id', qid)
+      .eq('status', 'published')
+      .select(QUOTE_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '登記接受失敗'))
+    const quote = mapQuotationRow(data as Record<string, unknown>)
+    if (quote.createdBy) {
+      void safeNotify({
+        recipientIds: [quote.createdBy],
+        eventType: 'quote.accepted',
+        title: `客戶已接受報價：${quote.title}`,
+        detail: `有效合約金額 NT$${quote.amountAfterTax.toLocaleString()}`,
         href: '/quotes',
         asTodo: false,
       })

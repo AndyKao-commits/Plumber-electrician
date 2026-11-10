@@ -58,7 +58,7 @@ describe('負向：未授權角色', () => {
 
   it('Member 不可發布報價', () => {
     expect(hasPermission('employee', PERMISSIONS.QUOTE_PUBLISH)).toBe(false)
-    expect(() => assertCanPublishQuote('employee')).toThrow(/無權發布報價/)
+    expect(() => assertCanPublishQuote('employee')).toThrow(/無權發布/)
     expect(() => assertPermission('member', PERMISSIONS.QUOTE_PUBLISH)).toThrow(
       /無權執行/,
     )
@@ -66,9 +66,9 @@ describe('負向：未授權角色', () => {
 })
 
 describe('負向：Admin 敏感財務', () => {
-  it('Admin 可核准一般／緊急採購與發布報價', () => {
+  it('Admin 可核准採購但不可發布報價', () => {
     expect(hasPermission('admin', PERMISSIONS.PURCHASE_APPROVE)).toBe(true)
-    expect(hasPermission('admin', PERMISSIONS.QUOTE_PUBLISH)).toBe(true)
+    expect(hasPermission('admin', PERMISSIONS.QUOTE_PUBLISH)).toBe(false)
     expect(
       canApprovePurchase({
         actorRole: 'admin',
