@@ -110,18 +110,18 @@ Admin **不得因此自動取得**（須獨立細項授權，與採購／報價 
 - LINE 六個入口保留：上下班打卡、切換工地、施工回報、材料採購、我的出勤、工程系統。
 - 通知管道：系統內通知中心＋待辦為主；另見 DEC-007。
 
-### DEC-007｜選擇性 LINE 推播（已確認｜覆寫舊「全面停用」）
+### DEC-007｜LINE 僅回覆、不主動推播（已確認｜覆寫舊「選擇性推播」）
 
-允許以下事件的系統主動 LINE 推播（需使用者自行綁定 `line_user_id`，且設定 `LINE_CHANNEL_ACCESS_TOKEN`）：
-- 採購核准／駁回
-- 報價發布
-- 出勤打卡（上／下班彙整給核准角色）
-- 公告／待辦類通知
+系統**不**對 LINE 做主動推播（採購／報價／出勤／公告皆不 push）。
+
+LINE 官方帳號只作操作入口：
+- 使用者主動傳訊或加好友時，由 Edge Function `line-webhook` **回覆**功能選單（六個入口連結）。
+- 通知與待辦只寫入系統內（`create_org_notices`）；`safeNotify` 不再 enqueue outbox、不再呼叫 `line-push`。
 
 硬性約束：
 - LINE **不作登入憑證**（仍遵守 DEC-004）。
-- LINE 推播失敗、未設定 Token、未綁定 ID，**不可影響**採購／報價／出勤等主交易成功。
-- 實作採 `notification_outbox`＋Edge Function `line-push`；主流程只 fire-and-forget。
+- Webhook／回覆失敗**不可影響**採購／報價／出勤等主交易成功。
+- Secrets 僅存 Supabase Edge Function：`LINE_CHANNEL_ACCESS_TOKEN`、`LINE_CHANNEL_SECRET`。
 
 ## 施工、品質、維修
 

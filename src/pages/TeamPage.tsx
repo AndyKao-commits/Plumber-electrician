@@ -35,19 +35,22 @@ export function TeamPage() {
 
       {isFormalMode ? (
         <section className="panel stack">
-          <strong>LINE 帳號綁定</strong>
+          <strong>LINE 入口（僅回覆）</strong>
           <p className="muted" style={{ margin: 0 }}>
-            登入憑證仍是 Email／密碼（DEC-004）。此處只儲存 `line_user_id`，供採購／報價／出勤通知推播。
-            未設定 Channel Token 時推播會略過，不影響主流程。
+            系統不主動推播 LINE。請對官方帳號傳任意訊息（或加好友），會回覆功能選單連結。
+            登入仍用 Email／密碼；通知與待辦只在系統內。
+          </p>
+          <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
+            下方綁定為選用（記錄自己的 LINE User ID），與推播無關。
           </p>
           <form className="stack" onSubmit={(e) => void onBindLine(e)}>
             <div className="field">
-              <label htmlFor="line-user-id">LINE User ID</label>
+              <label htmlFor="line-user-id">LINE User ID（選填）</label>
               <input
                 id="line-user-id"
                 value={lineUserId}
                 onChange={(e) => setLineDraft(e.target.value)}
-                placeholder="Uxxxxxxxx…"
+                placeholder="Uxxxxxxxx…（可留空）"
                 autoComplete="off"
               />
             </div>
@@ -75,7 +78,7 @@ export function TeamPage() {
                 目前已綁定：{user.lineUserId}
               </p>
             ) : (
-              <p className="muted" style={{ margin: 0 }}>尚未綁定</p>
+              <p className="muted" style={{ margin: 0 }}>尚未綁定（不影響使用）</p>
             )}
           </form>
         </section>

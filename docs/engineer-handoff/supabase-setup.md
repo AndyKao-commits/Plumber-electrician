@@ -44,25 +44,27 @@
 Dashboard → Authentication → Users：建立 Email／密碼使用者。  
 再於 `profiles` 寫入對應列（`id` 必須等於 `auth.users.id`，並指向同一 `organization_id`）。
 
-## 4. LINE 推播（DEC-007｜正式啟用）
+## 4. LINE 回覆入口（DEC-007｜僅回覆、不主動推播）
+
+系統不會對 LINE 主動 push。使用者傳訊／加好友時，webhook **回覆**功能選單連結。
 
 ### Secret（只能放 Supabase）
-- 名稱：`LINE_CHANNEL_ACCESS_TOKEN`
+- `LINE_CHANNEL_ACCESS_TOKEN`
+- `LINE_CHANNEL_SECRET`
 - 位置：Supabase → Project Settings → Edge Functions → Secrets
 - **禁止**寫入前端、Git、Migration、Cursor 前端 Secrets、錯誤訊息
 
 ### 部署
 ```bash
-# 先在 SQL Editor 執行：
-#   supabase/migrations/20261110_line_outbox_retry.sql
 export SUPABASE_ACCESS_TOKEN=...   # Account Access Token（僅 CLI）
-bash scripts/deploy-line-push.sh
+bash scripts/deploy-line-webhook.sh
 ```
 
-- Edge Function 名稱：`line-push`
-- 流程：主交易成功 → `safeNotify` → `enqueue_line_notifications`（outbox）→ `functions.invoke('line-push')`
-- 失敗：不回滾主交易；寫入 `error`；`attempts < 5` 時保持可重試（`pending` + `next_retry_at`）
-- 無綁定／無 Token：`skipped`，主流程正常
+- Edge Function 名稱：`line-webhook`（`--no-verify-jwt`，供 LINE 伺服器呼叫）
+- Webhook URL：`https://rhpzvqvkmllbdtkpouwn.supabase.co/functions/v1/line-webhook`
+- LINE Developers → Messaging API → 貼上 Webhook URL → Enable → Verify
+- 建議關閉 Messaging API 的「自動回應訊息／歡迎訊息」以免與 webhook 搶回覆
+- 主流程通知：只寫系統內通知；`safeNotify` **不**呼叫 `line-push`
 
 ## 5. 驗證
 
