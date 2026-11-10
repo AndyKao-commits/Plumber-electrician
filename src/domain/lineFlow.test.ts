@@ -35,9 +35,11 @@ describe('LINE flow activity age', () => {
 })
 
 describe('LINE menu / postback parse', () => {
-  it('recognizes photo and todos intents', () => {
+  it('recognizes photo/todos/attendance/purchase intents', () => {
     expect(parseMenuIntent('上傳照片')).toBe('photo_upload')
     expect(parseMenuIntent('待辦事項')).toBe('todos')
+    expect(parseMenuIntent('出勤打卡')).toBe('attendance')
+    expect(parseMenuIntent('採購申請')).toBe('purchase')
     expect(parseMenuIntent('取消操作')).toBe('cancel')
     expect(parseMenuIntent('繼續')).toBe('resume')
     expect(parseMenuIntent('你好')).toBeNull()

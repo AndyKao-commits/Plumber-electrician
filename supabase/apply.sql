@@ -1487,3 +1487,24 @@ end $$;
 
 create index if not exists photo_uploads_batch_idx
   on public.photo_uploads (batch_id, created_at);
+
+-- LINE phase 2 flow types + service-role org stamp fix
+create or replace function public.set_org_id_from_profile()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.organization_id is null then
+    new.organization_id := public.current_user_org_id();
+  end if;
+  if new.organization_id is null then
+    raise exception '無法決定組織，請確認 profiles 已建立';
+  end if;
+  return new;
+end;
+$$;
+
+alter table public.line_flow_drafts
+  drop constraint if exists line_flow_drafts_flow_type_check;
+
+alter table public.line_flow_drafts
+  add constraint line_flow_drafts_flow_type_check
+  check (flow_type in ('photo_upload', 'todos', 'attendance', 'purchase'));

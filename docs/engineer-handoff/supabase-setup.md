@@ -86,7 +86,7 @@ SQL：`20261110_line_bind_code_fix_random.sql`
 
 ### Webhook
 `line-webhook` 為 **reply-only**（DEC-007）：不 push、不廣播、不主動逾時提醒。  
-處理：綁定碼、流程草稿、批次上傳照片、待辦 Flex。請重新 Deploy（JWT 關）。
+處理：綁定碼、流程草稿、批次上傳照片、出勤／採購；功能回覆皆用 **Flex 卡片**（與待辦同視覺）。請重新 Deploy（JWT 關）。
 
 ## 4c. 施工照片（LINE 批次流程）
 
@@ -110,10 +110,18 @@ SQL：`20261110_line_bind_code_fix_random.sql`
 3. 圖文選單建議：
    - 上傳照片 → 文字「上傳照片」
    - 待辦事項 → 文字「待辦事項」
+   - 出勤打卡 → 文字「出勤打卡」
+   - 採購申請 → 文字「採購申請」
    - 我的工地 → `/sites`
-   - 出勤打卡 → `/attendance`
-   - 採購申請 → `/purchases`
    - 報價管理 → `/quotes`
+
+## 4e. LINE 第二期（出勤／採購）
+
+1. SQL：`supabase/migrations/20261111_line_flow_phase2.sql`
+2. 重新 Deploy `line-webhook`
+3. 出勤：上班／下班／切換工地（Flex 選單／工地輪播）
+4. 採購：一般／緊急 → 品名 → 金額 → 工地 → 確認（Flex）；≥3000 一般需核准且不可自核
+5. 上傳照片／暫停切換提示同樣改為 Flex 卡片（不再用純文字 quickReply）
 
 ## 5. 驗證
 
