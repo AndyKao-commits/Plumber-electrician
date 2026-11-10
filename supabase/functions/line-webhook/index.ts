@@ -223,7 +223,14 @@ async function handleTextCommand(
   if (gate.age === 'paused' && gate.draft) {
     if (intent === 'cancel') {
       await finalizeDraft(admin, gate.draft.id, 'cancelled')
-      return [textMsg('已取消目前操作。請再點圖文選單開始新功能。')]
+      return [
+        flexMenu({
+          altText: '已取消目前操作',
+          eyebrow: '操作取消',
+          title: '已取消',
+          body: '請再點圖文選單開始新功能',
+        }),
+      ]
     }
     if (intent === 'resume' || intent === gate.draft.flow_type) {
       return resumeDraft(admin, profile, gate.draft)
@@ -235,9 +242,25 @@ async function handleTextCommand(
   }
 
   if (intent === 'cancel') {
-    if (!gate.draft) return [textMsg('目前沒有進行中的操作。')]
+    if (!gate.draft) {
+      return [
+        flexMenu({
+          altText: '沒有進行中的操作',
+          eyebrow: '操作取消',
+          title: '沒有進行中的操作',
+          body: '可從圖文選單開始功能',
+        }),
+      ]
+    }
     await finalizeDraft(admin, gate.draft.id, 'cancelled')
-    return [textMsg('已取消目前操作。')]
+    return [
+      flexMenu({
+        altText: '已取消目前操作',
+        eyebrow: '操作取消',
+        title: '已取消',
+        body: '可再從圖文選單開始新功能',
+      }),
+    ]
   }
 
   if (intent === 'resume') {
@@ -292,7 +315,14 @@ async function handlePostback(
 
   if (action === 'cancel') {
     if (gate.draft) await finalizeDraft(admin, gate.draft.id, 'cancelled')
-    return [textMsg('已取消目前操作。')]
+    return [
+      flexMenu({
+        altText: '已取消目前操作',
+        eyebrow: '操作取消',
+        title: '已取消',
+        body: '可再從圖文選單開始新功能',
+      }),
+    ]
   }
 
   if (action === 'resume') {
@@ -350,7 +380,26 @@ async function handlePostback(
     if (gate.draft?.flow_type === 'attendance') {
       await finalizeDraft(admin, gate.draft.id, 'completed')
     }
-    return [textMsg('已結束出勤選單。')]
+    return [
+      flexMenu({
+        altText: '已結束出勤選單',
+        eyebrow: '出勤打卡',
+        title: '已結束',
+        body: '出勤選單已關閉，可再從圖文選單開始',
+      }),
+    ]
+  }
+
+  if (action === 'photo_cancel') {
+    if (gate.draft) await finalizeDraft(admin, gate.draft.id, 'cancelled')
+    return [
+      flexMenu({
+        altText: '已取消上傳',
+        eyebrow: '上傳照片',
+        title: '已取消上傳',
+        body: '可再從圖文選單重新開始',
+      }),
+    ]
   }
 
   if (action === 'pur_mode') {
@@ -400,11 +449,6 @@ async function handlePostback(
       return [textMsg('目前沒有進行中的上傳照片流程。')]
     }
     return completePhotoBatch(admin, gate.draft)
-  }
-
-  if (action === 'photo_cancel') {
-    if (gate.draft) await finalizeDraft(admin, gate.draft.id, 'cancelled')
-    return [textMsg('已取消上傳。')]
   }
 
   if (action === 'todo_done') {
@@ -466,14 +510,17 @@ async function handleImageEvent(
   })
 
   return [
-    textWithQuickReply(
-      `已加入第 ${count} 張照片。可繼續傳圖，或點下方按鈕。`,
-      [
-        { label: '繼續上傳', data: 'a=resume' },
-        { label: '完成上傳', data: 'a=photo_done' },
-        { label: '取消上傳', data: 'a=photo_cancel' },
+    flexMenu({
+      altText: `已加入第 ${count} 張照片`,
+      eyebrow: '上傳照片',
+      title: `已加入第 ${count} 張`,
+      body: '可繼續傳圖，或點下方按鈕完成／取消',
+      buttons: [
+        { label: '繼續上傳', data: 'a=resume', style: 'primary' },
+        { label: '完成上傳', data: 'a=photo_done', style: 'secondary' },
+        { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
       ],
-    ),
+    }),
   ]
 }
 
@@ -536,15 +583,18 @@ async function resumeDraft(
     return promptSelectPhotoType()
   }
   return [
-    textWithQuickReply(
-      `繼續上傳照片\n工地：${payload.siteName || '—'}\n類型：${
+    flexMenu({
+      altText: '繼續上傳照片',
+      eyebrow: '上傳照片',
+      title: '繼續上傳',
+      body: `工地：${payload.siteName || '—'}\n類型：${
         PHOTO_TYPE_LABELS[String(payload.photoType)] || payload.photoType
-      }\n已收：${payload.photoCount ?? 0} 張\n請直接傳圖。`,
-      [
-        { label: '完成上傳', data: 'a=photo_done' },
-        { label: '取消上傳', data: 'a=photo_cancel' },
+      }\n已收：${payload.photoCount ?? 0} 張\n請直接傳圖`,
+      buttons: [
+        { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
+        { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
       ],
-    ),
+    }),
   ]
 }
 
@@ -557,7 +607,14 @@ async function handlePhotoText(
   if (/完成上傳|完成/.test(text)) return completePhotoBatch(admin, draft)
   if (/取消上傳|取消/.test(text)) {
     await finalizeDraft(admin, draft.id, 'cancelled')
-    return [textMsg('已取消上傳。')]
+    return [
+      flexMenu({
+        altText: '已取消上傳',
+        eyebrow: '上傳照片',
+        title: '已取消上傳',
+        body: '可再從圖文選單重新開始',
+      }),
+    ]
   }
   if (/繼續上傳|繼續/.test(text)) return resumeDraft(admin, profile, draft)
 
@@ -585,36 +642,56 @@ async function promptSelectSite(
   const sites = await listSites(admin, profile.organization_id)
   if (sites.length === 0) {
     await finalizeDraft(admin, draft.id, 'cancelled')
-    return [textMsg('目前沒有可用工地。請先到工程管家建立工地。')]
+    return [
+      flexMenu({
+        altText: '沒有可用工地',
+        eyebrow: '上傳照片',
+        title: '沒有可用工地',
+        body: '請先到工程管家建立工地',
+        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
   }
 
   await touchDraft(admin, draft.id, { current_step: 'select_site' })
 
-  const lines = sites
-    .slice(0, 10)
-    .map((s, i) => `${i + 1}. ${s.name}`)
-    .join('\n')
-
-  const items = sites.slice(0, 10).map((s) => ({
-    label: s.name.slice(0, 20),
-    data: `a=photo_site&id=${s.id}`,
-  }))
-
-  return [
-    textWithQuickReply(
-      `上傳照片：請選擇工地\n${lines}\n\n也可回覆編號。`,
-      items.slice(0, 13),
-    ),
-  ]
+  return siteCarousel({
+    altText: '上傳照片：請選擇工地',
+    eyebrow: '上傳照片',
+    sites,
+    actionPrefix: 'a=photo_site&id=',
+    extraButtons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+  })
 }
 
 function promptSelectPhotoType(): LineMessage[] {
-  const items = Object.entries(PHOTO_TYPE_LABELS).map(([code, label]) => ({
-    label,
-    data: `a=photo_type&t=${code}`,
-  }))
+  const bubbles = Object.entries(PHOTO_TYPE_LABELS).map(([code, label]) =>
+    actionBubble({
+      eyebrow: '上傳照片',
+      title: label,
+      body: '點下方按鈕選擇此類型',
+      buttons: [
+        { label: '選擇', data: `a=photo_type&t=${code}`, style: 'primary' },
+      ],
+    }),
+  )
+  bubbles.push(
+    actionBubble({
+      eyebrow: '上傳照片',
+      title: '取消',
+      body: '結束上傳流程',
+      buttons: [{ label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' }],
+    }),
+  )
   return [
-    textWithQuickReply('請選擇照片類型：', items),
+    {
+      type: 'flex',
+      altText: '請選擇照片類型',
+      contents: {
+        type: 'carousel',
+        contents: bubbles.slice(0, 12),
+      },
+    },
   ]
 }
 
@@ -660,13 +737,16 @@ async function selectPhotoType(
     draft_payload: payload,
   })
   return [
-    textWithQuickReply(
-      `已建立上傳批次。\n工地：${payload.siteName}\n類型：${PHOTO_TYPE_LABELS[typeCode]}\n請連續傳送照片（可多張）。`,
-      [
-        { label: '完成上傳', data: 'a=photo_done' },
-        { label: '取消上傳', data: 'a=photo_cancel' },
+    flexMenu({
+      altText: '請傳送照片',
+      eyebrow: '上傳照片',
+      title: '請傳送照片',
+      body: `工地：${payload.siteName}\n類型：${PHOTO_TYPE_LABELS[typeCode]}\n請連續傳圖（可多張）`,
+      buttons: [
+        { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
+        { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
       ],
-    ),
+    }),
   ]
 }
 
@@ -676,9 +756,15 @@ async function completePhotoBatch(admin: Sb, draft: DraftRow): Promise<LineMessa
   const count = Number(payload.photoCount ?? 0)
   if (!batchId || count <= 0) {
     return [
-      textWithQuickReply('尚未收到照片。請先傳圖，或取消。', [
-        { label: '取消上傳', data: 'a=photo_cancel' },
-      ]),
+      flexMenu({
+        altText: '尚未收到照片',
+        eyebrow: '上傳照片',
+        title: '尚未收到照片',
+        body: '請先傳圖，或取消上傳',
+        buttons: [
+          { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
+        ],
+      }),
     ]
   }
 
@@ -690,16 +776,32 @@ async function completePhotoBatch(admin: Sb, draft: DraftRow): Promise<LineMessa
     .eq('status', 'pending')
   if (error) {
     console.warn('[line-webhook] complete batch failed', error.message)
-    return [textMsg('完成上傳時寫入失敗，草稿仍保留，請稍後再試「完成上傳」。')]
+    return [
+      flexMenu({
+        altText: '完成上傳失敗',
+        eyebrow: '上傳照片',
+        title: '寫入失敗',
+        body: '草稿仍保留，請稍後再試完成上傳',
+        buttons: [
+          { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
+          { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
+        ],
+      }),
+    ]
   }
 
   await finalizeDraft(admin, draft.id, 'completed')
+  const photosUri = `${appBaseUrl()}/photos`
   return [
-    textMsg(
-      `上傳完成。\n成功：${count} 張\n失敗：0 張\n工地：${payload.siteName}\n類型：${
+    flexMenu({
+      altText: '上傳完成',
+      eyebrow: '上傳照片',
+      title: '上傳完成',
+      body: `成功：${count} 張\n失敗：0 張\n工地：${payload.siteName}\n類型：${
         PHOTO_TYPE_LABELS[String(payload.photoType)] || payload.photoType
-      }\n可到工程管家「施工照片」查看。`,
-    ),
+      }`,
+      buttons: [{ label: '查看照片', uri: photosUri, style: 'primary' }],
+    }),
   ]
 }
 
@@ -857,16 +959,24 @@ async function viewTodo(
 function switchGuardMessages(draft: DraftRow, next: FlowType): LineMessage[] {
   const summary = summarizeDraft(draft)
   return [
-    textWithQuickReply(
-      `目前有一個尚未完成的操作：\n\n${FLOW_LABELS[draft.flow_type]}\n已填寫：${summary.filled}\n尚未完成：${summary.pending}\n\n是否取消目前操作？`,
-      [
+    flexMenu({
+      altText: '有尚未完成的操作',
+      eyebrow: '切換功能',
+      title: '有尚未完成的操作',
+      body: `${FLOW_LABELS[draft.flow_type]}\n已填寫：${summary.filled}\n尚未完成：${summary.pending}`,
+      buttons: [
         {
-          label: `取消並${FLOW_LABELS[next]}`,
+          label: `取消並${FLOW_LABELS[next]}`.slice(0, 20),
           data: `a=switch&to=${next}`,
+          style: 'primary',
         },
-        { label: `繼續${FLOW_LABELS[draft.flow_type]}`, data: 'a=resume' },
+        {
+          label: `繼續${FLOW_LABELS[draft.flow_type]}`.slice(0, 20),
+          data: 'a=resume',
+          style: 'secondary',
+        },
       ],
-    ),
+    }),
   ]
 }
 
@@ -916,15 +1026,18 @@ async function prepareActiveDraft(
     draft,
     age: 'paused',
     messages: [
-      textWithQuickReply(
-        `你有一個暫停中的操作\n\n類型：${FLOW_LABELS[draft.flow_type]}\n工地：${
+      flexMenu({
+        altText: '暫停中的操作',
+        eyebrow: '暫停提醒',
+        title: '有暫停中的操作',
+        body: `類型：${FLOW_LABELS[draft.flow_type]}\n工地：${
           draft.draft_payload?.siteName || '—'
-        }\n已填寫：${summary.filled}\n最後操作：${formatTaipei(draft.last_activity_at)}\n\n請選擇：`,
-        [
-          { label: '繼續操作', data: 'a=resume' },
-          { label: '取消並開始新功能', data: 'a=cancel' },
+        }\n已填寫：${summary.filled}\n最後操作：${formatTaipei(draft.last_activity_at)}`,
+        buttons: [
+          { label: '繼續操作', data: 'a=resume', style: 'primary' },
+          { label: '取消並開始新功能', data: 'a=cancel', style: 'secondary' },
         ],
-      ),
+      }),
     ],
   }
 }
@@ -1219,25 +1332,151 @@ function textMsg(text: string): LineMessage {
   return { type: 'text', text: text.slice(0, 4000) }
 }
 
-function textWithQuickReply(
-  text: string,
-  items: Array<{ label: string; data: string }>,
-): LineMessage {
+type FlexButton = {
+  label: string
+  data?: string
+  uri?: string
+  style?: 'primary' | 'secondary'
+}
+
+/** Single-card Flex menu (same visual language as 待辦). */
+function flexMenu(input: {
+  altText: string
+  eyebrow: string
+  title: string
+  body: string
+  buttons?: FlexButton[]
+}): LineMessage {
   return {
-    type: 'text',
-    text: text.slice(0, 4000),
-    quickReply: {
-      items: items.slice(0, 13).map((item) => ({
-        type: 'action',
-        action: {
+    type: 'flex',
+    altText: input.altText.slice(0, 400),
+    contents: actionBubble(input),
+  }
+}
+
+function actionBubble(input: {
+  eyebrow: string
+  title: string
+  body: string
+  buttons?: FlexButton[]
+}): Record<string, unknown> {
+  const buttons = (input.buttons ?? []).slice(0, 4).map((b, i) => {
+    const style = b.style ?? (i === 0 ? 'primary' : 'secondary')
+    const action = b.uri
+      ? { type: 'uri', label: b.label.slice(0, 20), uri: b.uri }
+      : {
           type: 'postback',
-          label: item.label.slice(0, 20),
-          data: item.data.slice(0, 300),
-          displayText: item.label.slice(0, 20),
+          label: b.label.slice(0, 20),
+          data: String(b.data ?? '').slice(0, 300),
+          displayText: b.label.slice(0, 20),
+        }
+    return {
+      type: 'button',
+      style,
+      color: style === 'primary' ? '#1B3A4B' : undefined,
+      action,
+    }
+  })
+
+  const bubble: Record<string, unknown> = {
+    type: 'bubble',
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'sm',
+      contents: [
+        {
+          type: 'text',
+          text: input.eyebrow.slice(0, 20) || '操作',
+          size: 'xs',
+          color: '#888888',
         },
-      })),
+        {
+          type: 'text',
+          text: input.title.slice(0, 40),
+          weight: 'bold',
+          size: 'md',
+          wrap: true,
+        },
+        {
+          type: 'text',
+          text: input.body.slice(0, 400) || ' ',
+          size: 'sm',
+          wrap: true,
+          color: '#555555',
+        },
+      ],
     },
   }
+  if (buttons.length > 0) {
+    bubble.footer = {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'sm',
+      contents: buttons,
+    }
+  }
+  return bubble
+}
+
+/** Site picker as Flex carousel (one card per site). */
+function siteCarousel(input: {
+  altText: string
+  eyebrow: string
+  sites: Array<{ id: string; name: string }>
+  actionPrefix: string
+  extraButtons?: FlexButton[]
+}): LineMessage[] {
+  if (input.sites.length === 0) {
+    return [
+      flexMenu({
+        altText: input.altText,
+        eyebrow: input.eyebrow,
+        title: '沒有可用工地',
+        body: '請先到工程管家建立工地。',
+        buttons: input.extraButtons?.length
+          ? input.extraButtons
+          : [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
+  }
+
+  const bubbles = input.sites.slice(0, 10).map((s) =>
+    actionBubble({
+      eyebrow: input.eyebrow,
+      title: s.name.slice(0, 40),
+      body: '點下方按鈕選擇此工地',
+      buttons: [
+        {
+          label: '選擇',
+          data: `${input.actionPrefix}${s.id}`,
+          style: 'primary',
+        },
+      ],
+    }),
+  )
+
+  if (input.extraButtons?.length) {
+    bubbles.push(
+      actionBubble({
+        eyebrow: input.eyebrow,
+        title: '其他選項',
+        body: '不指定工地或取消',
+        buttons: input.extraButtons,
+      }),
+    )
+  }
+
+  return [
+    {
+      type: 'flex',
+      altText: input.altText.slice(0, 400),
+      contents: {
+        type: 'carousel',
+        contents: bubbles.slice(0, 12),
+      },
+    },
+  ]
 }
 
 function formatTaipei(iso: string): string {
@@ -1348,22 +1587,31 @@ async function promptAttendanceMenu(
           ?.name || '未知工地'
       : '尚未補登工地'
     return [
-      textWithQuickReply(
-        `目前上班中\n上班時間：${formatTaipei(open.clock_in_at)}\n工地：${siteLabel}\n請選擇：`,
-        [
-          { label: '下班打卡', data: 'a=att_out' },
-          { label: '切換工地', data: 'a=att_site' },
-          { label: '取消', data: 'a=cancel' },
+      flexMenu({
+        altText: '出勤打卡：上班中',
+        eyebrow: '出勤打卡',
+        title: '目前上班中',
+        body: `上班時間：${formatTaipei(open.clock_in_at)}\n工地：${siteLabel}`,
+        buttons: [
+          { label: '下班打卡', data: 'a=att_out', style: 'primary' },
+          { label: '切換工地', data: 'a=att_site', style: 'secondary' },
+          { label: '取消', data: 'a=cancel', style: 'secondary' },
         ],
-      ),
+      }),
     ]
   }
 
   return [
-    textWithQuickReply('目前未上班。請選擇：', [
-      { label: '一鍵上班', data: 'a=att_in' },
-      { label: '取消', data: 'a=cancel' },
-    ]),
+    flexMenu({
+      altText: '出勤打卡：未上班',
+      eyebrow: '出勤打卡',
+      title: '目前未上班',
+      body: '請選擇要進行的操作',
+      buttons: [
+        { label: '一鍵上班', data: 'a=att_in', style: 'primary' },
+        { label: '取消', data: 'a=cancel', style: 'secondary' },
+      ],
+    }),
   ]
 }
 
@@ -1426,13 +1674,16 @@ async function clockInLine(
   })
 
   return [
-    textWithQuickReply(
-      `已上班（${formatTaipei(String(data.clock_in_at))}）。\n可補登工地，或稍後再切換。`,
-      [
-        { label: '補登工地', data: 'a=att_site' },
-        { label: '結束', data: 'a=att_done' },
+    flexMenu({
+      altText: '已上班',
+      eyebrow: '出勤打卡',
+      title: '已上班',
+      body: `時間：${formatTaipei(String(data.clock_in_at))}\n可補登工地，或稍後再切換。`,
+      buttons: [
+        { label: '補登工地', data: 'a=att_site', style: 'primary' },
+        { label: '結束', data: 'a=att_done', style: 'secondary' },
       ],
-    ),
+    }),
   ]
 }
 
@@ -1459,7 +1710,14 @@ async function clockOutLine(
   }
 
   await finalizeDraft(admin, draft.id, 'completed')
-  return [textMsg(`已下班（${formatTaipei(now)}）。`)]
+  return [
+    flexMenu({
+      altText: '已下班',
+      eyebrow: '出勤打卡',
+      title: '已下班',
+      body: `時間：${formatTaipei(now)}`,
+    }),
+  ]
 }
 
 async function promptAttendanceSite(
@@ -1470,29 +1728,29 @@ async function promptAttendanceSite(
   const open = await getOpenAttendance(admin, profile.id)
   if (!open) {
     return [
-      textMsg('請先上班再選擇工地。'),
-      ...(await promptAttendanceMenu(admin, profile, draft)),
+      flexMenu({
+        altText: '請先上班',
+        eyebrow: '出勤打卡',
+        title: '請先上班',
+        body: '選擇工地前需先完成上班打卡',
+        buttons: [{ label: '回出勤選單', data: 'a=resume', style: 'primary' }],
+      }),
     ]
   }
 
   const sites = await listSites(admin, profile.organization_id)
-  if (sites.length === 0) {
-    return [textMsg('目前沒有可用工地。請先到工程管家建立工地。')]
-  }
-
   await touchDraft(admin, draft.id, {
     current_step: 'select_site',
     draft_payload: { ...draft.draft_payload, openShift: true, selectingSite: true },
   })
 
-  const lines = sites.map((s, i) => `${i + 1}. ${s.name}`).join('\n')
-  const items = sites.slice(0, 10).map((s) => ({
-    label: s.name.slice(0, 20),
-    data: `a=att_site_pick&id=${s.id}`,
-  }))
-  return [
-    textWithQuickReply(`請選擇工地：\n${lines}\n也可回覆編號。`, items.slice(0, 13)),
-  ]
+  return siteCarousel({
+    altText: '請選擇工地',
+    eyebrow: '切換工地',
+    sites,
+    actionPrefix: 'a=att_site_pick&id=',
+    extraButtons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+  })
 }
 
 async function assignAttendanceSite(
@@ -1524,21 +1782,32 @@ async function assignAttendanceSite(
   }
 
   await finalizeDraft(admin, draft.id, 'completed')
-  return [textMsg(`已切換工地：${site.name}`)]
+  return [
+    flexMenu({
+      altText: `已切換工地：${site.name}`,
+      eyebrow: '出勤打卡',
+      title: '已切換工地',
+      body: site.name,
+    }),
+  ]
 }
 
 // ----- Phase 2: purchase -----
 
 function promptPurchaseMode(): LineMessage[] {
   return [
-    textWithQuickReply(
-      '採購申請\n一般：最終應付 ≥ NT$3,000 需核准\n緊急：單次 ≤ NT$5,000、每日 ≤ NT$10,000\n（申請人不可自行核准）',
-      [
-        { label: '一般採購', data: 'a=pur_mode&m=normal' },
-        { label: '緊急採購', data: 'a=pur_mode&m=emergency' },
-        { label: '取消', data: 'a=cancel' },
+    flexMenu({
+      altText: '採購申請',
+      eyebrow: '採購申請',
+      title: '選擇採購類型',
+      body:
+        '一般：最終應付 ≥ NT$3,000 需核准\n緊急：單次 ≤ NT$5,000、每日 ≤ NT$10,000\n申請人不可自行核准',
+      buttons: [
+        { label: '一般採購', data: 'a=pur_mode&m=normal', style: 'primary' },
+        { label: '緊急採購', data: 'a=pur_mode&m=emergency', style: 'secondary' },
+        { label: '取消', data: 'a=cancel', style: 'secondary' },
       ],
-    ),
+    }),
   ]
 }
 
@@ -1554,7 +1823,15 @@ async function selectPurchaseMode(
     current_step: 'enter_title',
     draft_payload: { mode },
   })
-  return [textMsg('請輸入採購品名／說明（文字回覆）：')]
+  return [
+    flexMenu({
+      altText: '請輸入採購品名',
+      eyebrow: '採購申請',
+      title: mode === 'emergency' ? '緊急採購：輸入品名' : '一般採購：輸入品名',
+      body: '直接以文字回覆品名／說明（至少 2 字）',
+      buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+    }),
+  ]
 }
 
 async function handlePurchaseText(
@@ -1574,24 +1851,54 @@ async function handlePurchaseText(
 
   if (step === 'enter_title') {
     const title = text.trim()
-    if (title.length < 2) return [textMsg('品名太短，請再輸入一次：')]
+    if (title.length < 2) {
+      return [
+        flexMenu({
+          altText: '品名太短',
+          eyebrow: '採購申請',
+          title: '品名太短',
+          body: '請再輸入一次（至少 2 字）',
+          buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        }),
+      ]
+    }
     await touchDraft(admin, draft.id, {
       current_step: 'enter_amount',
       draft_payload: { ...payload, title },
     })
-    return [textMsg('請輸入金額（數字，新台幣，例如 2800）：')]
+    return [
+      flexMenu({
+        altText: '請輸入金額',
+        eyebrow: '採購申請',
+        title: '請輸入金額',
+        body: `品名：${title}\n請以文字回覆數字（新台幣，例如 2800）`,
+        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
   }
 
   if (step === 'enter_amount') {
     const amount = Number(String(text).replace(/[,，元$NTD\s]/gi, ''))
     if (!Number.isFinite(amount) || amount < 0) {
-      return [textMsg('金額無效，請輸入數字（例如 2800）：')]
+      return [
+        flexMenu({
+          altText: '金額無效',
+          eyebrow: '採購申請',
+          title: '金額無效',
+          body: '請輸入數字（例如 2800）',
+          buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        }),
+      ]
     }
     if (payload.mode === 'emergency' && amount > EMERGENCY_SINGLE_LIMIT_NTD) {
       return [
-        textMsg(
-          `緊急採購單次上限 NT$${EMERGENCY_SINGLE_LIMIT_NTD.toLocaleString()}，請重新輸入金額：`,
-        ),
+        flexMenu({
+          altText: '超過緊急單次上限',
+          eyebrow: '採購申請',
+          title: '超過緊急單次上限',
+          body: `單次上限 NT$${EMERGENCY_SINGLE_LIMIT_NTD.toLocaleString()}，請重新輸入金額`,
+          buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        }),
       ]
     }
     await touchDraft(admin, draft.id, {
@@ -1620,7 +1927,14 @@ async function handlePurchaseText(
     if (/確認|送出|是/.test(text)) return submitPurchase(admin, profile, draft)
     if (/取消/.test(text)) {
       await finalizeDraft(admin, draft.id, 'cancelled')
-      return [textMsg('已取消採購申請。')]
+      return [
+        flexMenu({
+          altText: '已取消採購申請',
+          eyebrow: '採購申請',
+          title: '已取消',
+          body: '可再從圖文選單重新申請',
+        }),
+      ]
     }
     return promptPurchaseConfirm(admin, draft)
   }
@@ -1634,23 +1948,16 @@ async function promptPurchaseSite(
   draft: DraftRow,
 ): Promise<LineMessage[]> {
   const sites = await listSites(admin, profile.organization_id)
-  const items = [
-    ...sites.slice(0, 9).map((s) => ({
-      label: s.name.slice(0, 20),
-      data: `a=pur_site&id=${s.id}`,
-    })),
-    { label: '不指定工地', data: 'a=pur_site_skip' },
-  ]
-  const lines =
-    sites.length === 0
-      ? '（尚無工地，可選不指定）'
-      : sites
-          .slice(0, 9)
-          .map((s, i) => `${i + 1}. ${s.name}`)
-          .join('\n')
-  return [
-    textWithQuickReply(`可選工地（或跳過）：\n${lines}`, items.slice(0, 13)),
-  ]
+  return siteCarousel({
+    altText: '採購：選擇工地',
+    eyebrow: '採購申請',
+    sites: sites.slice(0, 9),
+    actionPrefix: 'a=pur_site&id=',
+    extraButtons: [
+      { label: '不指定工地', data: 'a=pur_site_skip', style: 'primary' },
+      { label: '取消', data: 'a=cancel', style: 'secondary' },
+    ],
+  })
 }
 
 async function selectPurchaseSite(
@@ -1695,17 +2002,20 @@ async function promptPurchaseConfirm(
     draft_payload: p,
   })
   return [
-    textWithQuickReply(
-      `請確認採購\n類型：${mode === 'emergency' ? '緊急' : '一般'}\n品名：${
+    flexMenu({
+      altText: '請確認採購',
+      eyebrow: '採購申請',
+      title: '請確認採購',
+      body: `類型：${mode === 'emergency' ? '緊急' : '一般'}\n品名：${
         p.title || '—'
       }\n金額：NT$${amount.toLocaleString()}\n工地：${p.siteName || '不指定'}\n${
         needsApproval ? '送出後需老闆／管理員核准' : '可直接成立（免事前核准）'
       }`,
-      [
-        { label: '確認送出', data: 'a=pur_confirm' },
-        { label: '取消', data: 'a=cancel' },
+      buttons: [
+        { label: '確認送出', data: 'a=pur_confirm', style: 'primary' },
+        { label: '取消', data: 'a=cancel', style: 'secondary' },
       ],
-    ),
+    }),
   ]
 }
 
@@ -1716,8 +2026,28 @@ async function resumePurchase(
 ): Promise<LineMessage[]> {
   const step = draft.current_step || 'select_mode'
   if (step === 'select_mode') return promptPurchaseMode()
-  if (step === 'enter_title') return [textMsg('請輸入採購品名／說明：')]
-  if (step === 'enter_amount') return [textMsg('請輸入金額（數字）：')]
+  if (step === 'enter_title') {
+    return [
+      flexMenu({
+        altText: '請輸入採購品名',
+        eyebrow: '採購申請',
+        title: '請輸入品名／說明',
+        body: '直接以文字回覆品名（至少 2 字）',
+        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
+  }
+  if (step === 'enter_amount') {
+    return [
+      flexMenu({
+        altText: '請輸入金額',
+        eyebrow: '採購申請',
+        title: '請輸入金額',
+        body: '直接以文字回覆數字（新台幣，例如 2800）',
+        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
+  }
   if (step === 'select_site') return promptPurchaseSite(admin, profile, draft)
   return promptPurchaseConfirm(admin, draft)
 }
@@ -1855,17 +2185,26 @@ async function submitPurchase(
   }
 
   await finalizeDraft(admin, draft.id, 'completed')
+  const purchasesUri = `${appBaseUrl()}/purchases`
   if (needsApproval) {
     return [
-      textMsg(
-        `已送出採購「${data.title}」\n金額 NT$${Number(data.final_payable).toLocaleString()}\n狀態：待核准\n（不可自行核准；老闆／管理員會在系統待辦看到）`,
-      ),
+      flexMenu({
+        altText: '已送出採購（待核准）',
+        eyebrow: '採購申請',
+        title: '已送出（待核准）',
+        body: `「${data.title}」\n金額 NT$${Number(data.final_payable).toLocaleString()}\n不可自行核准；老闆／管理員會在系統待辦看到`,
+        buttons: [{ label: '查看採購', uri: purchasesUri, style: 'primary' }],
+      }),
     ]
   }
   return [
-    textMsg(
-      `已建立採購「${data.title}」\n金額 NT$${Number(data.final_payable).toLocaleString()}\n狀態：${data.status}`,
-    ),
+    flexMenu({
+      altText: '已建立採購',
+      eyebrow: '採購申請',
+      title: '已建立採購',
+      body: `「${data.title}」\n金額 NT$${Number(data.final_payable).toLocaleString()}\n狀態：${data.status}`,
+      buttons: [{ label: '查看採購', uri: purchasesUri, style: 'primary' }],
+    }),
   ]
 }
 
