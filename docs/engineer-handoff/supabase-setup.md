@@ -35,10 +35,18 @@
 Dashboard → Authentication → Users：建立 Email／密碼使用者。  
 再於 `profiles` 寫入對應列（`id` 必須等於 `auth.users.id`，並指向同一 `organization_id`）。
 
-## 4. 驗證
+## 4. 已上線資料庫的安全補強
+
+若先前已跑過舊版 schema，請再執行一次：
+
+`supabase/fix_rls_security.sql`
+
+（鎖定 role／finance／organization 不可自改，寫入必須同組織。）
+
+## 5. 驗證
 
 - 本機：設定 anon key 後 `npm run dev`，登入頁應顯示「Supabase」
-- 確認 RLS：員工不可讀其他組織資料
+- 確認 RLS：員工不可讀其他組織資料；不可自我提權
 
 ## 現況
 
