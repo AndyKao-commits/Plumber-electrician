@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { TaxMode } from '@/domain/types'
+import { isFormalMode } from '@/lib/dataMode'
+import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
+import { supabaseRepos } from '@/lib/supabaseRepos'
+import { useUser } from '@/hooks/useUser'
 
 export const quoteKeys = {
   all: ['quotes'] as const,
@@ -8,17 +12,35 @@ export const quoteKeys = {
 
 export function useQuotes(userId: string | undefined) {
   const queryClient = useQueryClient()
+  const formal = isFormalMode()
+  const { user } = useUser()
 
   const listQuery = useQuery({
     queryKey: quoteKeys.all,
     enabled: Boolean(userId),
-    queryFn: async () => localDb.getQuotations(),
+    queryFn: async () => {
+      try {
+        return formal
+          ? await supabaseRepos.listQuotations()
+          : localDb.getQuotations()
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入報價'))
+      }
+    },
   })
 
   const repairsQuery = useQuery({
     queryKey: ['repair-cases'],
     enabled: Boolean(userId),
-    queryFn: async () => localDb.getRepairCases(),
+    queryFn: async () => {
+      try {
+        return formal
+          ? await supabaseRepos.listRepairCases()
+          : localDb.getRepairCases()
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入維修案件'))
+      }
+    },
   })
 
   const createMutation = useMutation({
@@ -29,8 +51,14 @@ export function useQuotes(userId: string | undefined) {
       taxMode: TaxMode
       amountBeforeTax: number
     }) => {
-      if (!userId) throw new Error('尚未登入')
-      return localDb.createQuotation({ createdBy: userId, ...input })
+      if (!userId || !user) throw new Error('尚未登入')
+      try {
+        return formal
+          ? await supabaseRepos.createQuotation(user, input)
+          : localDb.createQuotation({ createdBy: userId, ...input })
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法建立報價'))
+      }
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: quoteKeys.all })
@@ -38,7 +66,15 @@ export function useQuotes(userId: string | undefined) {
   })
 
   const publishMutation = useMutation({
-    mutationFn: async (quoteId: string) => localDb.publishQuotation(quoteId),
+    mutationFn: async (quoteId: string) => {
+      try {
+        return formal
+          ? await supabaseRepos.publishQuotation(quoteId)
+          : localDb.publishQuotation(quoteId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '發布報價失敗'))
+      }
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: quoteKeys.all })
     },

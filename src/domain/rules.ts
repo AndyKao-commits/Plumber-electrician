@@ -150,13 +150,10 @@ export function isWithinEmergencyDailyLimit(
   return usedTodayNtd + nextFinalPayableNtd <= EMERGENCY_PURCHASE_DAILY_LIMIT_NTD
 }
 
-export function canViewSensitiveFinance(role: UserRole, financeAuthorized = false): boolean {
-  return financeAuthorized || ROLES[role].defaultFinanceAuth
-}
-
-export function canViewOthersPayroll(role: UserRole, payrollAuthorized = false): boolean {
-  return payrollAuthorized || role === 'boss'
-}
+export {
+  canViewSensitiveFinance,
+  canViewOthersPayroll,
+} from './permissions'
 
 /** Moving weighted average unit cost (org+material pool). */
 export function movingAverageUnitCost(

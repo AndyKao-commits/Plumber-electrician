@@ -5,8 +5,12 @@ import {
   isWithinEmergencySingleLimit,
 } from '@/domain/rules'
 import type { PurchaseMode } from '@/domain/types'
+import { isFormalMode } from '@/lib/dataMode'
+import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
+import { supabaseRepos } from '@/lib/supabaseRepos'
 import { noticeKeys } from '@/hooks/useNotices'
+import { useUser } from '@/hooks/useUser'
 
 export const purchaseKeys = {
   all: ['purchases'] as const,
@@ -18,23 +22,35 @@ export const purchaseKeys = {
 
 export function usePurchases(userId: string | undefined) {
   const queryClient = useQueryClient()
+  const formal = isFormalMode()
+  const { user } = useUser()
 
   const listQuery = useQuery({
     queryKey: purchaseKeys.list(userId),
     enabled: Boolean(userId),
     queryFn: async () => {
-      if (!userId) return []
-      const user = localDb.getUser(userId)
-      if (user?.role === 'boss') return localDb.getPurchases()
-      return localDb.getPurchases().filter((p) => p.userId === userId)
+      if (!userId || !user) return []
+      try {
+        if (formal) return await supabaseRepos.listPurchases(user)
+        const all = localDb.getPurchases()
+        return user.role === 'boss' ? all : all.filter((p) => p.userId === userId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入採購列表'))
+      }
     },
   })
 
   const pendingQuery = useQuery({
     queryKey: purchaseKeys.pending,
     enabled: Boolean(userId),
-    queryFn: async () =>
-      localDb.getPurchases().filter((p) => p.status === 'pending_approval'),
+    queryFn: async () => {
+      try {
+        if (formal) return await supabaseRepos.listPendingPurchases()
+        return localDb.getPurchases().filter((p) => p.status === 'pending_approval')
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入待核准採購'))
+      }
+    },
   })
 
   const usedQuery = useQuery({
@@ -42,9 +58,20 @@ export function usePurchases(userId: string | undefined) {
     enabled: Boolean(userId),
     queryFn: async () => {
       if (!userId) return 0
-      return localDb.emergencyUsedToday(userId)
+      try {
+        return formal
+          ? await supabaseRepos.emergencyUsedToday(userId)
+          : localDb.emergencyUsedToday(userId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法讀取緊急額度'))
+      }
     },
   })
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: purchaseKeys.all })
+    void queryClient.invalidateQueries({ queryKey: noticeKeys.all })
+  }
 
   const createMutation = useMutation({
     mutationFn: async (input: {
@@ -57,50 +84,64 @@ export function usePurchases(userId: string | undefined) {
       shipping?: number
       otherBuyerFees?: number
     }) => {
-      if (!userId) throw new Error('尚未登入')
+      if (!userId || !user) throw new Error('尚未登入')
       const finalPayable = calcFinalPayable(input)
-
       if (input.mode === 'emergency') {
         if (!isWithinEmergencySingleLimit(finalPayable)) {
           throw new Error('超過緊急採購單次上限 NT$5,000')
         }
-        const used = localDb.emergencyUsedToday(userId)
+        const used = formal
+          ? await supabaseRepos.emergencyUsedToday(userId)
+          : localDb.emergencyUsedToday(userId)
         if (!isWithinEmergencyDailyLimit(used, finalPayable)) {
           throw new Error('超過緊急採購每日累計上限 NT$10,000')
         }
       }
-
-      return localDb.createPurchase({ userId, ...input })
+      try {
+        return formal
+          ? await supabaseRepos.createPurchase(user, input)
+          : localDb.createPurchase({ userId, ...input })
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法建立採購'))
+      }
     },
-    onSuccess: () => {
-      if (!userId) return
-      void queryClient.invalidateQueries({ queryKey: purchaseKeys.all })
-      void queryClient.invalidateQueries({ queryKey: noticeKeys.all })
-    },
+    onSuccess: invalidate,
   })
 
   const approveMutation = useMutation({
     mutationFn: async (purchaseId: string) => {
-      if (!userId) throw new Error('尚未登入')
-      return localDb.approvePurchase({ purchaseId, actorId: userId })
+      if (!user) throw new Error('尚未登入')
+      try {
+        return formal
+          ? await supabaseRepos.approvePurchase(user, purchaseId)
+          : localDb.approvePurchase({ purchaseId, actorId: user.id })
+      } catch (e) {
+        throw new Error(toUserMessage(e, '核准失敗'))
+      }
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: purchaseKeys.all })
-    },
+    onSuccess: invalidate,
   })
 
   const cancelEmergencyMutation = useMutation({
     mutationFn: async (input: { purchaseId: string; reason: string }) => {
-      if (!userId) throw new Error('尚未登入')
-      return localDb.cancelEmergencyPurchase({
-        purchaseId: input.purchaseId,
-        actorId: userId,
-        reason: input.reason,
-      })
+      if (!user) throw new Error('尚未登入')
+      try {
+        return formal
+          ? await supabaseRepos.cancelEmergencyPurchase(
+              user,
+              input.purchaseId,
+              input.reason,
+            )
+          : localDb.cancelEmergencyPurchase({
+              purchaseId: input.purchaseId,
+              actorId: user.id,
+              reason: input.reason,
+            })
+      } catch (e) {
+        throw new Error(toUserMessage(e, '取消失敗'))
+      }
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: purchaseKeys.all })
-    },
+    onSuccess: invalidate,
   })
 
   return {

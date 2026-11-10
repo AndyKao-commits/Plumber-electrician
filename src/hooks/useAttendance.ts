@@ -1,24 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { AttendanceRecord, JobType } from '@/domain/types'
+import { isFormalMode } from '@/lib/dataMode'
+import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
-import { isSupabaseConfigured, supabase } from '@/lib/supabase'
-import { userKeys } from './useUser'
+import { supabaseRepos } from '@/lib/supabaseRepos'
 
 export const attendanceKeys = {
   all: ['attendance'] as const,
   open: (userId: string) => [...attendanceKeys.all, 'open', userId] as const,
-  history: (userId: string) =>
-    [...attendanceKeys.all, 'history', userId] as const,
+  history: (userId: string) => [...attendanceKeys.all, 'history', userId] as const,
 }
 
 async function getPosition(): Promise<{
   latitude: number | null
   longitude: number | null
 }> {
-  if (!('geolocation' in navigator)) {
-    return { latitude: null, longitude: null }
-  }
-
+  if (!('geolocation' in navigator)) return { latitude: null, longitude: null }
   return new Promise((resolve) => {
     navigator.geolocation.getCurrentPosition(
       (pos) =>
@@ -32,56 +29,22 @@ async function getPosition(): Promise<{
   })
 }
 
-function mapAttendance(row: {
-  id: string
-  organization_id: string
-  user_id: string
-  status: AttendanceRecord['status']
-  clock_in_at: string
-  clock_out_at: string | null
-  site_id: string | null
-  job_type: JobType | null
-  latitude: number | null
-  longitude: number | null
-  note: string | null
-}): AttendanceRecord {
-  return {
-    id: row.id,
-    organizationId: row.organization_id,
-    userId: row.user_id,
-    status: row.status,
-    clockInAt: row.clock_in_at,
-    clockOutAt: row.clock_out_at,
-    siteId: row.site_id,
-    jobType: row.job_type,
-    latitude: row.latitude,
-    longitude: row.longitude,
-    note: row.note,
-  }
-}
-
 export function useAttendance(userId: string | undefined) {
   const queryClient = useQueryClient()
+  const formal = isFormalMode()
 
   const openQuery = useQuery({
     queryKey: attendanceKeys.open(userId ?? 'anon'),
     enabled: Boolean(userId),
     queryFn: async (): Promise<AttendanceRecord | null> => {
       if (!userId) return null
-      if (isSupabaseConfigured && supabase) {
-        const { data, error } = await supabase
-          .from('attendance')
-          .select(
-            'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
-          )
-          .eq('user_id', userId)
-          .eq('status', 'clocked_in')
-          .maybeSingle()
-        if (error) throw error
-        if (!data) return null
-        return mapAttendance(data)
+      try {
+        return formal
+          ? await supabaseRepos.getOpenAttendance(userId)
+          : localDb.getOpenAttendance(userId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法讀取出勤狀態'))
       }
-      return localDb.getOpenAttendance(userId)
     },
   })
 
@@ -90,148 +53,92 @@ export function useAttendance(userId: string | undefined) {
     enabled: Boolean(userId),
     queryFn: async (): Promise<AttendanceRecord[]> => {
       if (!userId) return []
-      if (isSupabaseConfigured && supabase) {
-        const { data, error } = await supabase
-          .from('attendance')
-          .select(
-            'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
-          )
-          .eq('user_id', userId)
-          .order('clock_in_at', { ascending: false })
-          .limit(30)
-        if (error) throw error
-        return (data ?? []).map(mapAttendance)
+      try {
+        if (formal) return await supabaseRepos.listAttendance(userId)
+        return localDb
+          .getAttendance()
+          .filter((a) => a.userId === userId)
+          .sort((a, b) => b.clockInAt.localeCompare(a.clockInAt))
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法讀取出勤紀錄'))
       }
-      return localDb
-        .getAttendance()
-        .filter((a) => a.userId === userId)
-        .slice(0, 30)
     },
   })
 
   const invalidate = () => {
     if (!userId) return
-    void queryClient.invalidateQueries({
-      queryKey: attendanceKeys.open(userId),
-    })
-    void queryClient.invalidateQueries({
-      queryKey: attendanceKeys.history(userId),
-    })
+    void queryClient.invalidateQueries({ queryKey: attendanceKeys.open(userId) })
+    void queryClient.invalidateQueries({ queryKey: attendanceKeys.history(userId) })
     void queryClient.invalidateQueries({ queryKey: ['team'] })
   }
 
-  const clockInMutation = useMutation({
-    mutationFn: async (input?: { siteId?: string; jobType?: JobType }) => {
+  const clockIn = useMutation({
+    mutationFn: async () => {
       if (!userId) throw new Error('尚未登入')
       const pos = await getPosition()
-      const now = new Date().toISOString()
-
-      if (isSupabaseConfigured && supabase) {
-        const { data, error } = await supabase
-          .from('attendance')
-          .insert({
-            user_id: userId,
-            status: 'clocked_in',
-            clock_in_at: now,
-            site_id: input?.siteId ?? null,
-            job_type: input?.jobType ?? null,
+      try {
+        if (formal) {
+          return await supabaseRepos.clockIn({
+            userId,
             latitude: pos.latitude,
             longitude: pos.longitude,
           })
-          .select(
-            'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
-          )
-          .single()
-        if (error) throw error
-        return mapAttendance(data)
+        }
+        const user = localDb.getUser(userId)
+        const record: AttendanceRecord = {
+          id: `att-${crypto.randomUUID()}`,
+          organizationId: user?.organizationId ?? localDb.orgId,
+          userId,
+          status: 'clocked_in',
+          clockInAt: new Date().toISOString(),
+          latitude: pos.latitude,
+          longitude: pos.longitude,
+        }
+        localDb.saveAttendance(record)
+        return record
+      } catch (e) {
+        throw new Error(toUserMessage(e, '上班打卡失敗'))
       }
-
-      const open = localDb.getOpenAttendance(userId)
-      if (open) throw new Error('已經在上班中，請先下班或補登工地')
-
-      const user = localDb.getUser(userId)
-      const record: AttendanceRecord = {
-        id: `att-${crypto.randomUUID()}`,
-        organizationId: user?.organizationId ?? localDb.orgId,
-        userId,
-        status: 'clocked_in',
-        clockInAt: now,
-        siteId: input?.siteId ?? null,
-        jobType: input?.jobType ?? null,
-        latitude: pos.latitude,
-        longitude: pos.longitude,
-      }
-      localDb.saveAttendance(record)
-      return record
-    },
-    onSuccess: () => {
-      invalidate()
-      void queryClient.invalidateQueries({ queryKey: userKeys.me() })
-    },
-  })
-
-  const clockOutMutation = useMutation({
-    mutationFn: async () => {
-      if (!userId) throw new Error('尚未登入')
-      const now = new Date().toISOString()
-
-      if (isSupabaseConfigured && supabase) {
-        const open = openQuery.data
-        if (!open) throw new Error('目前沒有進行中的打卡')
-        const { data, error } = await supabase
-          .from('attendance')
-          .update({ status: 'clocked_out', clock_out_at: now })
-          .eq('id', open.id)
-          .select(
-            'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
-          )
-          .single()
-        if (error) throw error
-        return mapAttendance(data)
-      }
-
-      const open = localDb.getOpenAttendance(userId)
-      if (!open) throw new Error('目前沒有進行中的打卡')
-      const closed: AttendanceRecord = {
-        ...open,
-        status: 'clocked_out',
-        clockOutAt: now,
-      }
-      localDb.saveAttendance(closed)
-      return closed
     },
     onSuccess: invalidate,
   })
 
-  const assignSiteMutation = useMutation({
-    mutationFn: async (input: { siteId: string; jobType?: JobType }) => {
+  const clockOut = useMutation({
+    mutationFn: async () => {
       if (!userId) throw new Error('尚未登入')
-      const open = openQuery.data ?? localDb.getOpenAttendance(userId)
-      if (!open) throw new Error('請先上班打卡，再補登工地')
-
-      if (isSupabaseConfigured && supabase) {
-        const { data, error } = await supabase
-          .from('attendance')
-          .update({
-            site_id: input.siteId,
-            job_type: input.jobType ?? open.jobType ?? 'project',
-          })
-          .eq('id', open.id)
-          .select(
-            'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
-          )
-          .single()
-        if (error) throw error
-        return mapAttendance(data)
+      try {
+        if (formal) return await supabaseRepos.clockOut(userId)
+        const open = localDb.getOpenAttendance(userId)
+        if (!open) throw new Error('目前沒有進行中的班次')
+        const closed = {
+          ...open,
+          status: 'clocked_out' as const,
+          clockOutAt: new Date().toISOString(),
+        }
+        localDb.saveAttendance(closed)
+        return closed
+      } catch (e) {
+        throw new Error(toUserMessage(e, '下班打卡失敗'))
       }
+    },
+    onSuccess: invalidate,
+  })
 
-      const updated: AttendanceRecord = {
-        ...open,
-        siteId: input.siteId,
-        jobType: input.jobType ?? open.jobType ?? 'project',
+  const assignSite = useMutation({
+    mutationFn: async (input: { siteId: string; jobType?: JobType | string }) => {
+      if (!userId) throw new Error('尚未登入')
+      const siteId = input.siteId
+      const jobType = (input.jobType as JobType | undefined) ?? 'project'
+      try {
+        if (formal) return await supabaseRepos.assignSite(userId, siteId)
+        const open = localDb.getOpenAttendance(userId)
+        if (!open) throw new Error('請先上班再選擇工地')
+        const updated = { ...open, siteId, jobType }
+        localDb.saveAttendance(updated)
+        return updated
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法更新目前工地'))
       }
-      localDb.saveAttendance(updated)
-      return updated
     },
     onSuccess: invalidate,
   })
@@ -239,12 +146,13 @@ export function useAttendance(userId: string | undefined) {
   return {
     openShift: openQuery.data ?? null,
     history: historyQuery.data ?? [],
-    isLoading: openQuery.isLoading || historyQuery.isLoading,
-    clockIn: clockInMutation.mutateAsync,
-    clockOut: clockOutMutation.mutateAsync,
-    assignSite: assignSiteMutation.mutateAsync,
-    isClockingIn: clockInMutation.isPending,
-    isClockingOut: clockOutMutation.isPending,
-    isAssigningSite: assignSiteMutation.isPending,
+    isLoading: openQuery.isLoading,
+    error: openQuery.error,
+    clockIn: clockIn.mutateAsync,
+    clockOut: clockOut.mutateAsync,
+    assignSite: assignSite.mutateAsync,
+    isClockingIn: clockIn.isPending,
+    isClockingOut: clockOut.isPending,
+    isAssigningSite: assignSite.isPending,
   }
 }

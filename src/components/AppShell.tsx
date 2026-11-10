@@ -2,9 +2,10 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { PRODUCT, ROLES } from '@/domain/rules'
 import { useNotices } from '@/hooks/useNotices'
 import { useUser } from '@/hooks/useUser'
+import { dataModeLabel } from '@/lib/dataMode'
 
 export function AppShell() {
-  const { user, logout, isDemoMode } = useUser()
+  const { user, logout } = useUser()
   const { unreadCount } = useNotices(user?.id)
 
   return (
@@ -14,7 +15,8 @@ export function AppShell() {
           <strong>{PRODUCT.name}</strong>
           <span>
             {user ? `${user.name} · ${ROLES[user.role].label}` : PRODUCT.tagline}
-            {isDemoMode ? ' · 本機示範' : ''}
+            {' · '}
+            {dataModeLabel()}
           </span>
         </div>
         {user ? (

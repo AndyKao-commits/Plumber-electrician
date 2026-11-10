@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ProjectKind, SiteProject } from '@/domain/types'
+import { isFormalMode } from '@/lib/dataMode'
+import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
-import { isSupabaseConfigured, supabase } from '@/lib/supabase'
+import { supabaseRepos } from '@/lib/supabaseRepos'
 
 export const siteKeys = {
   all: ['sites'] as const,
@@ -9,58 +11,12 @@ export const siteKeys = {
   detail: (id: string) => [...siteKeys.all, 'detail', id] as const,
 }
 
-function mapSite(row: {
-  id: string
-  organization_id: string
-  name: string
-  kind: ProjectKind
-  status: SiteProject['status']
-  address: string | null
-  customer_name: string | null
-  notes: string | null
-  warranty_until: string | null
-  created_at: string
-  updated_at: string
-  version: number
-}): SiteProject {
-  return {
-    id: row.id,
-    organizationId: row.organization_id,
-    name: row.name,
-    kind: row.kind,
-    status: row.status,
-    address: row.address ?? undefined,
-    customerName: row.customer_name ?? undefined,
-    notes: row.notes ?? undefined,
-    warrantyUntil: row.warranty_until,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    version: row.version ?? 1,
-  }
-}
-
-async function fetchSites(): Promise<SiteProject[]> {
-  if (isSupabaseConfigured && supabase) {
-    const { data, error } = await supabase
-      .from('sites')
-      .select(
-        'id, organization_id, name, kind, status, address, customer_name, notes, warranty_until, created_at, updated_at, version',
-      )
-      .order('updated_at', { ascending: false })
-
-    if (error) throw error
-    return (data ?? []).map(mapSite)
-  }
-
-  return localDb.getSites()
-}
-
-async function createLocalSite(input: {
+function createLocalSite(input: {
   name: string
   kind: ProjectKind
   address?: string
   customerName?: string
-}): Promise<SiteProject> {
+}): SiteProject {
   const now = new Date().toISOString()
   const site: SiteProject = {
     id: `site-${crypto.randomUUID()}`,
@@ -80,10 +36,17 @@ async function createLocalSite(input: {
 
 export function useSites() {
   const queryClient = useQueryClient()
+  const formal = isFormalMode()
 
   const listQuery = useQuery({
     queryKey: siteKeys.list(),
-    queryFn: fetchSites,
+    queryFn: async () => {
+      try {
+        return formal ? await supabaseRepos.listSites() : localDb.getSites()
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入工地列表'))
+      }
+    },
   })
 
   const createMutation = useMutation({
@@ -93,57 +56,41 @@ export function useSites() {
       address?: string
       customerName?: string
     }) => {
-      if (isSupabaseConfigured && supabase) {
-        const { data, error } = await supabase
-          .from('sites')
-          .insert({
-            name: input.name,
-            kind: input.kind,
-            address: input.address,
-            customer_name: input.customerName,
-            status: 'active',
-          })
-          .select(
-            'id, organization_id, name, kind, status, address, customer_name, notes, warranty_until, created_at, updated_at, version',
-          )
-          .single()
-        if (error) throw error
-        return mapSite(data)
+      try {
+        return formal
+          ? await supabaseRepos.createSite(input)
+          : createLocalSite(input)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法建立工地'))
       }
-      return createLocalSite(input)
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: siteKeys.list() })
+      void queryClient.invalidateQueries({ queryKey: siteKeys.all })
     },
   })
 
   return {
     sites: listQuery.data ?? [],
     isLoading: listQuery.isLoading,
+    error: listQuery.error,
     createSite: createMutation.mutateAsync,
     isCreating: createMutation.isPending,
+    createError: createMutation.error,
   }
 }
 
 export function useSite(id: string | undefined) {
+  const formal = isFormalMode()
   return useQuery({
     queryKey: siteKeys.detail(id ?? 'missing'),
     enabled: Boolean(id),
     queryFn: async () => {
       if (!id) return null
-      if (isSupabaseConfigured && supabase) {
-        const { data, error } = await supabase
-          .from('sites')
-          .select(
-            'id, organization_id, name, kind, status, address, customer_name, notes, warranty_until, created_at, updated_at, version',
-          )
-          .eq('id', id)
-          .maybeSingle()
-        if (error) throw error
-        if (!data) return null
-        return mapSite(data)
+      try {
+        return formal ? await supabaseRepos.getSite(id) : localDb.getSite(id)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入工地'))
       }
-      return localDb.getSite(id)
     },
   })
 }

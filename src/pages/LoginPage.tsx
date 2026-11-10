@@ -42,13 +42,15 @@ export function LoginPage() {
         <section className="panel stack">
           <div className="row between">
             <strong>{isDemoMode ? '選擇身分開始' : 'Email／密碼登入'}</strong>
-            <span className="badge steel">{isDemoMode ? '本機示範' : 'Supabase'}</span>
+            <span className="badge steel">
+              {isDemoMode ? '本機示範模式' : 'Supabase 正式模式'}
+            </span>
           </div>
           <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
             專案：{supabaseUrl?.replace(/^https:\/\//, '')}
             {isDemoMode
-              ? ' · 尚未設定 anon key，暫用本機示範帳號'
-              : ' · 已連線，請用公司帳號登入'}
+              ? ' · 尚未設定 anon key，暫用本機示範帳號（正式資料不會寫入）'
+              : ' · 已連線，請用公司 Email／密碼登入；資料僅存於 Supabase'}
           </p>
 
           {!isDemoMode && isSupabaseConfigured ? (
