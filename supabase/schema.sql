@@ -2,16 +2,40 @@
 -- Reflects confirmed decisions: org isolation, equal project access,
 -- overnight shifts, purchase limits, moving-average inventory later.
 
-create type public.user_role as enum ('boss', 'employee');
-create type public.pay_type as enum ('monthly', 'daily', 'hourly');
-create type public.project_kind as enum ('formal', 'repair');
-create type public.project_status as enum ('active', 'pending_close', 'closed', 'warranty');
-create type public.attendance_status as enum ('clocked_in', 'clocked_out');
-create type public.job_type as enum ('project', 'repair', 'purchase', 'office', 'other');
-create type public.purchase_mode as enum ('normal', 'emergency');
-create type public.purchase_status as enum (
-  'draft', 'pending_approval', 'approved', 'purchased', 'rejected', 'cancelled'
-);
+do $$ begin
+  create type public.user_role as enum ('boss', 'employee');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create type public.pay_type as enum ('monthly', 'daily', 'hourly');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create type public.project_kind as enum ('formal', 'repair');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create type public.project_status as enum ('active', 'pending_close', 'closed', 'warranty');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create type public.attendance_status as enum ('clocked_in', 'clocked_out');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create type public.job_type as enum ('project', 'repair', 'purchase', 'office', 'other');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create type public.purchase_mode as enum ('normal', 'emergency');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create type public.purchase_status as enum (
+    'draft', 'pending_approval', 'approved', 'purchased', 'rejected', 'cancelled'
+  );
+exception when duplicate_object then null;
+end $$;
 
 create table if not exists public.organizations (
   id uuid primary key default gen_random_uuid(),
@@ -111,6 +135,7 @@ alter table public.purchases enable row level security;
 alter table public.notices enable row level security;
 
 -- Equal project access within organization; sensitive payroll still restricted.
+drop policy if exists "profiles_read_same_org" on public.profiles;
 create policy "profiles_read_same_org"
   on public.profiles for select to authenticated
   using (
@@ -119,11 +144,13 @@ create policy "profiles_read_same_org"
     )
   );
 
+drop policy if exists "profiles_update_own" on public.profiles;
 create policy "profiles_update_own"
   on public.profiles for update to authenticated
   using (id = auth.uid())
   with check (id = auth.uid());
 
+drop policy if exists "sites_org_all" on public.sites;
 create policy "sites_org_all"
   on public.sites for all to authenticated
   using (
@@ -137,6 +164,7 @@ create policy "sites_org_all"
     )
   );
 
+drop policy if exists "attendance_read_presence_or_own" on public.attendance;
 create policy "attendance_read_presence_or_own"
   on public.attendance for select to authenticated
   using (
@@ -145,15 +173,18 @@ create policy "attendance_read_presence_or_own"
     )
   );
 
+drop policy if exists "attendance_write_own" on public.attendance;
 create policy "attendance_write_own"
   on public.attendance for insert to authenticated
   with check (user_id = auth.uid());
 
+drop policy if exists "attendance_update_own" on public.attendance;
 create policy "attendance_update_own"
   on public.attendance for update to authenticated
   using (user_id = auth.uid())
   with check (user_id = auth.uid());
 
+drop policy if exists "purchases_org_read" on public.purchases;
 create policy "purchases_org_read"
   on public.purchases for select to authenticated
   using (
@@ -162,10 +193,12 @@ create policy "purchases_org_read"
     )
   );
 
+drop policy if exists "purchases_insert_own" on public.purchases;
 create policy "purchases_insert_own"
   on public.purchases for insert to authenticated
   with check (user_id = auth.uid());
 
+drop policy if exists "notices_own" on public.notices;
 create policy "notices_own"
   on public.notices for all to authenticated
   using (user_id = auth.uid())
@@ -173,9 +206,18 @@ create policy "notices_own"
 
 -- DOC-09 P0.12 additions (same-batch RLS required for every new tenant table)
 
-create type public.tax_mode as enum ('inclusive', 'exclusive', 'zero');
-create type public.quote_status as enum ('draft', 'published', 'void');
-create type public.emergency_limit_event_type as enum ('RESERVE', 'RELEASE', 'ADJUST');
+do $$ begin
+  create type public.tax_mode as enum ('inclusive', 'exclusive', 'zero');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create type public.quote_status as enum ('draft', 'published', 'void');
+exception when duplicate_object then null;
+end $$;
+do $$ begin
+  create type public.emergency_limit_event_type as enum ('RESERVE', 'RELEASE', 'ADJUST');
+exception when duplicate_object then null;
+end $$;
 
 create table if not exists public.repair_cases (
   id uuid primary key default gen_random_uuid(),
@@ -188,6 +230,7 @@ create table if not exists public.repair_cases (
 );
 
 alter table public.repair_cases enable row level security;
+drop policy if exists "repair_cases_org_all" on public.repair_cases;
 create policy "repair_cases_org_all"
   on public.repair_cases for all to authenticated
   using (
@@ -224,6 +267,7 @@ create table if not exists public.quotations (
 );
 
 alter table public.quotations enable row level security;
+drop policy if exists "quotations_org_all" on public.quotations;
 create policy "quotations_org_all"
   on public.quotations for all to authenticated
   using (
@@ -255,6 +299,7 @@ create index if not exists emergency_limit_events_day_idx
   on public.emergency_limit_events (organization_id, employee_id, business_date);
 
 alter table public.emergency_limit_events enable row level security;
+drop policy if exists "emergency_limit_events_org_read" on public.emergency_limit_events;
 create policy "emergency_limit_events_org_read"
   on public.emergency_limit_events for select to authenticated
   using (
@@ -262,6 +307,7 @@ create policy "emergency_limit_events_org_read"
       select p.organization_id from public.profiles p where p.id = auth.uid()
     )
   );
+drop policy if exists "emergency_limit_events_insert_own_or_boss" on public.emergency_limit_events;
 create policy "emergency_limit_events_insert_own_or_boss"
   on public.emergency_limit_events for insert to authenticated
   with check (
@@ -319,6 +365,7 @@ alter table public.petty_cash_top_up_requests enable row level security;
 alter table public.petty_cash_disbursements enable row level security;
 alter table public.petty_cash_ledger_entries enable row level security;
 
+drop policy if exists "petty_cash_accounts_org" on public.petty_cash_accounts;
 create policy "petty_cash_accounts_org"
   on public.petty_cash_accounts for all to authenticated
   using (
@@ -332,6 +379,7 @@ create policy "petty_cash_accounts_org"
     )
   );
 
+drop policy if exists "petty_cash_top_ups_org" on public.petty_cash_top_up_requests;
 create policy "petty_cash_top_ups_org"
   on public.petty_cash_top_up_requests for all to authenticated
   using (
@@ -345,6 +393,7 @@ create policy "petty_cash_top_ups_org"
     )
   );
 
+drop policy if exists "petty_cash_disbursements_org" on public.petty_cash_disbursements;
 create policy "petty_cash_disbursements_org"
   on public.petty_cash_disbursements for all to authenticated
   using (
@@ -358,6 +407,7 @@ create policy "petty_cash_disbursements_org"
     )
   );
 
+drop policy if exists "petty_cash_ledger_org" on public.petty_cash_ledger_entries;
 create policy "petty_cash_ledger_org"
   on public.petty_cash_ledger_entries for all to authenticated
   using (
@@ -382,6 +432,7 @@ create table if not exists public.materials (
 );
 
 alter table public.materials enable row level security;
+drop policy if exists "materials_org_all" on public.materials;
 create policy "materials_org_all"
   on public.materials for all to authenticated
   using (

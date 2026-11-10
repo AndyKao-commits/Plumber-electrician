@@ -1,7 +1,13 @@
--- Optional demo seed after schema.sql
--- Create Auth users in Supabase Dashboard first, then replace UUIDs below.
+-- Optional demo seed AFTER schema.sql (or use apply.sql once).
+-- If you see "organizations does not exist", run schema.sql / apply.sql first.
 
--- 1) Create organization
+do $$
+begin
+  if to_regclass('public.organizations') is null then
+    raise exception '請先執行 supabase/schema.sql（或一次跑完 supabase/apply.sql）。organizations 資料表尚不存在。';
+  end if;
+end $$;
+
 insert into public.organizations (id, name)
 values ('11111111-1111-1111-1111-111111111111', '示範水電行')
 on conflict (id) do nothing;

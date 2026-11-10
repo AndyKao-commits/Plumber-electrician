@@ -35,7 +35,7 @@ npm run dev
 專案：`https://rhpzvqvkmllbdtkpouwn.supabase.co`
 
 1. 在 Cursor Secrets 填入 `SUPABASE_ANON_KEY`（或本機 `.env.local` 的 `VITE_SUPABASE_ANON_KEY`）
-2. 於 Supabase SQL Editor 執行 `supabase/schema.sql`（可選 `seed.sql`）
+2. 於 Supabase SQL Editor **一次執行** `supabase/apply.sql`（先建表再 seed；不要只跑 seed）
 3. 建立 Auth 使用者與對應 `profiles`
 4. 重啟 `npm run dev` → 登入頁改為 Email／密碼
 
