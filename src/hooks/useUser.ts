@@ -61,6 +61,14 @@ export function useUser() {
     onSuccess: () => queryClient.setQueryData(userKeys.me(), null),
   })
 
+  const bindLineMutation = useMutation({
+    mutationFn: async (lineUserId: string | null) => {
+      if (!formal) throw new Error('本機示範模式不支援 LINE 綁定寫入正式庫')
+      return supabaseRepos.bindLineUserId(lineUserId)
+    },
+    onSuccess: (user) => queryClient.setQueryData(userKeys.me(), user),
+  })
+
   return {
     user: userQuery.data ?? null,
     isLoading: userQuery.isLoading,
@@ -76,6 +84,11 @@ export function useUser() {
     isLoggingIn: loginLocal.isPending || loginPassword.isPending,
     logout: logoutMutation.mutateAsync,
     isLoggingOut: logoutMutation.isPending,
+    bindLineUserId: bindLineMutation.mutateAsync,
+    isBindingLine: bindLineMutation.isPending,
+    bindLineError: bindLineMutation.error
+      ? new Error(toUserMessage(bindLineMutation.error))
+      : null,
     isDemoMode: !formal,
     isFormalMode: formal,
   }

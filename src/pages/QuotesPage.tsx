@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { hasPermission, PERMISSIONS } from '@/domain/permissions'
 import { calcQuoteTax } from '@/domain/rules'
 import type { TaxMode } from '@/domain/types'
 import { useQuotes } from '@/hooks/useQuotes'
@@ -17,6 +18,8 @@ export function QuotesPage() {
     createError,
     publishQuote,
   } = useQuotes(user?.id)
+  const canPublish =
+    Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_PUBLISH)
 
   const [title, setTitle] = useState('')
   const [linkType, setLinkType] = useState<'project' | 'repair'>('project')
@@ -170,7 +173,7 @@ export function QuotesPage() {
                 {formatTaipei(q.createdAt, 'MM/dd HH:mm')}
                 {q.frozen ? ' · 已凍結' : ''}
               </p>
-              {q.status === 'draft' ? (
+              {q.status === 'draft' && canPublish ? (
                 <button
                   type="button"
                   className="btn btn-ghost"

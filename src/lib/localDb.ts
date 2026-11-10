@@ -436,6 +436,51 @@ export const localDb = {
     return updated
   },
 
+  rejectPurchase(input: {
+    purchaseId: string
+    actorId: string
+    reason: string
+  }): PurchaseRecord {
+    const actor = this.getUser(input.actorId)
+    const purchase = this.getPurchases().find((p) => p.id === input.purchaseId)
+    if (!actor || !purchase) throw new Error('找不到採購或操作者')
+    if (purchase.status !== 'pending_approval') {
+      throw new Error('此採購不在待核准狀態')
+    }
+    assertCanApprovePurchase({
+      actorRole: actor.role,
+      actorId: actor.id,
+      requesterId: purchase.userId,
+    })
+    const trimmed = input.reason.trim()
+    if (!trimmed) throw new Error('駁回必須填寫原因')
+
+    const updated: PurchaseRecord = {
+      ...purchase,
+      status: 'rejected',
+      rejectedReason: trimmed,
+      approvedBy: actor.id,
+      approvedAt: new Date().toISOString(),
+    }
+    this.savePurchase(updated)
+
+    if (purchase.mode === 'emergency') {
+      this.appendEmergencyEvent({
+        id: `ele-${crypto.randomUUID()}`,
+        organizationId: ORG_ID,
+        employeeId: purchase.userId,
+        businessDate: purchase.businessDate,
+        type: 'RELEASE',
+        amountDelta: -purchase.finalPayable,
+        purchaseId: purchase.id,
+        reason: `駁回釋放：${trimmed}`,
+        createdAt: new Date().toISOString(),
+        createdBy: actor.id,
+      })
+    }
+    return updated
+  },
+
   cancelEmergencyPurchase(input: {
     purchaseId: string
     actorId: string

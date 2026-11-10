@@ -1,4 +1,9 @@
-import { assertCanApprovePurchase } from '@/domain/permissions'
+import {
+  assertCanApprovePurchase,
+  hasPermission,
+  PERMISSIONS,
+} from '@/domain/permissions'
+import { safeNotify, safeNotifyApprovers } from '@/lib/lineNotify'
 import {
   assertEmergencyReserveAllowed,
   sumOccupiedQuota,
@@ -255,7 +260,15 @@ export const supabaseRepos = {
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '上班打卡失敗'))
-    return mapAttendance(data)
+    const record = mapAttendance(data)
+    void safeNotifyApprovers({
+      eventType: 'attendance.clock_in',
+      title: '出勤：上班打卡',
+      detail: `成員已上班（${formatTaipei(new Date(record.clockInAt), 'HH:mm')}）`,
+      href: '/team',
+      asTodo: false,
+    })
+    return record
   },
 
   async clockOut(userId: string): Promise<AttendanceRecord> {
@@ -275,7 +288,15 @@ export const supabaseRepos = {
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '下班打卡失敗'))
-    return mapAttendance(data)
+    const record = mapAttendance(data)
+    void safeNotifyApprovers({
+      eventType: 'attendance.clock_out',
+      title: '出勤：下班打卡',
+      detail: `成員已下班（${formatTaipei(new Date(record.clockOutAt ?? new Date()), 'HH:mm')}）`,
+      href: '/team',
+      asTodo: false,
+    })
+    return record
   },
 
   async assignSite(userId: string, siteId: string): Promise<AttendanceRecord> {
@@ -303,7 +324,7 @@ export const supabaseRepos = {
       )
       .order('created_at', { ascending: false })
 
-    if (actor.role !== 'boss') {
+    if (!hasPermission(actor.role, PERMISSIONS.PURCHASE_APPROVE)) {
       query = query.eq('user_id', actor.id)
     }
 
@@ -422,15 +443,12 @@ export const supabaseRepos = {
     }
 
     if (needsApproval) {
-      // notice for bosses via RPC/trigger preferred; best-effort insert may be blocked by RLS
-      await sb().from('notices').insert({
-        user_id: actor.id,
-        kind: 'todo',
+      void safeNotifyApprovers({
+        eventType: 'purchase.pending',
         title: `採購待核准：${purchase.title}`,
         detail: `最終應付 NT$${finalPayable.toLocaleString()}`,
-        status: 'open',
-        unread: true,
         href: '/purchases',
+        asTodo: true,
       })
     }
 
@@ -468,7 +486,81 @@ export const supabaseRepos = {
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '核准失敗'))
-    return mapPurchase(data)
+    const purchase = mapPurchase(data)
+    void safeNotify({
+      recipientIds: [purchase.userId],
+      eventType: 'purchase.approved',
+      title: `採購已核准：${purchase.title}`,
+      detail: `最終應付 NT$${purchase.finalPayable.toLocaleString()}`,
+      href: '/purchases',
+      asTodo: false,
+    })
+    return purchase
+  },
+
+  async rejectPurchase(
+    actor: AppUser,
+    purchaseId: string,
+    reason: string,
+  ): Promise<PurchaseRecord> {
+    const { data: current, error: loadError } = await sb()
+      .from('purchases')
+      .select(
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
+      )
+      .eq('id', purchaseId)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取採購'))
+    if (!current) throw new AppError('找不到採購')
+    if (current.status !== 'pending_approval') throw new AppError('此採購不在待核准狀態')
+
+    assertCanApprovePurchase({
+      actorRole: actor.role,
+      actorId: actor.id,
+      requesterId: String(current.user_id),
+    })
+
+    const trimmed = reason.trim()
+    if (!trimmed) throw new AppError('駁回必須填寫原因')
+
+    const { data, error } = await sb()
+      .from('purchases')
+      .update({
+        status: 'rejected',
+        rejected_reason: trimmed,
+        approved_by: actor.id,
+        approved_at: new Date().toISOString(),
+      })
+      .eq('id', purchaseId)
+      .select(
+        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '駁回失敗'))
+
+    if (current.mode === 'emergency') {
+      const { error: eventError } = await sb().from('emergency_limit_events').insert({
+        employee_id: current.user_id,
+        business_date: current.business_date,
+        event_type: 'RELEASE',
+        amount_delta: -Number(current.final_payable),
+        purchase_id: purchaseId,
+        reason: `駁回釋放：${trimmed}`,
+        created_by: actor.id,
+      })
+      if (eventError) throw new AppError(toUserMessage(eventError, '額度釋放失敗'))
+    }
+
+    const purchase = mapPurchase(data)
+    void safeNotify({
+      recipientIds: [purchase.userId],
+      eventType: 'purchase.rejected',
+      title: `採購已駁回：${purchase.title}`,
+      detail: trimmed,
+      href: '/purchases',
+      asTodo: false,
+    })
+    return purchase
   },
 
   async cancelEmergencyPurchase(
@@ -648,7 +740,7 @@ export const supabaseRepos = {
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '發布報價失敗'))
-    return {
+    const quote = {
       id: String(data.id),
       organizationId: String(data.organization_id),
       projectId: (data.project_id as string | null) ?? null,
@@ -665,6 +757,42 @@ export const supabaseRepos = {
       publishedAt: (data.published_at as string | null) ?? null,
       createdBy: String(data.created_by),
     }
+    void safeNotifyApprovers({
+      eventType: 'quote.published',
+      title: `報價已發布：${quote.title}`,
+      detail: `稅後金額 NT$${quote.amountAfterTax.toLocaleString()}`,
+      href: '/quotes',
+      asTodo: false,
+    })
+    if (quote.createdBy) {
+      void safeNotify({
+        recipientIds: [quote.createdBy],
+        eventType: 'quote.published',
+        title: `報價已發布：${quote.title}`,
+        detail: `稅後金額 NT$${quote.amountAfterTax.toLocaleString()}`,
+        href: '/quotes',
+        asTodo: false,
+      })
+    }
+    return quote
+  },
+
+  async bindLineUserId(lineUserId: string | null): Promise<AppUser> {
+    const trimmed = lineUserId?.trim() || null
+    const { data: authData, error: authError } = await sb().auth.getUser()
+    if (authError) throw new AppError(toUserMessage(authError, '無法讀取登入狀態'))
+    if (!authData.user) throw new AppError('尚未登入')
+
+    const { data, error } = await sb()
+      .from('profiles')
+      .update({ line_user_id: trimmed })
+      .eq('id', authData.user.id)
+      .select(
+        'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, created_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新 LINE 綁定'))
+    return mapUser(data)
   },
 
   async listMaterials(): Promise<MaterialStock[]> {
