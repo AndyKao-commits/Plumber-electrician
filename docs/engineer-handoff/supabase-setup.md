@@ -44,12 +44,25 @@
 Dashboard → Authentication → Users：建立 Email／密碼使用者。  
 再於 `profiles` 寫入對應列（`id` 必須等於 `auth.users.id`，並指向同一 `organization_id`）。
 
-## 4. LINE 推播（可選｜DEC-007）
+## 4. LINE 推播（DEC-007｜正式啟用）
 
-1. 部署 Edge Function：`supabase/functions/line-push`
-2. 設定 Secret：`LINE_CHANNEL_ACCESS_TOKEN`
-3. 使用者在「今日團隊」頁綁定自己的 `line_user_id`
-4. 未設定 Token 時 outbox 會標 `skipped`，主交易仍成功
+### Secret（只能放 Supabase）
+- 名稱：`LINE_CHANNEL_ACCESS_TOKEN`
+- 位置：Supabase → Project Settings → Edge Functions → Secrets
+- **禁止**寫入前端、Git、Migration、Cursor 前端 Secrets、錯誤訊息
+
+### 部署
+```bash
+# 先在 SQL Editor 執行：
+#   supabase/migrations/20261110_line_outbox_retry.sql
+export SUPABASE_ACCESS_TOKEN=...   # Account Access Token（僅 CLI）
+bash scripts/deploy-line-push.sh
+```
+
+- Edge Function 名稱：`line-push`
+- 流程：主交易成功 → `safeNotify` → `enqueue_line_notifications`（outbox）→ `functions.invoke('line-push')`
+- 失敗：不回滾主交易；寫入 `error`；`attempts < 5` 時保持可重試（`pending` + `next_retry_at`）
+- 無綁定／無 Token：`skipped`，主流程正常
 
 ## 5. 驗證
 
