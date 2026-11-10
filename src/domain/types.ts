@@ -349,6 +349,61 @@ export interface BillingDocumentSnapshot {
   notes: string
 }
 
+/** FIN-004: 實際收款（現金流）≠ 請款 ≠ 會計收入。 */
+export type PaymentMethod = 'cash' | 'transfer' | 'check' | 'other'
+export type PaymentStatus = 'confirmed' | 'void'
+
+export interface CustomerPayment {
+  id: string
+  organizationId: string
+  quotationId: string
+  paymentNumber: string
+  amount: number
+  method: PaymentMethod
+  status: PaymentStatus
+  receivedAt: string
+  notes?: string | null
+  createdAt: string
+  createdBy: string
+}
+
+export interface PaymentAllocation {
+  id: string
+  organizationId: string
+  paymentId: string
+  billingDocumentId: string
+  amount: number
+  createdAt: string
+  createdBy: string
+}
+
+export type CustomerAdvanceStatus = 'open' | 'closed' | 'void'
+
+export interface CustomerAdvance {
+  id: string
+  organizationId: string
+  quotationId: string
+  advanceNumber: string
+  amount: number
+  remainingAmount: number
+  status: CustomerAdvanceStatus
+  receivedAt: string
+  notes?: string | null
+  createdAt: string
+  createdBy: string
+}
+
+/** 預收抵充：不新增現金流入。 */
+export interface AdvanceApplication {
+  id: string
+  organizationId: string
+  advanceId: string
+  billingDocumentId: string
+  amount: number
+  createdAt: string
+  createdBy: string
+}
+
 export interface MaterialStock {
   id: string
   organizationId: string

@@ -32,6 +32,11 @@ export const PERMISSIONS = {
    * Ops permission — NOT finance.write / sensitive finance (DEC-005).
    */
   BILLING_MANAGE: 'billing.manage',
+  /**
+   * Record payments / allocate / apply advances (收款與預收抵充).
+   * Ops cash log — not margin/cost sensitive finance.
+   */
+  PAYMENT_MANAGE: 'payment.manage',
   INVENTORY_READ: 'inventory.read',
   INVENTORY_INBOUND: 'inventory.inbound',
   /** Stocktake / variance posting — Member allowed by policy; UI in next batch. */
@@ -78,6 +83,7 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.QUOTE_MARK_ACCEPT,
     PERMISSIONS.QUOTE_DELETE,
     PERMISSIONS.BILLING_MANAGE,
+    PERMISSIONS.PAYMENT_MANAGE,
     PERMISSIONS.INVENTORY_READ,
     PERMISSIONS.INVENTORY_INBOUND,
     PERMISSIONS.INVENTORY_ADJUST,
@@ -107,6 +113,7 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.QUOTE_MARK_ACCEPT,
     PERMISSIONS.QUOTE_DELETE,
     PERMISSIONS.BILLING_MANAGE,
+    PERMISSIONS.PAYMENT_MANAGE,
     PERMISSIONS.INVENTORY_READ,
     PERMISSIONS.INVENTORY_INBOUND,
     PERMISSIONS.INVENTORY_ADJUST,
@@ -123,7 +130,7 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.ATTENDANCE_TEAM_SUMMARY,
     PERMISSIONS.PURCHASE_CREATE,
     PERMISSIONS.QUOTE_CREATE,
-    // NO QUOTE_EXPORT / QUOTE_MARK_ACCEPT / QUOTE_DELETE / BILLING_MANAGE
+    // NO QUOTE_EXPORT / QUOTE_MARK_ACCEPT / QUOTE_DELETE / BILLING / PAYMENT
     PERMISSIONS.INVENTORY_READ,
     PERMISSIONS.INVENTORY_INBOUND,
     PERMISSIONS.INVENTORY_ADJUST,
