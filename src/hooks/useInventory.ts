@@ -19,7 +19,9 @@ export function useInventory(userId: string | undefined) {
     enabled: Boolean(userId),
     queryFn: async () => {
       try {
-        return formal ? await supabaseRepos.listMaterials() : localDb.getMaterials()
+        return formal
+          ? await supabaseRepos.listMaterials(user ?? undefined)
+          : localDb.getMaterials()
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入庫存'))
       }

@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { hasPermission, PERMISSIONS } from '@/domain/permissions'
 import {
   calcFinalPayable,
   isWithinEmergencyDailyLimit,
@@ -40,12 +41,16 @@ export function usePurchases(userId: string | undefined) {
     },
   })
 
+  const canApprove =
+    Boolean(user) && hasPermission(user!.role, PERMISSIONS.PURCHASE_APPROVE)
+
   const pendingQuery = useQuery({
     queryKey: purchaseKeys.pending,
-    enabled: Boolean(userId),
+    enabled: Boolean(userId && user && canApprove),
     queryFn: async () => {
+      if (!user) return []
       try {
-        if (formal) return await supabaseRepos.listPendingPurchases()
+        if (formal) return await supabaseRepos.listPendingPurchases(user)
         return localDb.getPurchases().filter((p) => p.status === 'pending_approval')
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入待核准採購'))

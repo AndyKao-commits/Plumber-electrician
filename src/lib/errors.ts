@@ -36,6 +36,8 @@ export function toUserMessage(error: unknown, fallback = '操作失敗，請稍�
     return '網路連線失敗，請檢查網路後再試'
   }
   if (msg.includes('禁止申請人自行核准')) return msg
+  if (msg.includes('不得存取其他組織')) return msg
+  if (msg.includes('ID 無效')) return msg
   if (msg.includes('超過緊急')) return msg
   if (msg.includes('報價')) return msg
   if (msg.includes('庫存')) return msg

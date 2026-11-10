@@ -5,15 +5,29 @@ import { useUser } from '@/hooks/useUser'
 
 export function SiteDetailPage() {
   const { siteId } = useParams()
-  const { data: site, isLoading } = useSite(siteId)
+  const { data: site, isLoading, isError, error } = useSite(siteId)
   const { user } = useUser()
   const { openShift, assignSite, isAssigningSite } = useAttendance(user?.id)
 
   if (isLoading) return <div className="empty">載入工地…</div>
+  if (isError) {
+    return (
+      <div className="panel stack">
+        <strong>無法載入工地</strong>
+        <p style={{ color: 'var(--danger)', margin: 0 }}>
+          {(error as Error)?.message || '請回列表重試'}
+        </p>
+        <Link to="/sites">回工地列表</Link>
+      </div>
+    )
+  }
   if (!site) {
     return (
       <div className="panel stack">
         <strong>找不到工地</strong>
+        <p className="muted" style={{ margin: 0 }}>
+          連結可能含無效 ID（例如示範資料 site-a），請從工地列表重新進入。
+        </p>
         <Link to="/sites">回工地列表</Link>
       </div>
     )
