@@ -13,7 +13,8 @@ if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" ]]; then
 fi
 
 npx --yes supabase@3.1.0 functions deploy line-push \
-  --project-ref rhpzvqvkmllbdtkpouwn
+  --project-ref rhpzvqvkmllbdtkpouwn \
+  --yes
 
 echo "Deployed function: line-push"
 echo "Required secret name: LINE_CHANNEL_ACCESS_TOKEN (Supabase Edge Function Secrets)"

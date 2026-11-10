@@ -57,6 +57,8 @@ Dashboard → Authentication → Users：建立 Email／密碼使用者。
 #   supabase/migrations/20261110_line_outbox_retry.sql
 export SUPABASE_ACCESS_TOKEN=...   # Account Access Token（僅 CLI）
 bash scripts/deploy-line-push.sh
+# 部署後驗證（需 SUPABASE_SERVICE_ROLE_KEY；可選 TEST_EMAIL/TEST_PASSWORD）：
+# node scripts/verify-line-push.mjs
 ```
 
 - Edge Function 名稱：`line-push`
