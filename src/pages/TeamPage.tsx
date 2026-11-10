@@ -37,9 +37,18 @@ export function TeamPage() {
         <section className="panel stack">
           <strong>LINE 帳號綁定</strong>
           <p className="muted" style={{ margin: 0 }}>
-            登入憑證仍是 Email／密碼（DEC-004）。此處只儲存 `line_user_id`，供採購／報價／出勤通知推播。
-            未設定 Channel Token 時推播會略過，不影響主流程。
+            登入仍用 Email／密碼。沒有 LINE、或尚未綁定時：採購核准／駁回／報價照常成功，只是不會推播。
           </p>
+          {!user?.lineUserId ? (
+            <div className="site-link stack">
+              <strong style={{ margin: 0 }}>目前：尚未綁定（不會收到 LINE）</strong>
+              <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
+                若要收到通知，請先加官方帳號好友，再取得你的 LINE User ID（通常以 U
+                開頭），貼到下方儲存。取得方式：LINE Developers → 你的 Messaging API
+                頻道 → 用「Webhook」或官方「Get user ID」工具；或請已串接的人從事件日誌複製。
+              </p>
+            </div>
+          ) : null}
           <form className="stack" onSubmit={(e) => void onBindLine(e)}>
             <div className="field">
               <label htmlFor="line-user-id">LINE User ID</label>
@@ -47,7 +56,7 @@ export function TeamPage() {
                 id="line-user-id"
                 value={lineUserId}
                 onChange={(e) => setLineDraft(e.target.value)}
-                placeholder="Uxxxxxxxx…"
+                placeholder="Uxxxxxxxx…（沒有可留空，主流程不受影響）"
                 autoComplete="off"
               />
             </div>
@@ -74,9 +83,7 @@ export function TeamPage() {
               <p className="muted" style={{ margin: 0 }}>
                 目前已綁定：{user.lineUserId}
               </p>
-            ) : (
-              <p className="muted" style={{ margin: 0 }}>尚未綁定</p>
-            )}
+            ) : null}
           </form>
         </section>
       ) : null}
