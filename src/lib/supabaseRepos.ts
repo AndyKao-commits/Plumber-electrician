@@ -66,6 +66,11 @@ import {
   isAutoFreeByWarrantyDates,
 } from '@/domain/warranty'
 import {
+  assertComplaintSubject,
+  assertDistinctRelatedCases,
+  assertRelatedCasesAreAssociationOnly,
+} from '@/domain/complaints'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   canCreateChangeOrder,
@@ -124,6 +129,9 @@ import type {
   SiteDefect,
   SiteProject,
   TaxMode,
+  Complaint,
+  ComplaintStatus,
+  RelatedRepairCase,
   Warranty,
   WarrantyAssessment,
   WarrantyAssessmentClassification,
@@ -518,6 +526,36 @@ function mapWarrantyAssessmentRow(
     assessedAt: String(row.assessed_at),
     assessedBy: String(row.assessed_by),
     assessedByName: String(row.assessed_by_name),
+  }
+}
+
+function mapComplaintRow(row: Record<string, unknown>): Complaint {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    subject: String(row.subject),
+    detail: (row.detail as string | null) ?? null,
+    status: row.status as ComplaintStatus,
+    siteId: (row.site_id as string | null) ?? null,
+    repairCaseId: (row.repair_case_id as string | null) ?? null,
+    customerName: (row.customer_name as string | null) ?? null,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapRelatedRepairCaseRow(
+  row: Record<string, unknown>,
+): RelatedRepairCase {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    fromRepairCaseId: String(row.from_repair_case_id),
+    toRepairCaseId: String(row.to_repair_case_id),
+    note: (row.note as string | null) ?? null,
+    createdAt: String(row.created_at),
+    createdBy: String(row.created_by ?? ''),
   }
 }
 
@@ -3638,6 +3676,114 @@ export const supabaseRepos = {
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法登錄保固判定'))
     return mapWarrantyAssessmentRow(data as Record<string, unknown>)
+  },
+
+  async listComplaints(): Promise<Complaint[]> {
+    const { data, error } = await sb()
+      .from('complaints')
+      .select(
+        'id, organization_id, subject, detail, status, site_id, repair_case_id, customer_name, created_at, updated_at, created_by',
+      )
+      .order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入客訴'))
+    return (data ?? []).map((row) =>
+      mapComplaintRow(row as Record<string, unknown>),
+    )
+  },
+
+  async createComplaint(
+    actor: AppUser,
+    input: {
+      subject: string
+      detail?: string | null
+      siteId?: string | null
+      repairCaseId?: string | null
+      customerName?: string | null
+    },
+  ): Promise<Complaint> {
+    const subject = assertComplaintSubject(input.subject)
+    const { data, error } = await sb()
+      .from('complaints')
+      .insert({
+        subject,
+        detail: input.detail?.trim() || null,
+        status: 'open',
+        site_id: optionalUuid(input.siteId, '工地'),
+        repair_case_id: optionalUuid(input.repairCaseId, '維修案件'),
+        customer_name: input.customerName?.trim() || null,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, subject, detail, status, site_id, repair_case_id, customer_name, created_at, updated_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立客訴'))
+    return mapComplaintRow(data as Record<string, unknown>)
+  },
+
+  async setComplaintStatus(
+    actor: AppUser,
+    complaintId: string,
+    status: ComplaintStatus,
+  ): Promise<void> {
+    const cid = requireUuid(complaintId, '客訴')
+    const { error } = await sb()
+      .from('complaints')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', cid)
+    if (error) throw new AppError(toUserMessage(error, '無法更新客訴狀態'))
+    void actor
+  },
+
+  async listRelatedRepairCases(
+    repairCaseId: string,
+  ): Promise<RelatedRepairCase[]> {
+    const rid = requireUuid(repairCaseId, '維修案件')
+    const { data, error } = await sb()
+      .from('related_repair_cases')
+      .select(
+        'id, organization_id, from_repair_case_id, to_repair_case_id, note, created_at, created_by',
+      )
+      .or(`from_repair_case_id.eq.${rid},to_repair_case_id.eq.${rid}`)
+      .order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入關聯案件'))
+    return (data ?? []).map((row) =>
+      mapRelatedRepairCaseRow(row as Record<string, unknown>),
+    )
+  },
+
+  async linkRelatedRepairCases(
+    actor: AppUser,
+    input: {
+      fromRepairCaseId: string
+      toRepairCaseId: string
+      note?: string | null
+    },
+  ): Promise<RelatedRepairCase> {
+    const fromId = requireUuid(input.fromRepairCaseId, '來源維修')
+    const toId = requireUuid(input.toRepairCaseId, '目標維修')
+    assertDistinctRelatedCases(fromId, toId)
+    const policy = assertRelatedCasesAreAssociationOnly({
+      fromRepairCaseId: fromId,
+      toRepairCaseId: toId,
+    })
+    if (policy.mergesCases || policy.deletesCases) {
+      throw new AppError('禁止合併或刪除原始維修案件')
+    }
+    const { data, error } = await sb()
+      .from('related_repair_cases')
+      .insert({
+        from_repair_case_id: fromId,
+        to_repair_case_id: toId,
+        note: input.note?.trim() || null,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, from_repair_case_id, to_repair_case_id, note, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法關聯維修案件'))
+    return mapRelatedRepairCaseRow(data as Record<string, unknown>)
   },
 
   async listSiteDefects(siteId: string): Promise<SiteDefect[]> {

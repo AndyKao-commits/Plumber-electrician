@@ -203,6 +203,39 @@ export interface WarrantyAssessment {
   assessedByName: string
 }
 
+/** COM-001 complaint — may exist without project linkage. */
+export type ComplaintStatus =
+  | 'open'
+  | 'investigating'
+  | 'escalated'
+  | 'resolved'
+  | 'closed'
+
+export interface Complaint {
+  id: string
+  organizationId: string
+  subject: string
+  detail?: string | null
+  status: ComplaintStatus
+  siteId?: string | null
+  repairCaseId?: string | null
+  customerName?: string | null
+  createdAt: string
+  updatedAt: string
+  createdBy: string
+}
+
+/** Association only — does not merge/delete repair cases. */
+export interface RelatedRepairCase {
+  id: string
+  organizationId: string
+  fromRepairCaseId: string
+  toRepairCaseId: string
+  note?: string | null
+  createdAt: string
+  createdBy: string
+}
+
 /** CRM-001: customer master — name is the only required field. */
 export interface Customer {
   id: string
