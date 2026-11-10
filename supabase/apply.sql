@@ -1081,7 +1081,7 @@ begin
   loop
     v_attempt := v_attempt + 1;
     -- 6 chars, easy to type; exclude 0/O/1/I
-    v_code := upper(substr(replace(replace(encode(gen_random_bytes(8), 'hex'), '0', 'A'), '1', 'B'), 1, 6));
+    v_code := upper(substr(md5(random()::text || clock_timestamp()::text || v_uid::text || v_attempt::text), 1, 6));
     begin
       insert into public.line_bind_codes (organization_id, profile_id, code, expires_at)
       values (v_org, v_uid, v_code, v_expires);
