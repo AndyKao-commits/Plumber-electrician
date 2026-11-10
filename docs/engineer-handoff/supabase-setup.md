@@ -24,6 +24,15 @@
 1. 先跑 `supabase/schema.sql`（建表／RLS）
 2. 再跑 `supabase/seed.sql`（示範資料）
 
+### Phase 1／3／4 增量 migration（正式環境已上線後）
+
+依序執行：
+
+1. `supabase/migrations/20261110_formal_persistence_security.sql`
+2. `supabase/migrations/20261110_phase3_line_notify.sql`
+3. 驗證：`supabase/verify_rls_one_shot.sql`  
+   期望：`rls_enabled=11`、`org_triggers=9`、`line_bind_grant=true`、notice/line RPCs 皆 true
+
 若只跑 seed 會出現：
 
 `relation "public.organizations" does not exist`
@@ -35,13 +44,20 @@
 Dashboard → Authentication → Users：建立 Email／密碼使用者。  
 再於 `profiles` 寫入對應列（`id` 必須等於 `auth.users.id`，並指向同一 `organization_id`）。
 
-## 4. 驗證
+## 4. LINE 推播（可選｜DEC-007）
 
-- 本機：設定 anon key 後 `npm run dev`，登入頁應顯示「Supabase」
-- 確認 RLS：員工不可讀其他組織資料
+1. 部署 Edge Function：`supabase/functions/line-push`
+2. 設定 Secret：`LINE_CHANNEL_ACCESS_TOKEN`
+3. 使用者在「今日團隊」頁綁定自己的 `line_user_id`
+4. 未設定 Token 時 outbox 會標 `skipped`，主交易仍成功
+
+## 5. 驗證
+
+- Production：登入頁顯示「Supabase 正式模式」
+- 確認 RLS：員工不可讀其他組織資料；Member 不可核准／發布
 
 ## 現況
 
-- URL 已寫入預設設定
-- anon key 待 Owner 在安全表單填入後才會真正連線
+- URL 預設 `https://rhpzvqvkmllbdtkpouwn.supabase.co`
+- Vercel 需設定 `SUPABASE_ANON_KEY`（及可選 `VITE_SUPABASE_URL`）於 Production／Preview
 - 未填 key 時自動回落本機示範模式

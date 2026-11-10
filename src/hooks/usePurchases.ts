@@ -122,6 +122,24 @@ export function usePurchases(userId: string | undefined) {
     onSuccess: invalidate,
   })
 
+  const rejectMutation = useMutation({
+    mutationFn: async (input: { purchaseId: string; reason: string }) => {
+      if (!user) throw new Error('尚未登入')
+      try {
+        return formal
+          ? await supabaseRepos.rejectPurchase(user, input.purchaseId, input.reason)
+          : localDb.rejectPurchase({
+              purchaseId: input.purchaseId,
+              actorId: user.id,
+              reason: input.reason,
+            })
+      } catch (e) {
+        throw new Error(toUserMessage(e, '駁回失敗'))
+      }
+    },
+    onSuccess: invalidate,
+  })
+
   const cancelEmergencyMutation = useMutation({
     mutationFn: async (input: { purchaseId: string; reason: string }) => {
       if (!user) throw new Error('尚未登入')
@@ -155,6 +173,9 @@ export function usePurchases(userId: string | undefined) {
     approvePurchase: approveMutation.mutateAsync,
     isApproving: approveMutation.isPending,
     approveError: approveMutation.error,
+    rejectPurchase: rejectMutation.mutateAsync,
+    isRejecting: rejectMutation.isPending,
+    rejectError: rejectMutation.error,
     cancelEmergency: cancelEmergencyMutation.mutateAsync,
   }
 }

@@ -222,6 +222,35 @@ describe('權限與組織隔離', () => {
   it('self-approve 永遠拒絕', () => {
     expect(hasPermission('boss', PERMISSIONS.PURCHASE_SELF_APPROVE)).toBe(false)
   })
+  it('Member 不可核准；Owner/Admin 可核准他人', () => {
+    expect(canApprovePurchase({
+      actorRole: 'employee',
+      actorId: 'a1',
+      requesterId: 'm1',
+    })).toBe(false)
+    expect(canApprovePurchase({
+      actorRole: 'boss',
+      actorId: 'boss1',
+      requesterId: 'm1',
+    })).toBe(true)
+    expect(canApprovePurchase({
+      actorRole: 'admin',
+      actorId: 'admin1',
+      requesterId: 'm1',
+    })).toBe(true)
+    expect(() =>
+      assertCanApprovePurchase({
+        actorRole: 'boss',
+        actorId: 'same',
+        requesterId: 'same',
+      }),
+    ).toThrow(/自行核准/)
+  })
+  it('Member 不可發布報價；Admin/Owner 可以', () => {
+    expect(hasPermission('employee', PERMISSIONS.QUOTE_PUBLISH)).toBe(false)
+    expect(hasPermission('admin', PERMISSIONS.QUOTE_PUBLISH)).toBe(true)
+    expect(hasPermission('boss', PERMISSIONS.QUOTE_PUBLISH)).toBe(true)
+  })
   it('跨組織拒絕', () => {
     expect(() => assertSameOrganization('org-a', 'org-b')).toThrow(/其他組織/)
     expect(() => assertSameOrganization('org-a', 'org-a')).not.toThrow()

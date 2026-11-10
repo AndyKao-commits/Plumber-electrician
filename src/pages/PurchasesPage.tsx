@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { hasPermission, PERMISSIONS } from '@/domain/permissions'
 import {
   DEFAULT_PURCHASE_RULES,
   calcFinalPayable,
@@ -22,8 +23,14 @@ export function PurchasesPage() {
     approvePurchase,
     isApproving,
     approveError,
+    rejectPurchase,
+    isRejecting,
+    rejectError,
     cancelEmergency,
   } = usePurchases(user?.id)
+
+  const canApprove =
+    Boolean(user) && hasPermission(user!.role, PERMISSIONS.PURCHASE_APPROVE)
 
   const [title, setTitle] = useState('')
   const [mode, setMode] = useState<'normal' | 'emergency'>('normal')
@@ -32,6 +39,7 @@ export function PurchasesPage() {
   const [discount, setDiscount] = useState('0')
   const [tax, setTax] = useState('0')
   const [shipping, setShipping] = useState('150')
+  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({})
 
   const preview = calcFinalPayable({
     goodsAmount: Number(goodsAmount) || 0,
@@ -74,7 +82,7 @@ export function PurchasesPage() {
         </div>
       </section>
 
-      {user?.role === 'boss' && pendingApprovals.length > 0 ? (
+      {canApprove && pendingApprovals.length > 0 ? (
         <section className="panel stack">
           <strong>待核准</strong>
           {pendingApprovals.map((p) => (
@@ -86,19 +94,55 @@ export function PurchasesPage() {
               <p style={{ margin: 0 }}>
                 NT${p.finalPayable.toLocaleString()} · 申請人 {p.userId}
               </p>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-steel"
+                  disabled={isApproving || isRejecting || user?.id === p.userId}
+                  onClick={() => void approvePurchase(p.id)}
+                >
+                  核准
+                </button>
+              </div>
+              <div className="field" style={{ marginTop: 8 }}>
+                <label htmlFor={`reject-${p.id}`}>駁回原因</label>
+                <input
+                  id={`reject-${p.id}`}
+                  value={rejectReasons[p.id] ?? ''}
+                  onChange={(e) =>
+                    setRejectReasons((prev) => ({ ...prev, [p.id]: e.target.value }))
+                  }
+                  placeholder="必填"
+                />
+              </div>
               <button
                 type="button"
-                className="btn btn-steel"
-                disabled={isApproving}
-                onClick={() => void approvePurchase(p.id)}
+                className="btn btn-ghost"
+                disabled={
+                  isApproving ||
+                  isRejecting ||
+                  user?.id === p.userId ||
+                  !(rejectReasons[p.id] ?? '').trim()
+                }
+                onClick={() =>
+                  void rejectPurchase({
+                    purchaseId: p.id,
+                    reason: rejectReasons[p.id] ?? '',
+                  })
+                }
               >
-                核准
+                駁回
               </button>
             </div>
           ))}
           {approveError ? (
             <p style={{ color: 'var(--danger)', margin: 0 }}>
               {(approveError as Error).message}
+            </p>
+          ) : null}
+          {rejectError ? (
+            <p style={{ color: 'var(--danger)', margin: 0 }}>
+              {(rejectError as Error).message}
             </p>
           ) : null}
         </section>

@@ -6,14 +6,25 @@ import { formatTaipei } from '@/lib/time'
 export function InventoryPage() {
   const { user } = useUser()
   const { materials, inbound, isInbound, inboundError } = useInventory(user?.id)
-  const [materialId, setMaterialId] = useState('mat-pipe')
+  const [materialId, setMaterialId] = useState('')
   const [qty, setQty] = useState('10')
   const [unitCost, setUnitCost] = useState('50')
+  const [formError, setFormError] = useState<string | null>(null)
+
+  const selectedMaterialId =
+    materialId && materials.some((m) => m.id === materialId)
+      ? materialId
+      : (materials[0]?.id ?? '')
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
+    setFormError(null)
+    if (!selectedMaterialId) {
+      setFormError('尚無材料可入庫')
+      return
+    }
     await inbound({
-      materialId,
+      materialId: selectedMaterialId,
       qty: Number(qty) || 0,
       unitCost: Number(unitCost) || 0,
     })
@@ -30,6 +41,7 @@ export function InventoryPage() {
 
       <section className="panel stack">
         <strong>材料現況</strong>
+        {materials.length === 0 ? <div className="empty">尚無材料</div> : null}
         {materials.map((m) => (
           <div key={m.id} className="site-link">
             <div className="row between">
@@ -53,9 +65,12 @@ export function InventoryPage() {
             <label htmlFor="inv-mat">材料</label>
             <select
               id="inv-mat"
-              value={materialId}
+              value={selectedMaterialId}
               onChange={(e) => setMaterialId(e.target.value)}
+              required
+              disabled={materials.length === 0}
             >
+              {materials.length === 0 ? <option value="">尚無材料</option> : null}
               {materials.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}
@@ -87,12 +102,19 @@ export function InventoryPage() {
               />
             </div>
           </div>
+          {formError ? (
+            <p style={{ color: 'var(--danger)', margin: 0 }}>{formError}</p>
+          ) : null}
           {inboundError ? (
             <p style={{ color: 'var(--danger)', margin: 0 }}>
               {(inboundError as Error).message}
             </p>
           ) : null}
-          <button className="btn btn-steel btn-block" type="submit" disabled={isInbound}>
+          <button
+            className="btn btn-steel btn-block"
+            type="submit"
+            disabled={isInbound || materials.length === 0}
+          >
             {isInbound ? '入庫中…' : '入庫並重算平均成本'}
           </button>
         </form>
