@@ -1,4 +1,5 @@
 import {
+  assertCanApproveAttendanceCorrection,
   assertCanApprovePurchase,
   assertCanPublishQuote,
   assertPermission,
@@ -22,6 +23,7 @@ import {
 import type {
   AppNotice,
   AppUser,
+  AttendanceCorrection,
   AttendanceRecord,
   MaterialStock,
   PurchaseMode,
@@ -102,6 +104,33 @@ function mapAttendance(row: Record<string, unknown>): AttendanceRecord {
     latitude: (row.latitude as number | null) ?? null,
     longitude: (row.longitude as number | null) ?? null,
     note: (row.note as string | null) ?? null,
+  }
+}
+
+const ATTENDANCE_CORRECTION_COLS =
+  'id, organization_id, user_id, attendance_id, proposed_clock_in_at, proposed_clock_out_at, proposed_site_id, reason, status, original_clock_in_at, original_clock_out_at, original_site_id, effective_clock_in_at, effective_clock_out_at, effective_site_id, reviewed_by, reviewed_at, review_note, created_at'
+
+function mapAttendanceCorrection(row: Record<string, unknown>): AttendanceCorrection {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    userId: String(row.user_id),
+    attendanceId: (row.attendance_id as string | null) ?? null,
+    proposedClockInAt: String(row.proposed_clock_in_at),
+    proposedClockOutAt: (row.proposed_clock_out_at as string | null) ?? null,
+    proposedSiteId: (row.proposed_site_id as string | null) ?? null,
+    reason: String(row.reason),
+    status: row.status as AttendanceCorrection['status'],
+    originalClockInAt: (row.original_clock_in_at as string | null) ?? null,
+    originalClockOutAt: (row.original_clock_out_at as string | null) ?? null,
+    originalSiteId: (row.original_site_id as string | null) ?? null,
+    effectiveClockInAt: (row.effective_clock_in_at as string | null) ?? null,
+    effectiveClockOutAt: (row.effective_clock_out_at as string | null) ?? null,
+    effectiveSiteId: (row.effective_site_id as string | null) ?? null,
+    reviewedBy: (row.reviewed_by as string | null) ?? null,
+    reviewedAt: (row.reviewed_at as string | null) ?? null,
+    reviewNote: (row.review_note as string | null) ?? null,
+    createdAt: String(row.created_at),
   }
 }
 
@@ -406,6 +435,220 @@ export const supabaseRepos = {
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法更新目前工地'))
     return mapAttendance(data)
+  },
+
+  async listAttendanceCorrections(actor: AppUser): Promise<AttendanceCorrection[]> {
+    requireUuid(actor.id, '使用者')
+    let query = sb()
+      .from('attendance_corrections')
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .order('created_at', { ascending: false })
+      .limit(50)
+
+    if (!hasPermission(actor.role, PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)) {
+      query = query.eq('user_id', actor.id)
+    }
+
+    const { data, error } = await query
+    if (error) throw new AppError(toUserMessage(error, '無法載入補打卡申請'))
+    return (data ?? []).map((row) => mapAttendanceCorrection(row))
+  },
+
+  async listPendingAttendanceCorrections(
+    actor: AppUser,
+  ): Promise<AttendanceCorrection[]> {
+    assertPermission(actor.role, PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)
+    const { data, error } = await sb()
+      .from('attendance_corrections')
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true })
+      .limit(50)
+    if (error) throw new AppError(toUserMessage(error, '無法載入待核准補打卡'))
+    return (data ?? [])
+      .map((row) => mapAttendanceCorrection(row))
+      .filter((c) => c.userId !== actor.id)
+  },
+
+  async applyAttendanceCorrection(
+    actor: AppUser,
+    input: {
+      attendanceId?: string | null
+      proposedClockInAt: string
+      proposedClockOutAt?: string | null
+      proposedSiteId?: string | null
+      reason: string
+    },
+  ): Promise<AttendanceCorrection> {
+    assertPermission(actor.role, PERMISSIONS.ATTENDANCE_OWN)
+    const reason = input.reason.trim()
+    if (reason.length < 2) throw new AppError('請填寫補打卡原因')
+
+    const clockIn = new Date(input.proposedClockInAt)
+    if (Number.isNaN(clockIn.getTime())) throw new AppError('上班時間無效')
+    let clockOutIso: string | null = null
+    if (input.proposedClockOutAt) {
+      const clockOut = new Date(input.proposedClockOutAt)
+      if (Number.isNaN(clockOut.getTime())) throw new AppError('下班時間無效')
+      if (clockOut.getTime() < clockIn.getTime()) {
+        throw new AppError('下班時間不可早於上班時間')
+      }
+      clockOutIso = clockOut.toISOString()
+    }
+
+    const attendanceId = optionalUuid(input.attendanceId ?? '', '出勤')
+    const proposedSiteId = optionalUuid(input.proposedSiteId ?? '', '工地')
+
+    let originalClockInAt: string | null = null
+    let originalClockOutAt: string | null = null
+    let originalSiteId: string | null = null
+
+    if (attendanceId) {
+      const { data: att, error: attError } = await sb()
+        .from('attendance')
+        .select(
+          'id, organization_id, user_id, clock_in_at, clock_out_at, site_id',
+        )
+        .eq('id', attendanceId)
+        .maybeSingle()
+      if (attError) throw new AppError(toUserMessage(attError, '無法讀取出勤'))
+      if (!att) throw new AppError('找不到出勤紀錄')
+      if (String(att.user_id) !== actor.id) {
+        throw new AppError('只能更正自己的出勤')
+      }
+      assertSameOrganization(actor.organizationId, String(att.organization_id))
+      originalClockInAt = String(att.clock_in_at)
+      originalClockOutAt = (att.clock_out_at as string | null) ?? null
+      originalSiteId = (att.site_id as string | null) ?? null
+    }
+
+    const { data, error } = await sb()
+      .from('attendance_corrections')
+      .insert({
+        organization_id: actor.organizationId,
+        user_id: actor.id,
+        attendance_id: attendanceId,
+        proposed_clock_in_at: clockIn.toISOString(),
+        proposed_clock_out_at: clockOutIso,
+        proposed_site_id: proposedSiteId,
+        reason,
+        status: 'pending',
+        original_clock_in_at: originalClockInAt,
+        original_clock_out_at: originalClockOutAt,
+        original_site_id: originalSiteId,
+      })
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '補打卡申請失敗'))
+
+    const correction = mapAttendanceCorrection(data)
+    void safeNotifyApprovers({
+      eventType: 'attendance.correction_pending',
+      title: `補打卡待核准：${actor.name}`,
+      detail: reason,
+      href: '/attendance',
+      asTodo: true,
+    })
+    return correction
+  },
+
+  async approveAttendanceCorrection(
+    actor: AppUser,
+    correctionId: string,
+  ): Promise<AttendanceCorrection> {
+    const id = requireUuid(correctionId, '補打卡')
+    const { data: current, error: loadError } = await sb()
+      .from('attendance_corrections')
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .eq('id', id)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取補打卡'))
+    if (!current) throw new AppError('找不到補打卡申請')
+    if (current.status !== 'pending') throw new AppError('此申請不在待核准狀態')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+    assertCanApproveAttendanceCorrection({
+      actorRole: actor.role,
+      actorId: actor.id,
+      requesterId: String(current.user_id),
+    })
+
+    // Keep original attendance row untouched; write effective hours on correction only.
+    const { data, error } = await sb()
+      .from('attendance_corrections')
+      .update({
+        status: 'approved',
+        effective_clock_in_at: current.proposed_clock_in_at,
+        effective_clock_out_at: current.proposed_clock_out_at,
+        effective_site_id: current.proposed_site_id,
+        reviewed_by: actor.id,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('status', 'pending')
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '核准補打卡失敗'))
+
+    const correction = mapAttendanceCorrection(data)
+    void safeNotify({
+      recipientIds: [correction.userId],
+      eventType: 'attendance.correction_approved',
+      title: '補打卡已核准',
+      detail: correction.reason,
+      href: '/attendance',
+      asTodo: false,
+    })
+    return correction
+  },
+
+  async rejectAttendanceCorrection(
+    actor: AppUser,
+    correctionId: string,
+    reason: string,
+  ): Promise<AttendanceCorrection> {
+    const id = requireUuid(correctionId, '補打卡')
+    const trimmed = reason.trim()
+    if (!trimmed) throw new AppError('駁回必須填寫原因')
+
+    const { data: current, error: loadError } = await sb()
+      .from('attendance_corrections')
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .eq('id', id)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取補打卡'))
+    if (!current) throw new AppError('找不到補打卡申請')
+    if (current.status !== 'pending') throw new AppError('此申請不在待核准狀態')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+    assertCanApproveAttendanceCorrection({
+      actorRole: actor.role,
+      actorId: actor.id,
+      requesterId: String(current.user_id),
+    })
+
+    const { data, error } = await sb()
+      .from('attendance_corrections')
+      .update({
+        status: 'rejected',
+        review_note: trimmed,
+        reviewed_by: actor.id,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('status', 'pending')
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '駁回補打卡失敗'))
+
+    const correction = mapAttendanceCorrection(data)
+    void safeNotify({
+      recipientIds: [correction.userId],
+      eventType: 'attendance.correction_rejected',
+      title: '補打卡已駁回',
+      detail: trimmed,
+      href: '/attendance',
+      asTodo: false,
+    })
+    return correction
   },
 
   async listPurchases(actor: AppUser): Promise<PurchaseRecord[]> {

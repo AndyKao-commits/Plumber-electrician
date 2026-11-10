@@ -1,4 +1,5 @@
 import { assertCanApprovePurchase } from '@/domain/approvals'
+import { assertCanApproveAttendanceCorrection } from '@/domain/permissions'
 import {
   assertEmergencyReserveAllowed,
   sumOccupiedQuota,
@@ -13,6 +14,7 @@ import {
 import type {
   AppNotice,
   AppUser,
+  AttendanceCorrection,
   AttendanceRecord,
   MaterialStock,
   PurchaseRecord,
@@ -30,6 +32,7 @@ const KEYS = {
   users: 'eg.users.v2',
   sites: 'eg.sites.v2',
   attendance: 'eg.attendance.v2',
+  attendanceCorrections: 'eg.attendanceCorrections.v1',
   purchases: 'eg.purchases.v2',
   notices: 'eg.notices.v1',
   shortcuts: 'eg.shortcuts.v2',
@@ -632,6 +635,175 @@ export const localDb = {
       n.id === id ? { ...n, unread: false, status: 'done' as const } : n,
     )
     write(KEYS.notices, all)
+  },
+
+  getAttendanceCorrections(): AttendanceCorrection[] {
+    return read(KEYS.attendanceCorrections, [] as AttendanceCorrection[])
+  },
+
+  saveAttendanceCorrection(record: AttendanceCorrection) {
+    const all = this.getAttendanceCorrections().filter((c) => c.id !== record.id)
+    all.unshift(record)
+    write(KEYS.attendanceCorrections, all)
+  },
+
+  applyAttendanceCorrection(input: {
+    userId: string
+    attendanceId?: string | null
+    proposedClockInAt: string
+    proposedClockOutAt?: string | null
+    proposedSiteId?: string | null
+    reason: string
+  }): AttendanceCorrection {
+    const user = this.getUser(input.userId)
+    if (!user) throw new Error('尚未登入')
+    const reason = input.reason.trim()
+    if (reason.length < 2) throw new Error('請填寫補打卡原因')
+
+    const clockIn = new Date(input.proposedClockInAt)
+    if (Number.isNaN(clockIn.getTime())) throw new Error('上班時間無效')
+    let clockOutIso: string | null = null
+    if (input.proposedClockOutAt) {
+      const clockOut = new Date(input.proposedClockOutAt)
+      if (Number.isNaN(clockOut.getTime())) throw new Error('下班時間無效')
+      if (clockOut.getTime() < clockIn.getTime()) {
+        throw new Error('下班時間不可早於上班時間')
+      }
+      clockOutIso = clockOut.toISOString()
+    }
+
+    let originalClockInAt: string | null = null
+    let originalClockOutAt: string | null = null
+    let originalSiteId: string | null = null
+    const attendanceId = input.attendanceId || null
+    if (attendanceId) {
+      const att = this.getAttendance().find((a) => a.id === attendanceId)
+      if (!att) throw new Error('找不到出勤紀錄')
+      if (att.userId !== user.id) throw new Error('只能更正自己的出勤')
+      originalClockInAt = att.clockInAt
+      originalClockOutAt = att.clockOutAt ?? null
+      originalSiteId = att.siteId ?? null
+    }
+
+    const record: AttendanceCorrection = {
+      id: `ac-${crypto.randomUUID()}`,
+      organizationId: user.organizationId,
+      userId: user.id,
+      attendanceId,
+      proposedClockInAt: clockIn.toISOString(),
+      proposedClockOutAt: clockOutIso,
+      proposedSiteId: input.proposedSiteId || null,
+      reason,
+      status: 'pending',
+      originalClockInAt,
+      originalClockOutAt,
+      originalSiteId,
+      createdAt: new Date().toISOString(),
+    }
+    this.saveAttendanceCorrection(record)
+
+    const notices = read(KEYS.notices, emptyNotices)
+    notices.unshift({
+      id: `notice-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      userId: 'user-boss',
+      kind: 'todo',
+      title: `補打卡待核准：${user.name}`,
+      detail: reason,
+      status: 'open',
+      unread: true,
+      createdAt: record.createdAt,
+      href: '/attendance',
+    })
+    write(KEYS.notices, notices)
+    return record
+  },
+
+  approveAttendanceCorrection(input: {
+    correctionId: string
+    actorId: string
+  }): AttendanceCorrection {
+    const actor = this.getUser(input.actorId)
+    const current = this.getAttendanceCorrections().find(
+      (c) => c.id === input.correctionId,
+    )
+    if (!actor || !current) throw new Error('找不到補打卡或操作者')
+    if (current.status !== 'pending') throw new Error('此申請不在待核准狀態')
+    assertCanApproveAttendanceCorrection({
+      actorRole: actor.role,
+      actorId: actor.id,
+      requesterId: current.userId,
+    })
+    const updated: AttendanceCorrection = {
+      ...current,
+      status: 'approved',
+      effectiveClockInAt: current.proposedClockInAt,
+      effectiveClockOutAt: current.proposedClockOutAt ?? null,
+      effectiveSiteId: current.proposedSiteId ?? null,
+      reviewedBy: actor.id,
+      reviewedAt: new Date().toISOString(),
+    }
+    this.saveAttendanceCorrection(updated)
+
+    const notices = read(KEYS.notices, emptyNotices)
+    notices.unshift({
+      id: `notice-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      userId: current.userId,
+      kind: 'notice',
+      title: '補打卡已核准',
+      detail: current.reason,
+      status: 'open',
+      unread: true,
+      createdAt: updated.reviewedAt!,
+      href: '/attendance',
+    })
+    write(KEYS.notices, notices)
+    return updated
+  },
+
+  rejectAttendanceCorrection(input: {
+    correctionId: string
+    actorId: string
+    reason: string
+  }): AttendanceCorrection {
+    const actor = this.getUser(input.actorId)
+    const current = this.getAttendanceCorrections().find(
+      (c) => c.id === input.correctionId,
+    )
+    if (!actor || !current) throw new Error('找不到補打卡或操作者')
+    if (current.status !== 'pending') throw new Error('此申請不在待核准狀態')
+    assertCanApproveAttendanceCorrection({
+      actorRole: actor.role,
+      actorId: actor.id,
+      requesterId: current.userId,
+    })
+    const trimmed = input.reason.trim()
+    if (!trimmed) throw new Error('駁回必須填寫原因')
+    const updated: AttendanceCorrection = {
+      ...current,
+      status: 'rejected',
+      reviewNote: trimmed,
+      reviewedBy: actor.id,
+      reviewedAt: new Date().toISOString(),
+    }
+    this.saveAttendanceCorrection(updated)
+
+    const notices = read(KEYS.notices, emptyNotices)
+    notices.unshift({
+      id: `notice-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      userId: current.userId,
+      kind: 'notice',
+      title: '補打卡已駁回',
+      detail: trimmed,
+      status: 'open',
+      unread: true,
+      createdAt: updated.reviewedAt!,
+      href: '/attendance',
+    })
+    write(KEYS.notices, notices)
+    return updated
   },
 
   getShortcutIds(): string[] {

@@ -14,6 +14,7 @@ export const PERMISSIONS = {
   ATTENDANCE_OWN: 'attendance.own',
   ATTENDANCE_TEAM_SUMMARY: 'attendance.team_summary',
   ATTENDANCE_OTHERS_DETAIL: 'attendance.others_detail',
+  ATTENDANCE_CORRECT_APPROVE: 'attendance.correct_approve',
   PURCHASE_CREATE: 'purchase.create',
   PURCHASE_APPROVE: 'purchase.approve',
   PURCHASE_SELF_APPROVE: 'purchase.self_approve',
@@ -57,6 +58,7 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.ATTENDANCE_OWN,
     PERMISSIONS.ATTENDANCE_TEAM_SUMMARY,
     PERMISSIONS.ATTENDANCE_OTHERS_DETAIL,
+    PERMISSIONS.ATTENDANCE_CORRECT_APPROVE,
     PERMISSIONS.PURCHASE_CREATE,
     PERMISSIONS.PURCHASE_APPROVE,
     PERMISSIONS.QUOTE_CREATE,
@@ -82,6 +84,7 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.SITE_WRITE,
     PERMISSIONS.ATTENDANCE_OWN,
     PERMISSIONS.ATTENDANCE_TEAM_SUMMARY,
+    PERMISSIONS.ATTENDANCE_CORRECT_APPROVE,
     PERMISSIONS.PURCHASE_CREATE,
     PERMISSIONS.PURCHASE_APPROVE,
     PERMISSIONS.QUOTE_CREATE,
@@ -224,6 +227,28 @@ export function assertCanApprovePurchase(input: {
   }
   if (!hasPermission(input.actorRole, PERMISSIONS.PURCHASE_APPROVE)) {
     throw new Error('無權核准此採購')
+  }
+}
+
+export function canApproveAttendanceCorrection(input: {
+  actorRole: UserRole | SpecRole | string
+  actorId: string
+  requesterId: string
+}): boolean {
+  if (input.actorId === input.requesterId) return false
+  return hasPermission(input.actorRole, PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)
+}
+
+export function assertCanApproveAttendanceCorrection(input: {
+  actorRole: UserRole | SpecRole | string
+  actorId: string
+  requesterId: string
+}): void {
+  if (input.actorId === input.requesterId) {
+    throw new Error('禁止申請人自行核准自己的補打卡（REV-07）')
+  }
+  if (!hasPermission(input.actorRole, PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)) {
+    throw new Error('無權核准補打卡')
   }
 }
 
