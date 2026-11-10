@@ -1,6 +1,7 @@
 /**
  * LINE webhook — reply-only (DEC-007).
  * Phase 1: flow drafts + batch photo upload + todos Flex.
+ * Phase 2: attendance clock/switch-site + purchase apply.
  * No proactive push / broadcast / timeout reminders.
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
@@ -25,7 +26,7 @@ type Profile = {
   role: string | null
 }
 
-type FlowType = 'photo_upload' | 'todos'
+type FlowType = 'photo_upload' | 'todos' | 'attendance' | 'purchase'
 type FlowStatus =
   | 'idle'
   | 'collecting'
@@ -35,6 +36,15 @@ type FlowStatus =
   | 'cancelled'
   | 'paused'
   | 'expired'
+
+function isFlowIntent(v: string | null | undefined): v is FlowType {
+  return (
+    v === 'photo_upload' ||
+    v === 'todos' ||
+    v === 'attendance' ||
+    v === 'purchase'
+  )
+}
 
 type DraftRow = {
   id: string
@@ -58,7 +68,13 @@ const EXPIRE_AFTER_MS = 24 * 60 * 60 * 1000
 const FLOW_LABELS: Record<FlowType, string> = {
   photo_upload: '上傳照片',
   todos: '待辦事項',
+  attendance: '出勤打卡',
+  purchase: '採購申請',
 }
+
+const PURCHASE_PREAPPROVAL_NTD = 3000
+const EMERGENCY_SINGLE_LIMIT_NTD = 5000
+const EMERGENCY_DAILY_LIMIT_NTD = 10_000
 
 const PHOTO_TYPE_LABELS: Record<string, string> = {
   before: '施工前',
@@ -77,7 +93,7 @@ Deno.serve(async (req) => {
   if (req.method === 'GET' || req.method === 'HEAD') {
     return json({
       ok: true,
-      mode: 'reply_flow_photo_todos',
+      mode: 'reply_flow_phase2',
       hasToken: token.length > 0,
       hasSecret: secret.length > 0,
       hasServiceKey: serviceKey.length > 0,
@@ -197,7 +213,7 @@ async function handleTextCommand(
     const notice = gate.messages ?? [
       textMsg('原本未完成的操作已超過保留時間，草稿已清除。'),
     ]
-    if (intent === 'photo_upload' || intent === 'todos') {
+    if (isFlowIntent(intent)) {
       return [...notice, ...(await startFlow(admin, profile, intent))]
     }
     return notice
@@ -212,7 +228,7 @@ async function handleTextCommand(
     if (intent === 'resume' || intent === gate.draft.flow_type) {
       return resumeDraft(admin, profile, gate.draft)
     }
-    if (intent === 'photo_upload' || intent === 'todos') {
+    if (isFlowIntent(intent)) {
       return switchGuardMessages(gate.draft, intent)
     }
     return gate.messages ?? []
@@ -229,7 +245,7 @@ async function handleTextCommand(
     return resumeDraft(admin, profile, gate.draft)
   }
 
-  if (intent === 'photo_upload' || intent === 'todos') {
+  if (isFlowIntent(intent)) {
     if (gate.draft && gate.draft.flow_type !== intent) {
       return switchGuardMessages(gate.draft, intent)
     }
@@ -242,6 +258,12 @@ async function handleTextCommand(
   // In-flow free text
   if (gate.draft?.flow_type === 'photo_upload') {
     return handlePhotoText(admin, profile, gate.draft, text)
+  }
+  if (gate.draft?.flow_type === 'attendance') {
+    return handleAttendanceText(admin, profile, gate.draft, text)
+  }
+  if (gate.draft?.flow_type === 'purchase') {
+    return handlePurchaseText(admin, profile, gate.draft, text)
   }
 
   // Silent for unrelated chatter (rich menu handles entry)
@@ -288,11 +310,75 @@ async function handlePostback(
 
   if (action === 'switch') {
     const to = params.to as FlowType
-    if (to !== 'photo_upload' && to !== 'todos') {
+    if (!isFlowIntent(to)) {
       return [textMsg('無法辨識要切換的功能。')]
     }
     if (gate.draft) await finalizeDraft(admin, gate.draft.id, 'cancelled')
     return startFlow(admin, profile, to)
+  }
+
+  if (action === 'att_in') {
+    const draft =
+      gate.draft?.flow_type === 'attendance'
+        ? gate.draft
+        : await createDraft(admin, profile, 'attendance', 'menu', {})
+    return clockInLine(admin, profile, draft)
+  }
+
+  if (action === 'att_out') {
+    if (!gate.draft || gate.draft.flow_type !== 'attendance') {
+      return [textMsg('請先點「出勤打卡」。')]
+    }
+    return clockOutLine(admin, profile, gate.draft)
+  }
+
+  if (action === 'att_site') {
+    if (!gate.draft || gate.draft.flow_type !== 'attendance') {
+      return [textMsg('請先點「出勤打卡」。')]
+    }
+    return promptAttendanceSite(admin, profile, gate.draft)
+  }
+
+  if (action === 'att_site_pick') {
+    if (!gate.draft || gate.draft.flow_type !== 'attendance') {
+      return [textMsg('請先點「出勤打卡」。')]
+    }
+    return assignAttendanceSite(admin, profile, gate.draft, params.id || '')
+  }
+
+  if (action === 'att_done') {
+    if (gate.draft?.flow_type === 'attendance') {
+      await finalizeDraft(admin, gate.draft.id, 'completed')
+    }
+    return [textMsg('已結束出勤選單。')]
+  }
+
+  if (action === 'pur_mode') {
+    if (!gate.draft || gate.draft.flow_type !== 'purchase') {
+      return [textMsg('請先點「採購申請」。')]
+    }
+    return selectPurchaseMode(admin, gate.draft, params.m || '')
+  }
+
+  if (action === 'pur_site') {
+    if (!gate.draft || gate.draft.flow_type !== 'purchase') {
+      return [textMsg('請先點「採購申請」。')]
+    }
+    return selectPurchaseSite(admin, profile, gate.draft, params.id || '')
+  }
+
+  if (action === 'pur_site_skip') {
+    if (!gate.draft || gate.draft.flow_type !== 'purchase') {
+      return [textMsg('請先點「採購申請」。')]
+    }
+    return promptPurchaseConfirm(admin, gate.draft)
+  }
+
+  if (action === 'pur_confirm') {
+    if (!gate.draft || gate.draft.flow_type !== 'purchase') {
+      return [textMsg('請先點「採購申請」。')]
+    }
+    return submitPurchase(admin, profile, gate.draft)
   }
 
   if (action === 'photo_site') {
@@ -397,15 +483,22 @@ async function startFlow(
   flowType: FlowType,
 ): Promise<LineMessage[]> {
   if (flowType === 'todos') {
-    // Short-lived: list immediately; no long draft required, but record for switch guard
     const draft = await createDraft(admin, profile, 'todos', 'listing', {})
     const msgs = await buildTodosMessages(admin, profile)
-    // Complete todos listing draft after reply payload built (one-shot)
     await finalizeDraft(admin, draft.id, 'completed')
     return msgs
   }
 
-  // photo_upload
+  if (flowType === 'attendance') {
+    const draft = await createDraft(admin, profile, 'attendance', 'menu', {})
+    return promptAttendanceMenu(admin, profile, draft)
+  }
+
+  if (flowType === 'purchase') {
+    const draft = await createDraft(admin, profile, 'purchase', 'select_mode', {})
+    return promptPurchaseMode()
+  }
+
   const draft = await createDraft(admin, profile, 'photo_upload', 'select_site', {})
   return promptSelectSite(admin, profile, draft)
 }
@@ -424,6 +517,14 @@ async function resumeDraft(
     const msgs = await buildTodosMessages(admin, profile)
     await finalizeDraft(admin, draft.id, 'completed')
     return msgs
+  }
+
+  if (draft.flow_type === 'attendance') {
+    return promptAttendanceMenu(admin, profile, draft)
+  }
+
+  if (draft.flow_type === 'purchase') {
+    return resumePurchase(admin, profile, draft)
   }
 
   const step = draft.current_step || 'select_site'
@@ -829,10 +930,32 @@ async function prepareActiveDraft(
 }
 
 function summarizeDraft(draft: DraftRow): { filled: string; pending: string } {
+  const p = draft.draft_payload || {}
+  if (draft.flow_type === 'attendance') {
+    return {
+      filled: p.openShift ? '上班中' : '選單',
+      pending: p.selectingSite ? '選擇工地' : '完成打卡操作',
+    }
+  }
+  if (draft.flow_type === 'purchase') {
+    const filled: string[] = []
+    const pending: string[] = []
+    if (p.mode) filled.push(p.mode === 'emergency' ? '緊急' : '一般')
+    else pending.push('選擇類型')
+    if (p.title) filled.push('品名')
+    else if (p.mode) pending.push('填寫品名')
+    if (p.goodsAmount != null) filled.push('金額')
+    else if (p.title) pending.push('填寫金額')
+    if (p.siteName) filled.push('工地')
+    if (p.title && p.goodsAmount != null) pending.push('確認送出')
+    return {
+      filled: filled.length ? filled.join('、') : '尚無',
+      pending: pending.length ? pending.join('、') : '確認送出',
+    }
+  }
   if (draft.flow_type !== 'photo_upload') {
     return { filled: '進行中', pending: '完成操作' }
   }
-  const p = draft.draft_payload || {}
   const filled: string[] = []
   const pending: string[] = []
   if (p.siteName) filled.push('工地')
@@ -1070,6 +1193,8 @@ function parseMenuIntent(text: string): FlowType | 'cancel' | 'resume' | null {
   if (/^(繼續操作|繼續)$/.test(t)) return 'resume'
   if (/上傳照片|傳送照片|傳照片|施工照片/.test(t)) return 'photo_upload'
   if (/待辦事項|我的待辦|^待辦$/.test(t)) return 'todos'
+  if (/出勤打卡|上下班|上班打卡|下班打卡|切換工地/.test(t)) return 'attendance'
+  if (/採購申請|材料採購|^採購$/.test(t)) return 'purchase'
   return null
 }
 
@@ -1177,6 +1302,571 @@ async function handleBind(
 
   const name = result.name ? `，${result.name}` : ''
   return `綁定成功${name}！可用圖文選單操作上傳照片與待辦。`
+}
+
+// ----- Phase 2: attendance -----
+
+async function getOpenAttendance(
+  admin: Sb,
+  userId: string,
+): Promise<{
+  id: string
+  clock_in_at: string
+  site_id: string | null
+} | null> {
+  const { data, error } = await admin
+    .from('attendance')
+    .select('id, clock_in_at, site_id')
+    .eq('user_id', userId)
+    .eq('status', 'clocked_in')
+    .maybeSingle()
+  if (error) {
+    console.warn('[line-webhook] open attendance failed', error.message)
+    return null
+  }
+  return data
+}
+
+async function promptAttendanceMenu(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  const open = await getOpenAttendance(admin, profile.id)
+  await touchDraft(admin, draft.id, {
+    current_step: 'menu',
+    draft_payload: {
+      ...draft.draft_payload,
+      openShift: Boolean(open),
+      selectingSite: false,
+    },
+  })
+
+  if (open) {
+    const siteLabel = open.site_id
+      ? (await listSites(admin, profile.organization_id)).find((s) => s.id === open.site_id)
+          ?.name || '未知工地'
+      : '尚未補登工地'
+    return [
+      textWithQuickReply(
+        `目前上班中\n上班時間：${formatTaipei(open.clock_in_at)}\n工地：${siteLabel}\n請選擇：`,
+        [
+          { label: '下班打卡', data: 'a=att_out' },
+          { label: '切換工地', data: 'a=att_site' },
+          { label: '取消', data: 'a=cancel' },
+        ],
+      ),
+    ]
+  }
+
+  return [
+    textWithQuickReply('目前未上班。請選擇：', [
+      { label: '一鍵上班', data: 'a=att_in' },
+      { label: '取消', data: 'a=cancel' },
+    ]),
+  ]
+}
+
+async function handleAttendanceText(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+  text: string,
+): Promise<LineMessage[]> {
+  if (/一鍵上班|上班/.test(text)) return clockInLine(admin, profile, draft)
+  if (/下班/.test(text)) return clockOutLine(admin, profile, draft)
+  if (/切換工地|補登工地/.test(text)) {
+    return promptAttendanceSite(admin, profile, draft)
+  }
+  const num = Number(text)
+  if (
+    Number.isInteger(num) &&
+    num >= 1 &&
+    draft.current_step === 'select_site'
+  ) {
+    const sites = await listSites(admin, profile.organization_id)
+    const site = sites[num - 1]
+    if (site) return assignAttendanceSite(admin, profile, draft, site.id)
+  }
+  return promptAttendanceMenu(admin, profile, draft)
+}
+
+async function clockInLine(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  const open = await getOpenAttendance(admin, profile.id)
+  if (open) {
+    return [
+      textMsg('你已在上班中，請先下班或切換工地。'),
+      ...(await promptAttendanceMenu(admin, profile, draft)),
+    ]
+  }
+
+  const now = new Date().toISOString()
+  const { data, error } = await admin
+    .from('attendance')
+    .insert({
+      organization_id: profile.organization_id,
+      user_id: profile.id,
+      status: 'clocked_in',
+      clock_in_at: now,
+    })
+    .select('id, clock_in_at')
+    .single()
+  if (error) {
+    console.warn('[line-webhook] clock in failed', error.message)
+    return [textMsg('上班打卡失敗，請稍後再試。草稿仍保留。')]
+  }
+
+  await touchDraft(admin, draft.id, {
+    current_step: 'after_clock_in',
+    draft_payload: { openShift: true, attendanceId: data.id },
+  })
+
+  return [
+    textWithQuickReply(
+      `已上班（${formatTaipei(String(data.clock_in_at))}）。\n可補登工地，或稍後再切換。`,
+      [
+        { label: '補登工地', data: 'a=att_site' },
+        { label: '結束', data: 'a=att_done' },
+      ],
+    ),
+  ]
+}
+
+async function clockOutLine(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  const open = await getOpenAttendance(admin, profile.id)
+  if (!open) {
+    await finalizeDraft(admin, draft.id, 'cancelled')
+    return [textMsg('目前沒有進行中的班次。')]
+  }
+
+  const now = new Date().toISOString()
+  const { error } = await admin
+    .from('attendance')
+    .update({ status: 'clocked_out', clock_out_at: now })
+    .eq('id', open.id)
+    .eq('user_id', profile.id)
+  if (error) {
+    console.warn('[line-webhook] clock out failed', error.message)
+    return [textMsg('下班打卡失敗，請稍後再試。')]
+  }
+
+  await finalizeDraft(admin, draft.id, 'completed')
+  return [textMsg(`已下班（${formatTaipei(now)}）。`)]
+}
+
+async function promptAttendanceSite(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  const open = await getOpenAttendance(admin, profile.id)
+  if (!open) {
+    return [
+      textMsg('請先上班再選擇工地。'),
+      ...(await promptAttendanceMenu(admin, profile, draft)),
+    ]
+  }
+
+  const sites = await listSites(admin, profile.organization_id)
+  if (sites.length === 0) {
+    return [textMsg('目前沒有可用工地。請先到工程管家建立工地。')]
+  }
+
+  await touchDraft(admin, draft.id, {
+    current_step: 'select_site',
+    draft_payload: { ...draft.draft_payload, openShift: true, selectingSite: true },
+  })
+
+  const lines = sites.map((s, i) => `${i + 1}. ${s.name}`).join('\n')
+  const items = sites.slice(0, 10).map((s) => ({
+    label: s.name.slice(0, 20),
+    data: `a=att_site_pick&id=${s.id}`,
+  }))
+  return [
+    textWithQuickReply(`請選擇工地：\n${lines}\n也可回覆編號。`, items.slice(0, 13)),
+  ]
+}
+
+async function assignAttendanceSite(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+  siteId: string,
+): Promise<LineMessage[]> {
+  const open = await getOpenAttendance(admin, profile.id)
+  if (!open) return [textMsg('請先上班再選擇工地。')]
+
+  const sites = await listSites(admin, profile.organization_id)
+  const site = sites.find((s) => s.id === siteId)
+  if (!site) {
+    return [
+      textMsg('找不到工地。'),
+      ...(await promptAttendanceSite(admin, profile, draft)),
+    ]
+  }
+
+  const { error } = await admin
+    .from('attendance')
+    .update({ site_id: site.id, job_type: 'project' })
+    .eq('id', open.id)
+    .eq('user_id', profile.id)
+  if (error) {
+    console.warn('[line-webhook] assign site failed', error.message)
+    return [textMsg('更新工地失敗，請稍後再試。')]
+  }
+
+  await finalizeDraft(admin, draft.id, 'completed')
+  return [textMsg(`已切換工地：${site.name}`)]
+}
+
+// ----- Phase 2: purchase -----
+
+function promptPurchaseMode(): LineMessage[] {
+  return [
+    textWithQuickReply(
+      '採購申請\n一般：最終應付 ≥ NT$3,000 需核准\n緊急：單次 ≤ NT$5,000、每日 ≤ NT$10,000\n（申請人不可自行核准）',
+      [
+        { label: '一般採購', data: 'a=pur_mode&m=normal' },
+        { label: '緊急採購', data: 'a=pur_mode&m=emergency' },
+        { label: '取消', data: 'a=cancel' },
+      ],
+    ),
+  ]
+}
+
+async function selectPurchaseMode(
+  admin: Sb,
+  draft: DraftRow,
+  mode: string,
+): Promise<LineMessage[]> {
+  if (mode !== 'normal' && mode !== 'emergency') {
+    return [textMsg('類型無效。'), ...promptPurchaseMode()]
+  }
+  await touchDraft(admin, draft.id, {
+    current_step: 'enter_title',
+    draft_payload: { mode },
+  })
+  return [textMsg('請輸入採購品名／說明（文字回覆）：')]
+}
+
+async function handlePurchaseText(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+  text: string,
+): Promise<LineMessage[]> {
+  const step = draft.current_step || 'select_mode'
+  const payload = draft.draft_payload || {}
+
+  if (step === 'select_mode') {
+    if (/一般/.test(text)) return selectPurchaseMode(admin, draft, 'normal')
+    if (/緊急/.test(text)) return selectPurchaseMode(admin, draft, 'emergency')
+    return promptPurchaseMode()
+  }
+
+  if (step === 'enter_title') {
+    const title = text.trim()
+    if (title.length < 2) return [textMsg('品名太短，請再輸入一次：')]
+    await touchDraft(admin, draft.id, {
+      current_step: 'enter_amount',
+      draft_payload: { ...payload, title },
+    })
+    return [textMsg('請輸入金額（數字，新台幣，例如 2800）：')]
+  }
+
+  if (step === 'enter_amount') {
+    const amount = Number(String(text).replace(/[,，元$NTD\s]/gi, ''))
+    if (!Number.isFinite(amount) || amount < 0) {
+      return [textMsg('金額無效，請輸入數字（例如 2800）：')]
+    }
+    if (payload.mode === 'emergency' && amount > EMERGENCY_SINGLE_LIMIT_NTD) {
+      return [
+        textMsg(
+          `緊急採購單次上限 NT$${EMERGENCY_SINGLE_LIMIT_NTD.toLocaleString()}，請重新輸入金額：`,
+        ),
+      ]
+    }
+    await touchDraft(admin, draft.id, {
+      current_step: 'select_site',
+      draft_payload: { ...payload, goodsAmount: amount },
+    })
+    return promptPurchaseSite(admin, profile, {
+      ...draft,
+      draft_payload: { ...payload, goodsAmount: amount },
+      current_step: 'select_site',
+    })
+  }
+
+  if (step === 'select_site') {
+    const num = Number(text)
+    if (Number.isInteger(num) && num >= 1) {
+      const sites = await listSites(admin, profile.organization_id)
+      const site = sites[num - 1]
+      if (site) return selectPurchaseSite(admin, profile, draft, site.id)
+    }
+    if (/跳過|不指定/.test(text)) return promptPurchaseConfirm(admin, draft)
+    return promptPurchaseSite(admin, profile, draft)
+  }
+
+  if (step === 'confirm') {
+    if (/確認|送出|是/.test(text)) return submitPurchase(admin, profile, draft)
+    if (/取消/.test(text)) {
+      await finalizeDraft(admin, draft.id, 'cancelled')
+      return [textMsg('已取消採購申請。')]
+    }
+    return promptPurchaseConfirm(admin, draft)
+  }
+
+  return resumePurchase(admin, profile, draft)
+}
+
+async function promptPurchaseSite(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  const sites = await listSites(admin, profile.organization_id)
+  const items = [
+    ...sites.slice(0, 9).map((s) => ({
+      label: s.name.slice(0, 20),
+      data: `a=pur_site&id=${s.id}`,
+    })),
+    { label: '不指定工地', data: 'a=pur_site_skip' },
+  ]
+  const lines =
+    sites.length === 0
+      ? '（尚無工地，可選不指定）'
+      : sites
+          .slice(0, 9)
+          .map((s, i) => `${i + 1}. ${s.name}`)
+          .join('\n')
+  return [
+    textWithQuickReply(`可選工地（或跳過）：\n${lines}`, items.slice(0, 13)),
+  ]
+}
+
+async function selectPurchaseSite(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+  siteId: string,
+): Promise<LineMessage[]> {
+  const sites = await listSites(admin, profile.organization_id)
+  const site = sites.find((s) => s.id === siteId)
+  if (!site) {
+    return [
+      textMsg('找不到工地。'),
+      ...(await promptPurchaseSite(admin, profile, draft)),
+    ]
+  }
+  const next = {
+    ...draft,
+    draft_payload: {
+      ...draft.draft_payload,
+      siteId: site.id,
+      siteName: site.name,
+    },
+  }
+  await touchDraft(admin, draft.id, {
+    current_step: 'confirm',
+    draft_payload: next.draft_payload,
+  })
+  return promptPurchaseConfirm(admin, { ...next, current_step: 'confirm' })
+}
+
+async function promptPurchaseConfirm(
+  admin: Sb,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  const p = draft.draft_payload || {}
+  const amount = Number(p.goodsAmount ?? 0)
+  const mode = String(p.mode || 'normal')
+  const needsApproval = mode === 'normal' && amount >= PURCHASE_PREAPPROVAL_NTD
+  await touchDraft(admin, draft.id, {
+    current_step: 'confirm',
+    draft_payload: p,
+  })
+  return [
+    textWithQuickReply(
+      `請確認採購\n類型：${mode === 'emergency' ? '緊急' : '一般'}\n品名：${
+        p.title || '—'
+      }\n金額：NT$${amount.toLocaleString()}\n工地：${p.siteName || '不指定'}\n${
+        needsApproval ? '送出後需老闆／管理員核准' : '可直接成立（免事前核准）'
+      }`,
+      [
+        { label: '確認送出', data: 'a=pur_confirm' },
+        { label: '取消', data: 'a=cancel' },
+      ],
+    ),
+  ]
+}
+
+async function resumePurchase(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  const step = draft.current_step || 'select_mode'
+  if (step === 'select_mode') return promptPurchaseMode()
+  if (step === 'enter_title') return [textMsg('請輸入採購品名／說明：')]
+  if (step === 'enter_amount') return [textMsg('請輸入金額（數字）：')]
+  if (step === 'select_site') return promptPurchaseSite(admin, profile, draft)
+  return promptPurchaseConfirm(admin, draft)
+}
+
+async function emergencyUsedToday(
+  admin: Sb,
+  userId: string,
+  businessDate: string,
+): Promise<number> {
+  const { data, error } = await admin
+    .from('emergency_limit_events')
+    .select('amount_delta, event_type')
+    .eq('employee_id', userId)
+    .eq('business_date', businessDate)
+  if (error) {
+    console.warn('[line-webhook] emergency used failed', error.message)
+    return 0
+  }
+  let sum = 0
+  for (const row of data ?? []) {
+    sum += Number(row.amount_delta) || 0
+  }
+  return sum
+}
+
+function taipeiBusinessDate(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date())
+}
+
+async function submitPurchase(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  const p = draft.draft_payload || {}
+  const mode = String(p.mode || '')
+  const title = String(p.title || '').trim()
+  const goodsAmount = Number(p.goodsAmount ?? NaN)
+  if (mode !== 'normal' && mode !== 'emergency') {
+    return [textMsg('採購類型缺失，請重新申請。')]
+  }
+  if (title.length < 2 || !Number.isFinite(goodsAmount) || goodsAmount < 0) {
+    return [textMsg('資料不完整，請重新申請。')]
+  }
+
+  const finalPayable = Math.round(goodsAmount * 100) / 100
+  const businessDate = taipeiBusinessDate()
+  const needsApproval = mode === 'normal' && finalPayable >= PURCHASE_PREAPPROVAL_NTD
+
+  if (mode === 'emergency') {
+    if (finalPayable > EMERGENCY_SINGLE_LIMIT_NTD) {
+      return [
+        textMsg(
+          `超過緊急單次上限 NT$${EMERGENCY_SINGLE_LIMIT_NTD.toLocaleString()}`,
+        ),
+      ]
+    }
+    const used = await emergencyUsedToday(admin, profile.id, businessDate)
+    if (used + finalPayable > EMERGENCY_DAILY_LIMIT_NTD) {
+      return [
+        textMsg(
+          `超過緊急每日上限（已用 NT$${used.toLocaleString()}／上限 NT$${EMERGENCY_DAILY_LIMIT_NTD.toLocaleString()}）`,
+        ),
+      ]
+    }
+  }
+
+  const { data, error } = await admin
+    .from('purchases')
+    .insert({
+      organization_id: profile.organization_id,
+      user_id: profile.id,
+      site_id: p.siteId ? String(p.siteId) : null,
+      mode,
+      status: needsApproval ? 'pending_approval' : 'purchased',
+      title,
+      goods_amount: finalPayable,
+      discount: 0,
+      tax: 0,
+      shipping: 0,
+      other_buyer_fees: 0,
+      final_payable: finalPayable,
+      business_date: businessDate,
+    })
+    .select('id, status, final_payable, title')
+    .single()
+
+  if (error) {
+    console.warn('[line-webhook] create purchase failed', error.message)
+    return [textMsg('建立採購失敗，草稿仍保留，請稍後再試「確認送出」。')]
+  }
+
+  if (mode === 'emergency') {
+    const { error: evErr } = await admin.from('emergency_limit_events').insert({
+      organization_id: profile.organization_id,
+      employee_id: profile.id,
+      business_date: businessDate,
+      event_type: 'RESERVE',
+      amount_delta: finalPayable,
+      purchase_id: data.id,
+      reason: 'LINE 緊急採購占額',
+      created_by: profile.id,
+    })
+    if (evErr) {
+      console.warn('[line-webhook] emergency reserve failed', evErr.message)
+      // purchase already created; still report partial success
+    }
+  }
+
+  if (needsApproval) {
+    const { data: approvers } = await admin
+      .from('profiles')
+      .select('id')
+      .eq('organization_id', profile.organization_id)
+      .in('role', ['boss', 'owner', 'admin'])
+      .neq('id', profile.id)
+
+    for (const a of approvers ?? []) {
+      await admin.from('notices').insert({
+        organization_id: profile.organization_id,
+        user_id: a.id,
+        kind: 'todo',
+        title: `採購待核准：${title}`,
+        detail: `最終應付 NT$${finalPayable.toLocaleString()}（LINE 申請）`,
+        status: 'open',
+        unread: true,
+        href: '/purchases',
+      })
+    }
+  }
+
+  await finalizeDraft(admin, draft.id, 'completed')
+  if (needsApproval) {
+    return [
+      textMsg(
+        `已送出採購「${data.title}」\n金額 NT$${Number(data.final_payable).toLocaleString()}\n狀態：待核准\n（不可自行核准；老闆／管理員會在系統待辦看到）`,
+      ),
+    ]
+  }
+  return [
+    textMsg(
+      `已建立採購「${data.title}」\n金額 NT$${Number(data.final_payable).toLocaleString()}\n狀態：${data.status}`,
+    ),
+  ]
 }
 
 async function verifyLineSignature(body: string, signature: string, channelSecret: string) {
