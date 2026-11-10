@@ -29,6 +29,7 @@ import {
   quotePdfFilename,
 } from '@/lib/quoteExport'
 import { formatTaipei } from '@/lib/time'
+import { ChangeOrdersPanel } from '@/pages/ChangeOrdersPanel'
 
 export function QuoteDetailPage() {
   const { quoteId = '' } = useParams()
@@ -39,6 +40,7 @@ export function QuoteDetailPage() {
     quote,
     items,
     versions,
+    changeOrders,
     isLoading,
     error,
     updateMeta,
@@ -50,6 +52,11 @@ export function QuoteDetailPage() {
     setStatus,
     softDeleteVersion,
     softDeleteCase,
+    createChangeOrder,
+    addChangeOrderItem,
+    removeChangeOrderItem,
+    setChangeOrderStatus,
+    listChangeOrderItems,
     saving,
   } = useQuoteDetail(quoteId)
 
@@ -785,6 +792,20 @@ export function QuoteDetailPage() {
         ) : null}
       </section>
 
+      <ChangeOrdersPanel
+        quote={quote}
+        changeOrders={changeOrders}
+        userRole={user?.role || 'member'}
+        saving={busy}
+        createChangeOrder={createChangeOrder}
+        addChangeOrderItem={addChangeOrderItem}
+        removeChangeOrderItem={removeChangeOrderItem}
+        setChangeOrderStatus={setChangeOrderStatus}
+        listChangeOrderItems={listChangeOrderItems}
+        onError={setActionError}
+        onSuccess={setActionSuccess}
+      />
+
       <section className="panel stack">
         <strong>金額摘要</strong>
         <p style={{ margin: 0 }}>
@@ -798,7 +819,7 @@ export function QuoteDetailPage() {
         </p>
         {quote.workflowStatus === 'accepted' ? (
           <p className="muted" style={{ margin: 0 }}>
-            已計入有效合約金額
+            已計入有效合約金額（追加減另計，僅已接受才加減）
           </p>
         ) : (
           <p className="muted" style={{ margin: 0 }}>

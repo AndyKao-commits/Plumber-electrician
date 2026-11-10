@@ -1,10 +1,10 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { hasPermission, PERMISSIONS } from '@/domain/permissions'
+import { effectiveContractAmountWithChangeOrders } from '@/domain/changeOrders'
 import {
   CUSTOMER_ACCEPT_LABELS,
   QUOTE_WORKFLOW_LABELS,
-  effectiveContractAmount,
 } from '@/domain/quoteWorkflow'
 import type { TaxMode } from '@/domain/types'
 import { useQuotes } from '@/hooks/useQuotes'
@@ -18,6 +18,7 @@ export function QuotesPage() {
   const { sites } = useSites()
   const {
     quotes,
+    changeOrders,
     isLoading,
     repairCases,
     createQuote,
@@ -37,8 +38,12 @@ export function QuotesPage() {
 
   const formalSites = sites.filter((s) => s.kind === 'formal')
   const contractTotal = useMemo(
-    () => effectiveContractAmount(quotes),
-    [quotes],
+    () =>
+      effectiveContractAmountWithChangeOrders({
+        quotes,
+        changeOrders,
+      }),
+    [quotes, changeOrders],
   )
 
   const [showCreate, setShowCreate] = useState(false)
@@ -102,10 +107,10 @@ export function QuotesPage() {
       <section className="panel stack">
         <strong>報價案件</strong>
         <p className="muted" style={{ margin: 0 }}>
-          以案件為中心：編輯細項 → 匯出 PDF／CSV 建立版本 → 標記客戶接受後才計入合約。
+          以案件為中心：編輯細項 → 匯出 → 客戶接受後計入合約；追加減僅「已接受」才加減合約金額。
         </p>
         <div className="site-link">
-          <p>有效合約金額（僅客戶已接受）</p>
+          <p>有效合約金額（已接受報價 ± 已接受追加減）</p>
           <h3>NT${contractTotal.toLocaleString()}</h3>
         </div>
         {canCreate ? (
