@@ -86,6 +86,52 @@ export interface PurchaseRecord {
   finalPayable: number
   createdAt: string
   businessDate: string
+  approvedBy?: string | null
+  approvedAt?: string | null
+  rejectedReason?: string | null
+}
+
+export type TaxMode = 'inclusive' | 'exclusive' | 'zero'
+
+export type QuoteStatus = 'draft' | 'published' | 'void'
+
+export interface RepairCase {
+  id: string
+  organizationId: string
+  siteId?: string | null
+  customerName: string
+  title: string
+  createdAt: string
+}
+
+export interface Quotation {
+  id: string
+  organizationId: string
+  /** Exactly one of projectId / repairCaseId must be set (XOR). */
+  projectId?: string | null
+  repairCaseId?: string | null
+  title: string
+  status: QuoteStatus
+  taxMode: TaxMode
+  taxRate: number
+  amountBeforeTax: number
+  taxAmount: number
+  amountAfterTax: number
+  /** Frozen on publish */
+  frozen?: boolean
+  createdAt: string
+  publishedAt?: string | null
+  createdBy: string
+}
+
+export interface MaterialStock {
+  id: string
+  organizationId: string
+  name: string
+  unit: string
+  qty: number
+  unitCost: number
+  updatedAt: string
 }
 
 export interface AppNotice {

@@ -1,5 +1,9 @@
 # 工程交付說明（給工程師）
 
+## DOC-09 對齊進度
+
+見 `doc09-implementation-progress.md`（本機示範對齊；非正式封版）。
+
 ## 官方原檔（part1＋part2 已匯入完整）
 
 - 完整包：`original/electrical_project_complete_package.zip`

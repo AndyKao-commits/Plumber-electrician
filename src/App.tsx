@@ -6,9 +6,11 @@ import { RequireAuth } from '@/components/RequireAuth'
 import { queryClient } from '@/lib/queryClient'
 import { AttendancePage } from '@/pages/AttendancePage'
 import { HomePage } from '@/pages/HomePage'
+import { InventoryPage } from '@/pages/InventoryPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { NotificationsPage } from '@/pages/NotificationsPage'
 import { PurchasesPage } from '@/pages/PurchasesPage'
+import { QuotesPage } from '@/pages/QuotesPage'
 import { SiteDetailPage } from '@/pages/SiteDetailPage'
 import { SitesPage } from '@/pages/SitesPage'
 import { TeamPage } from '@/pages/TeamPage'
@@ -30,6 +32,8 @@ export default function App() {
             <Route path="/sites/:siteId" element={<Protected><SiteDetailPage /></Protected>} />
             <Route path="/attendance" element={<Protected><AttendancePage /></Protected>} />
             <Route path="/purchases" element={<Protected><PurchasesPage /></Protected>} />
+            <Route path="/quotes" element={<Protected><QuotesPage /></Protected>} />
+            <Route path="/inventory" element={<Protected><InventoryPage /></Protected>} />
             <Route path="/notifications" element={<Protected><NotificationsPage /></Protected>} />
             <Route path="/todos" element={<Protected><TodosPage /></Protected>} />
             <Route path="/team" element={<Protected><TeamPage /></Protected>} />

@@ -1,4 +1,6 @@
-import type { PurchaseRuleSnapshot, UserRole } from './types'
+import { roundMoney } from './money'
+import type { PurchaseRuleSnapshot, TaxMode, UserRole } from './types'
+import { applyInboundMovingAverage } from './inventoryCost'
 
 /** Confirmed product rules from planning conversations. */
 export const PRODUCT = {
@@ -10,7 +12,9 @@ export const PRODUCT = {
     'https://chatgpt.com/share/6af28a57-0b70-83ee-8496-f50778494099',
   ],
   planningClosed: true,
+  /** Owner said 繼續：本機示範可推進；正式封版／部署仍待明確授權 */
   awaitingDevAuthorization: true,
+  doc09Aligned: true,
 } as const
 
 /**
@@ -69,6 +73,8 @@ export const HOME_SHORTCUTS = [
   { id: 'clock', label: '出勤打卡', path: '/attendance' },
   { id: 'sites', label: '工地列表', path: '/sites' },
   { id: 'purchase', label: '材料採購', path: '/purchases' },
+  { id: 'quotes', label: '報價', path: '/quotes' },
+  { id: 'inventory', label: '庫存成本', path: '/inventory' },
   { id: 'todos', label: '待辦', path: '/todos' },
   { id: 'team', label: '今日團隊', path: '/team' },
   { id: 'notices', label: '通知中心', path: '/notifications' },
@@ -88,7 +94,45 @@ export function calcFinalPayable(input: FinalPayableInput): number {
   const tax = input.tax ?? 0
   const shipping = input.shipping ?? 0
   const other = input.otherBuyerFees ?? 0
-  return Math.round((input.goodsAmount - discount + tax + shipping + other) * 100) / 100
+  return roundMoney(input.goodsAmount - discount + tax + shipping + other)
+}
+
+export function calcQuoteTax(input: {
+  amountBeforeTax: number
+  taxMode: TaxMode
+  taxRate?: number
+}): { taxAmount: number; amountAfterTax: number; taxRate: number } {
+  const rate = input.taxRate ?? (input.taxMode === 'zero' ? 0 : 0.05)
+  if (input.taxMode === 'zero') {
+    return {
+      taxAmount: 0,
+      amountAfterTax: roundMoney(input.amountBeforeTax),
+      taxRate: 0,
+    }
+  }
+  if (input.taxMode === 'exclusive') {
+    const taxAmount = roundMoney(input.amountBeforeTax * rate)
+    return {
+      taxAmount,
+      amountAfterTax: roundMoney(input.amountBeforeTax + taxAmount),
+      taxRate: rate,
+    }
+  }
+  // inclusive: amountBeforeTax is treated as tax-included total
+  const amountAfterTax = roundMoney(input.amountBeforeTax)
+  const taxAmount = roundMoney(amountAfterTax - amountAfterTax / (1 + rate))
+  return { taxAmount, amountAfterTax, taxRate: rate }
+}
+
+export function assertQuoteAssociation(input: {
+  projectId?: string | null
+  repairCaseId?: string | null
+}): void {
+  const hasProject = Boolean(input.projectId)
+  const hasRepair = Boolean(input.repairCaseId)
+  if (hasProject === hasRepair) {
+    throw new Error('報價必須恰好關聯一個工程或一個維修案件（REV-01 XOR）')
+  }
 }
 
 export function requiresPreApproval(finalPayableNtd: number): boolean {
@@ -114,14 +158,17 @@ export function canViewOthersPayroll(role: UserRole, payrollAuthorized = false):
   return payrollAuthorized || role === 'boss'
 }
 
-/** Moving weighted average unit cost. */
+/** Moving weighted average unit cost (org+material pool). */
 export function movingAverageUnitCost(
   oldQty: number,
   oldUnitCost: number,
   inboundQty: number,
   inboundUnitCost: number,
 ): number {
-  const totalQty = oldQty + inboundQty
-  if (totalQty <= 0) return inboundUnitCost
-  return (oldQty * oldUnitCost + inboundQty * inboundUnitCost) / totalQty
+  return applyInboundMovingAverage({
+    oldQty,
+    oldUnitCost,
+    inboundQty,
+    inboundUnitCost,
+  }).unitCost
 }

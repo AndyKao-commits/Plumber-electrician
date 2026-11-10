@@ -14,10 +14,15 @@ export function PurchasesPage() {
   const { sites } = useSites()
   const {
     purchases,
+    pendingApprovals,
     emergencyUsedToday,
     createPurchase,
     isCreating,
     createError,
+    approvePurchase,
+    isApproving,
+    approveError,
+    cancelEmergency,
   } = usePurchases(user?.id)
 
   const [title, setTitle] = useState('')
@@ -58,6 +63,7 @@ export function PurchasesPage() {
           {DEFAULT_PURCHASE_RULES.preApprovalThresholdNtd.toLocaleString()}；緊急單次 ≤{' '}
           {DEFAULT_PURCHASE_RULES.emergencySingleLimitNtd.toLocaleString()}、每日 ≤{' '}
           {DEFAULT_PURCHASE_RULES.emergencyDailyLimitNtd?.toLocaleString()}。
+          緊急占額以不可變事件記在原業務日（REV-04）；禁止自我核准（REV-07）。
         </p>
         <div className="site-link">
           <p>今日已用緊急額度</p>
@@ -67,6 +73,36 @@ export function PurchasesPage() {
           </h3>
         </div>
       </section>
+
+      {user?.role === 'boss' && pendingApprovals.length > 0 ? (
+        <section className="panel stack">
+          <strong>待核准</strong>
+          {pendingApprovals.map((p) => (
+            <div key={p.id} className="site-link stack">
+              <div className="row between">
+                <h3 style={{ margin: 0 }}>{p.title}</h3>
+                <span className="badge">pending</span>
+              </div>
+              <p style={{ margin: 0 }}>
+                NT${p.finalPayable.toLocaleString()} · 申請人 {p.userId}
+              </p>
+              <button
+                type="button"
+                className="btn btn-steel"
+                disabled={isApproving}
+                onClick={() => void approvePurchase(p.id)}
+              >
+                核准
+              </button>
+            </div>
+          ))}
+          {approveError ? (
+            <p style={{ color: 'var(--danger)', margin: 0 }}>
+              {(approveError as Error).message}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="panel stack">
         <strong>新增採購</strong>
@@ -163,7 +199,7 @@ export function PurchasesPage() {
                 ? requiresPreApproval(preview)
                   ? '需老闆事前核准'
                   : '免事前核准'
-                : '緊急通道（事後核對）'}
+                : '緊急通道（寫入 RESERVE 事件）'}
             </p>
           </div>
           {createError ? (
@@ -183,17 +219,32 @@ export function PurchasesPage() {
           <div className="empty">尚無採購紀錄</div>
         ) : (
           purchases.map((p) => (
-            <div key={p.id} className="site-link">
+            <div key={p.id} className="site-link stack">
               <div className="row between">
                 <span className="badge steel">
                   {p.mode === 'emergency' ? '緊急' : '一般'}
                 </span>
                 <span className="badge">{p.status}</span>
               </div>
-              <h3 style={{ marginTop: 8 }}>{p.title}</h3>
-              <p>
-                NT${p.finalPayable.toLocaleString()} · {formatTaipei(p.createdAt, 'MM/dd HH:mm')}
+              <h3 style={{ margin: 0 }}>{p.title}</h3>
+              <p style={{ margin: 0 }}>
+                NT${p.finalPayable.toLocaleString()} ·{' '}
+                {formatTaipei(p.createdAt, 'MM/dd HH:mm')} · 業務日 {p.businessDate}
               </p>
+              {p.mode === 'emergency' && p.status !== 'cancelled' ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() =>
+                    void cancelEmergency({
+                      purchaseId: p.id,
+                      reason: '示範取消並原日釋放額度',
+                    })
+                  }
+                >
+                  取消並釋放當日額度
+                </button>
+              ) : null}
             </div>
           ))
         )}

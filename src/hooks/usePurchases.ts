@@ -6,10 +6,12 @@ import {
 } from '@/domain/rules'
 import type { PurchaseMode } from '@/domain/types'
 import { localDb } from '@/lib/localDb'
+import { noticeKeys } from '@/hooks/useNotices'
 
 export const purchaseKeys = {
   all: ['purchases'] as const,
   list: (userId?: string) => [...purchaseKeys.all, 'list', userId ?? 'all'] as const,
+  pending: ['purchases', 'pending'] as const,
   emergencyUsed: (userId: string) =>
     [...purchaseKeys.all, 'emergency-used', userId] as const,
 }
@@ -22,8 +24,17 @@ export function usePurchases(userId: string | undefined) {
     enabled: Boolean(userId),
     queryFn: async () => {
       if (!userId) return []
+      const user = localDb.getUser(userId)
+      if (user?.role === 'boss') return localDb.getPurchases()
       return localDb.getPurchases().filter((p) => p.userId === userId)
     },
+  })
+
+  const pendingQuery = useQuery({
+    queryKey: purchaseKeys.pending,
+    enabled: Boolean(userId),
+    queryFn: async () =>
+      localDb.getPurchases().filter((p) => p.status === 'pending_approval'),
   })
 
   const usedQuery = useQuery({
@@ -63,19 +74,46 @@ export function usePurchases(userId: string | undefined) {
     },
     onSuccess: () => {
       if (!userId) return
-      void queryClient.invalidateQueries({ queryKey: purchaseKeys.list(userId) })
-      void queryClient.invalidateQueries({
-        queryKey: purchaseKeys.emergencyUsed(userId),
+      void queryClient.invalidateQueries({ queryKey: purchaseKeys.all })
+      void queryClient.invalidateQueries({ queryKey: noticeKeys.all })
+    },
+  })
+
+  const approveMutation = useMutation({
+    mutationFn: async (purchaseId: string) => {
+      if (!userId) throw new Error('尚未登入')
+      return localDb.approvePurchase({ purchaseId, actorId: userId })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: purchaseKeys.all })
+    },
+  })
+
+  const cancelEmergencyMutation = useMutation({
+    mutationFn: async (input: { purchaseId: string; reason: string }) => {
+      if (!userId) throw new Error('尚未登入')
+      return localDb.cancelEmergencyPurchase({
+        purchaseId: input.purchaseId,
+        actorId: userId,
+        reason: input.reason,
       })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: purchaseKeys.all })
     },
   })
 
   return {
     purchases: listQuery.data ?? [],
+    pendingApprovals: pendingQuery.data ?? [],
     emergencyUsedToday: usedQuery.data ?? 0,
     isLoading: listQuery.isLoading,
     createPurchase: createMutation.mutateAsync,
     isCreating: createMutation.isPending,
     createError: createMutation.error,
+    approvePurchase: approveMutation.mutateAsync,
+    isApproving: approveMutation.isPending,
+    approveError: approveMutation.error,
+    cancelEmergency: cancelEmergencyMutation.mutateAsync,
   }
 }
