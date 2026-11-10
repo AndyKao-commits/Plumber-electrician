@@ -1,0 +1,5 @@
+# Supabase CLI project link (public project ref only — no secrets)
+project_id = "rhpzvqvkmllbdtkpouwn"
+
+[functions.line-push]
+verify_jwt = true
