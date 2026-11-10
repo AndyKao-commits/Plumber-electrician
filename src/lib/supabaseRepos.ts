@@ -22,6 +22,10 @@ import {
   requiresPreApproval,
 } from '@/domain/rules'
 import {
+  assertCanSoftDeleteQuoteCase,
+  assertCanSoftDeleteQuoteVersion,
+} from '@/domain/quoteDelete'
+import {
   buildQuoteExportSnapshot,
   legacyStatusFromWorkflow,
   workflowFromLegacy,
@@ -60,7 +64,7 @@ function sb() {
 }
 
 const QUOTE_SELECT =
-  'id, organization_id, project_id, repair_case_id, title, status, workflow_status, quote_number, customer_name, site_address, tax_mode, tax_rate, amount_before_tax, discount, tax_amount, amount_after_tax, notes, payment_terms, valid_until, current_version, last_exported_at, frozen, created_at, updated_at, published_at, created_by'
+  'id, organization_id, project_id, repair_case_id, title, status, workflow_status, quote_number, customer_name, customer_phone, site_address, tax_mode, tax_rate, amount_before_tax, discount, tax_amount, amount_after_tax, notes, construction_notes, payment_terms, valid_until, current_version, last_exported_at, frozen, created_at, updated_at, published_at, created_by, deleted_at, deleted_by, delete_reason'
 
 function mapQuotationRow(row: Record<string, unknown>): Quotation {
   const status = row.status as Quotation['status']
@@ -80,6 +84,7 @@ function mapQuotationRow(row: Record<string, unknown>): Quotation {
       String(row.quote_number || '') ||
       `Q-${String(row.id).replace(/-/g, '').slice(0, 8).toUpperCase()}`,
     customerName: String(row.customer_name || ''),
+    customerPhone: (row.customer_phone as string | null) ?? null,
     siteAddress: String(row.site_address || ''),
     taxMode: row.tax_mode as TaxMode,
     taxRate: Number(row.tax_rate),
@@ -88,6 +93,7 @@ function mapQuotationRow(row: Record<string, unknown>): Quotation {
     taxAmount: Number(row.tax_amount),
     amountAfterTax: Number(row.amount_after_tax),
     notes: (row.notes as string | null) ?? null,
+    constructionNotes: (row.construction_notes as string | null) ?? null,
     paymentTerms: (row.payment_terms as string | null) ?? '依約定',
     validUntil: (row.valid_until as string | null) ?? null,
     currentVersion: Number(row.current_version ?? 0) || 0,
@@ -97,6 +103,9 @@ function mapQuotationRow(row: Record<string, unknown>): Quotation {
     updatedAt: String(row.updated_at || row.created_at),
     publishedAt: (row.published_at as string | null) ?? null,
     createdBy: String(row.created_by ?? ''),
+    deletedAt: (row.deleted_at as string | null) ?? null,
+    deletedBy: (row.deleted_by as string | null) ?? null,
+    deleteReason: (row.delete_reason as string | null) ?? null,
   }
 }
 
@@ -802,6 +811,7 @@ export const supabaseRepos = {
     const { data, error } = await sb()
       .from('quotations')
       .select(QUOTE_SELECT)
+      .is('deleted_at', null)
       .order('updated_at', { ascending: false })
     if (error) throw new AppError(toUserMessage(error, '無法載入報價'))
     return (data ?? []).map((row) =>
@@ -815,6 +825,7 @@ export const supabaseRepos = {
       .from('quotations')
       .select(QUOTE_SELECT)
       .eq('id', qid)
+      .is('deleted_at', null)
       .maybeSingle()
     if (error) throw new AppError(toUserMessage(error, '無法讀取報價'))
     if (!data) throw new AppError('找不到報價')
@@ -942,9 +953,6 @@ export const supabaseRepos = {
       throw new AppError('已取消報價不可匯出')
     }
     const items = await this.listQuotationItems(qid)
-    if (items.length === 0) {
-      throw new AppError('請先新增至少一筆報價細項再匯出')
-    }
     const versionNo = current.currentVersion + 1
     const snapshot = buildQuoteExportSnapshot({
       quote: current,
@@ -1051,9 +1059,10 @@ export const supabaseRepos = {
     const { data, error } = await sb()
       .from('quotation_versions')
       .select(
-        'id, organization_id, quotation_id, version_no, quote_number, snapshot, exported_at, exported_by, export_format',
+        'id, organization_id, quotation_id, version_no, quote_number, snapshot, exported_at, exported_by, export_format, deleted_at, deleted_by, delete_reason',
       )
       .eq('quotation_id', qid)
+      .is('deleted_at', null)
       .order('version_no', { ascending: false })
     if (error) throw new AppError(toUserMessage(error, '無法載入版本'))
     return (data ?? []).map((row) => ({
@@ -1066,7 +1075,74 @@ export const supabaseRepos = {
       exportedAt: String(row.exported_at),
       exportedBy: (row.exported_by as string | null) ?? null,
       exportFormat: row.export_format as QuoteExportFormat,
+      deletedAt: (row.deleted_at as string | null) ?? null,
+      deletedBy: (row.deleted_by as string | null) ?? null,
+      deleteReason: (row.delete_reason as string | null) ?? null,
     }))
+  },
+
+  async softDeleteQuotationVersion(
+    actor: AppUser,
+    versionId: string,
+    reason?: string,
+  ): Promise<void> {
+    const vid = requireUuid(versionId, '報價版本')
+    const { data: ver, error: loadError } = await sb()
+      .from('quotation_versions')
+      .select(
+        'id, organization_id, quotation_id, version_no, deleted_at',
+      )
+      .eq('id', vid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取版本'))
+    if (!ver) throw new AppError('找不到版本')
+    assertSameOrganization(actor.organizationId, String(ver.organization_id))
+    const quote = await this.getQuotation(String(ver.quotation_id))
+    assertCanSoftDeleteQuoteVersion(actor.role, quote, {
+      versionNo: Number(ver.version_no),
+      deletedAt: (ver.deleted_at as string | null) ?? null,
+    })
+    const { error } = await sb()
+      .from('quotation_versions')
+      .update({
+        deleted_at: new Date().toISOString(),
+        deleted_by: actor.id,
+        delete_reason: reason?.trim() || '使用者刪除歷史版本',
+      })
+      .eq('id', vid)
+      .is('deleted_at', null)
+    if (error) throw new AppError(toUserMessage(error, '刪除版本失敗'))
+  },
+
+  async softDeleteQuotation(
+    actor: AppUser,
+    quoteId: string,
+    reason?: string,
+  ): Promise<void> {
+    const quote = await this.getQuotation(quoteId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    assertCanSoftDeleteQuoteCase(actor.role, quote)
+    const now = new Date().toISOString()
+    const { error } = await sb()
+      .from('quotations')
+      .update({
+        deleted_at: now,
+        deleted_by: actor.id,
+        delete_reason: reason?.trim() || '使用者刪除報價案件',
+      })
+      .eq('id', quoteId)
+      .is('deleted_at', null)
+    if (error) throw new AppError(toUserMessage(error, '刪除案件失敗'))
+    // Hide versions with soft-delete (audit retained)
+    await sb()
+      .from('quotation_versions')
+      .update({
+        deleted_at: now,
+        deleted_by: actor.id,
+        delete_reason: '隨案件刪除而隱藏',
+      })
+      .eq('quotation_id', quoteId)
+      .is('deleted_at', null)
   },
 
   async listQuotationItems(quotationId: string): Promise<QuotationItem[]> {

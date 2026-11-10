@@ -63,6 +63,14 @@ describe('負向：未授權角色', () => {
       /無權執行/,
     )
   })
+
+  it('Member 不可刪除報價；Admin／Owner 可以', () => {
+    expect(hasPermission('member', PERMISSIONS.QUOTE_DELETE)).toBe(false)
+    expect(hasPermission('employee', PERMISSIONS.QUOTE_DELETE)).toBe(false)
+    expect(hasPermission('admin', PERMISSIONS.QUOTE_DELETE)).toBe(true)
+    expect(hasPermission('boss', PERMISSIONS.QUOTE_DELETE)).toBe(true)
+    expect(hasPermission('owner', PERMISSIONS.QUOTE_DELETE)).toBe(true)
+  })
 })
 
 describe('負向：Admin 敏感財務', () => {

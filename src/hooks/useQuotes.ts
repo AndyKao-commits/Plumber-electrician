@@ -268,6 +268,61 @@ export function useQuoteDetail(quoteId: string | undefined) {
     onSuccess: invalidateAll,
   })
 
+  const softDeleteVersion = useMutation({
+    mutationFn: async (input: { versionId: string; reason?: string }) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      try {
+        if (formal) {
+          await supabaseRepos.softDeleteQuotationVersion(
+            user,
+            input.versionId,
+            input.reason,
+          )
+        } else {
+          localDb.softDeleteQuotationVersion(
+            { id: user.id, role: user.role },
+            input.versionId,
+            input.reason,
+          )
+        }
+      } catch (e) {
+        throw new Error(toUserMessage(e, '刪除版本失敗'))
+      }
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const softDeleteCase = useMutation({
+    mutationFn: async (reason?: string) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      try {
+        if (formal) {
+          await supabaseRepos.softDeleteQuotation(user, quoteId, reason)
+        } else {
+          localDb.softDeleteQuotation(
+            { id: user.id, role: user.role },
+            quoteId,
+            reason,
+          )
+        }
+      } catch (e) {
+        throw new Error(toUserMessage(e, '刪除案件失敗'))
+      }
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: quoteKeys.all })
+      if (quoteId) {
+        void queryClient.removeQueries({ queryKey: quoteKeys.one(quoteId) })
+        void queryClient.removeQueries({ queryKey: quoteKeys.items(quoteId) })
+        void queryClient.removeQueries({
+          queryKey: quoteKeys.versions(quoteId),
+        })
+      }
+    },
+  })
+
   return {
     quote: quoteQuery.data ?? null,
     items: itemsQuery.data ?? [],
@@ -281,6 +336,8 @@ export function useQuoteDetail(quoteId: string | undefined) {
     reorderItems: reorderItems.mutateAsync,
     exportVersion: exportVersion.mutateAsync,
     setStatus: setStatus.mutateAsync,
+    softDeleteVersion: softDeleteVersion.mutateAsync,
+    softDeleteCase: softDeleteCase.mutateAsync,
     saving:
       updateMeta.isPending ||
       addItem.isPending ||
@@ -288,6 +345,8 @@ export function useQuoteDetail(quoteId: string | undefined) {
       removeItem.isPending ||
       reorderItems.isPending ||
       exportVersion.isPending ||
-      setStatus.isPending,
+      setStatus.isPending ||
+      softDeleteVersion.isPending ||
+      softDeleteCase.isPending,
   }
 }

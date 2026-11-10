@@ -25,6 +25,8 @@ export const PERMISSIONS = {
   QUOTE_EXPORT: 'quote.export',
   /** Mark customer accepted / rejected / sent (Owner＋Admin). */
   QUOTE_MARK_ACCEPT: 'quote.mark_accept',
+  /** Soft-delete quote cases / versions (Owner＋Admin). */
+  QUOTE_DELETE: 'quote.delete',
   INVENTORY_READ: 'inventory.read',
   INVENTORY_INBOUND: 'inventory.inbound',
   /** Stocktake / variance posting — Member allowed by policy; UI in next batch. */
@@ -69,6 +71,7 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.QUOTE_PUBLISH,
     PERMISSIONS.QUOTE_EXPORT,
     PERMISSIONS.QUOTE_MARK_ACCEPT,
+    PERMISSIONS.QUOTE_DELETE,
     PERMISSIONS.INVENTORY_READ,
     PERMISSIONS.INVENTORY_INBOUND,
     PERMISSIONS.INVENTORY_ADJUST,
@@ -96,6 +99,7 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.QUOTE_PUBLISH,
     PERMISSIONS.QUOTE_EXPORT,
     PERMISSIONS.QUOTE_MARK_ACCEPT,
+    PERMISSIONS.QUOTE_DELETE,
     PERMISSIONS.INVENTORY_READ,
     PERMISSIONS.INVENTORY_INBOUND,
     PERMISSIONS.INVENTORY_ADJUST,
@@ -112,7 +116,7 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.ATTENDANCE_TEAM_SUMMARY,
     PERMISSIONS.PURCHASE_CREATE,
     PERMISSIONS.QUOTE_CREATE,
-    // NO QUOTE_EXPORT / QUOTE_MARK_ACCEPT — formal results need Owner/Admin
+    // NO QUOTE_EXPORT / QUOTE_MARK_ACCEPT / QUOTE_DELETE
     PERMISSIONS.INVENTORY_READ,
     PERMISSIONS.INVENTORY_INBOUND,
     PERMISSIONS.INVENTORY_ADJUST,

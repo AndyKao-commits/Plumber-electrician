@@ -6,6 +6,7 @@ import type {
   QuoteWorkflowStatus,
   TaxMode,
 } from './types'
+import { formatTaipei } from '@/lib/time'
 import { calcQuoteTax, sumQuoteItems } from './rules'
 
 export const QUOTE_WORKFLOW_LABELS: Record<QuoteWorkflowStatus, string> = {
@@ -103,7 +104,8 @@ export function buildQuoteExportSnapshot(input: {
   return {
     quoteNumber: input.quote.quoteNumber,
     versionNo: input.versionNo,
-    quoteDate: input.quoteDate ?? new Date().toISOString().slice(0, 10),
+    quoteDate:
+      input.quoteDate ?? formatTaipei(new Date(), 'yyyy-MM-dd'),
     title: input.quote.title,
     customerName: input.quote.customerName || '—',
     siteAddress: input.quote.siteAddress || '—',
