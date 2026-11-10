@@ -5,7 +5,8 @@ export type SpecRole = 'owner' | 'admin' | 'member'
 
 /**
  * Permission dictionary — ops vs sensitive finance are separate.
- * Admin may approve purchases / publish quotes without finance.* grants.
+ * Admin may approve purchases and export/mark-accept quotes without finance.*.
+ * Member may view/edit drafts; must not export formal versions or mark accept.
  */
 export const PERMISSIONS = {
   ORG_READ: 'org.read',
@@ -18,7 +19,12 @@ export const PERMISSIONS = {
   PURCHASE_APPROVE: 'purchase.approve',
   PURCHASE_SELF_APPROVE: 'purchase.self_approve',
   QUOTE_CREATE: 'quote.create',
+  /** @deprecated Prefer QUOTE_EXPORT — kept for older checks. */
   QUOTE_PUBLISH: 'quote.publish',
+  /** Create immutable export version / PDF / CSV (Owner＋Admin). */
+  QUOTE_EXPORT: 'quote.export',
+  /** Mark customer accepted / rejected / sent (Owner＋Admin). */
+  QUOTE_MARK_ACCEPT: 'quote.mark_accept',
   INVENTORY_READ: 'inventory.read',
   INVENTORY_INBOUND: 'inventory.inbound',
   /** Stocktake / variance posting — Member allowed by policy; UI in next batch. */
@@ -61,6 +67,8 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.PURCHASE_APPROVE,
     PERMISSIONS.QUOTE_CREATE,
     PERMISSIONS.QUOTE_PUBLISH,
+    PERMISSIONS.QUOTE_EXPORT,
+    PERMISSIONS.QUOTE_MARK_ACCEPT,
     PERMISSIONS.INVENTORY_READ,
     PERMISSIONS.INVENTORY_INBOUND,
     PERMISSIONS.INVENTORY_ADJUST,
@@ -86,6 +94,8 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.PURCHASE_APPROVE,
     PERMISSIONS.QUOTE_CREATE,
     PERMISSIONS.QUOTE_PUBLISH,
+    PERMISSIONS.QUOTE_EXPORT,
+    PERMISSIONS.QUOTE_MARK_ACCEPT,
     PERMISSIONS.INVENTORY_READ,
     PERMISSIONS.INVENTORY_INBOUND,
     PERMISSIONS.INVENTORY_ADJUST,
@@ -102,6 +112,7 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.ATTENDANCE_TEAM_SUMMARY,
     PERMISSIONS.PURCHASE_CREATE,
     PERMISSIONS.QUOTE_CREATE,
+    // NO QUOTE_EXPORT / QUOTE_MARK_ACCEPT — formal results need Owner/Admin
     PERMISSIONS.INVENTORY_READ,
     PERMISSIONS.INVENTORY_INBOUND,
     PERMISSIONS.INVENTORY_ADJUST,
@@ -157,8 +168,25 @@ export function assertPermission(
 export function assertCanPublishQuote(
   role: UserRole | SpecRole | string,
 ): void {
-  if (!hasPermission(role, PERMISSIONS.QUOTE_PUBLISH)) {
-    throw new Error('無權發布報價')
+  assertCanExportQuote(role)
+}
+
+export function assertCanExportQuote(
+  role: UserRole | SpecRole | string,
+): void {
+  if (
+    !hasPermission(role, PERMISSIONS.QUOTE_EXPORT) &&
+    !hasPermission(role, PERMISSIONS.QUOTE_PUBLISH)
+  ) {
+    throw new Error('無權匯出正式報價版本（僅老闆／管理員）')
+  }
+}
+
+export function assertCanMarkQuoteAccept(
+  role: UserRole | SpecRole | string,
+): void {
+  if (!hasPermission(role, PERMISSIONS.QUOTE_MARK_ACCEPT)) {
+    throw new Error('無權標記客戶接受狀態（僅老闆／管理員）')
   }
 }
 

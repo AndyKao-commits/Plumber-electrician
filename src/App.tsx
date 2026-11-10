@@ -13,6 +13,7 @@ import { NotificationsPage } from '@/pages/NotificationsPage'
 import { PhotosPage } from '@/pages/PhotosPage'
 import { PurchasesPage } from '@/pages/PurchasesPage'
 import { ReportsPage } from '@/pages/ReportsPage'
+import { QuoteDetailPage } from '@/pages/QuoteDetailPage'
 import { QuotesPage } from '@/pages/QuotesPage'
 import { SiteDetailPage } from '@/pages/SiteDetailPage'
 import { SitesPage } from '@/pages/SitesPage'
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="/attendance" element={<Protected><AttendancePage /></Protected>} />
             <Route path="/purchases" element={<Protected><PurchasesPage /></Protected>} />
             <Route path="/quotes" element={<Protected><QuotesPage /></Protected>} />
+            <Route path="/quotes/:quoteId" element={<Protected><QuoteDetailPage /></Protected>} />
             <Route path="/inventory" element={<Protected><InventoryPage /></Protected>} />
             <Route path="/notifications" element={<Protected><NotificationsPage /></Protected>} />
             <Route path="/todos" element={<Protected><TodosPage /></Protected>} />

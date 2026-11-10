@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { assertOnlineForOp } from '@/domain/offlineOps'
-import type { QuotationItemKind, TaxMode } from '@/domain/types'
+import type {
+  QuotationItemKind,
+  QuoteExportFormat,
+  QuoteWorkflowStatus,
+  TaxMode,
+} from '@/domain/types'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
@@ -10,7 +15,9 @@ import { useUser } from '@/hooks/useUser'
 
 export const quoteKeys = {
   all: ['quotes'] as const,
+  one: (id: string) => ['quotes', id] as const,
   items: (quoteId: string) => ['quote-items', quoteId] as const,
+  versions: (quoteId: string) => ['quote-versions', quoteId] as const,
 }
 
 export function useQuotes(userId: string | undefined) {
@@ -52,7 +59,12 @@ export function useQuotes(userId: string | undefined) {
       projectId?: string | null
       repairCaseId?: string | null
       taxMode: TaxMode
-      amountBeforeTax?: number
+      customerName?: string
+      siteAddress?: string
+      paymentTerms?: string
+      validUntil?: string | null
+      notes?: string
+      discount?: number
     }) => {
       if (!userId || !user) throw new Error('尚未登入')
       assertOnlineForOp('quote_create', isBrowserOnline())
@@ -62,23 +74,6 @@ export function useQuotes(userId: string | undefined) {
           : localDb.createQuotation({ createdBy: userId, ...input })
       } catch (e) {
         throw new Error(toUserMessage(e, '無法建立報價'))
-      }
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: quoteKeys.all })
-    },
-  })
-
-  const publishMutation = useMutation({
-    mutationFn: async (quoteId: string) => {
-      if (!user) throw new Error('尚未登入')
-      assertOnlineForOp('quote_publish', isBrowserOnline())
-      try {
-        return formal
-          ? await supabaseRepos.publishQuotation(user, quoteId)
-          : localDb.publishQuotation(quoteId)
-      } catch (e) {
-        throw new Error(toUserMessage(e, '發布報價失敗'))
       }
     },
     onSuccess: () => {
@@ -101,73 +96,42 @@ export function useQuotes(userId: string | undefined) {
     },
   })
 
-  const addItemMutation = useMutation({
-    mutationFn: async (input: {
-      quotationId: string
-      kind: QuotationItemKind
-      description: string
-      qty: number
-      unit?: string
-      unitPrice: number
-    }) => {
-      if (!user) throw new Error('尚未登入')
-      assertOnlineForOp('quote_create', isBrowserOnline())
-      try {
-        return formal
-          ? await supabaseRepos.addQuotationItem(user, input)
-          : localDb.addQuotationItem(input)
-      } catch (e) {
-        throw new Error(toUserMessage(e, '無法新增報價細項'))
-      }
-    },
-    onSuccess: (_data, vars) => {
-      void queryClient.invalidateQueries({ queryKey: quoteKeys.all })
-      void queryClient.invalidateQueries({
-        queryKey: quoteKeys.items(vars.quotationId),
-      })
-    },
-  })
-
-  const removeItemMutation = useMutation({
-    mutationFn: async (input: { itemId: string; quotationId: string }) => {
-      if (!user) throw new Error('尚未登入')
-      assertOnlineForOp('quote_create', isBrowserOnline())
-      try {
-        if (formal) await supabaseRepos.removeQuotationItem(user, input.itemId)
-        else localDb.removeQuotationItem(input.itemId)
-      } catch (e) {
-        throw new Error(toUserMessage(e, '無法刪除報價細項'))
-      }
-    },
-    onSuccess: (_data, vars) => {
-      void queryClient.invalidateQueries({ queryKey: quoteKeys.all })
-      void queryClient.invalidateQueries({
-        queryKey: quoteKeys.items(vars.quotationId),
-      })
-    },
-  })
-
   return {
     quotes: listQuery.data ?? [],
+    isLoading: listQuery.isLoading,
     repairCases: repairsQuery.data ?? [],
     createQuote: createMutation.mutateAsync,
     isCreating: createMutation.isPending,
     createError: createMutation.error,
-    publishQuote: publishMutation.mutateAsync,
     createRepairCase: createRepairMutation.mutateAsync,
     isCreatingRepair: createRepairMutation.isPending,
     createRepairError: createRepairMutation.error
       ? new Error(toUserMessage(createRepairMutation.error))
       : null,
-    addQuoteItem: addItemMutation.mutateAsync,
-    removeQuoteItem: removeItemMutation.mutateAsync,
-    isSavingItem: addItemMutation.isPending || removeItemMutation.isPending,
   }
 }
 
-export function useQuoteItems(quoteId: string | undefined) {
+export function useQuoteDetail(quoteId: string | undefined) {
+  const queryClient = useQueryClient()
   const formal = isFormalMode()
-  return useQuery({
+  const { user } = useUser()
+
+  const quoteQuery = useQuery({
+    queryKey: quoteId ? quoteKeys.one(quoteId) : ['quotes', 'none'],
+    enabled: Boolean(quoteId),
+    queryFn: async () => {
+      if (!quoteId) return null
+      try {
+        return formal
+          ? await supabaseRepos.getQuotation(quoteId)
+          : localDb.getQuotation(quoteId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入報價案件'))
+      }
+    },
+  })
+
+  const itemsQuery = useQuery({
     queryKey: quoteId ? quoteKeys.items(quoteId) : ['quote-items', 'none'],
     enabled: Boolean(quoteId),
     queryFn: async () => {
@@ -181,4 +145,149 @@ export function useQuoteItems(quoteId: string | undefined) {
       }
     },
   })
+
+  const versionsQuery = useQuery({
+    queryKey: quoteId ? quoteKeys.versions(quoteId) : ['quote-versions', 'none'],
+    enabled: Boolean(quoteId),
+    queryFn: async () => {
+      if (!quoteId) return []
+      try {
+        return formal
+          ? await supabaseRepos.listQuotationVersions(quoteId)
+          : localDb.getQuotationVersions(quoteId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入版本'))
+      }
+    },
+  })
+
+  function invalidateAll() {
+    if (!quoteId) return
+    void queryClient.invalidateQueries({ queryKey: quoteKeys.all })
+    void queryClient.invalidateQueries({ queryKey: quoteKeys.one(quoteId) })
+    void queryClient.invalidateQueries({ queryKey: quoteKeys.items(quoteId) })
+    void queryClient.invalidateQueries({
+      queryKey: quoteKeys.versions(quoteId),
+    })
+  }
+
+  const updateMeta = useMutation({
+    mutationFn: async (
+      patch: Parameters<typeof localDb.updateQuotationMeta>[1],
+    ) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_create', isBrowserOnline())
+      return formal
+        ? supabaseRepos.updateQuotationMeta(user, quoteId, patch)
+        : localDb.updateQuotationMeta(quoteId, patch)
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const addItem = useMutation({
+    mutationFn: async (input: {
+      kind: QuotationItemKind
+      description: string
+      qty: number
+      unit?: string
+      unitPrice: number
+    }) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_create', isBrowserOnline())
+      return formal
+        ? supabaseRepos.addQuotationItem(user, { quotationId: quoteId, ...input })
+        : localDb.addQuotationItem({ quotationId: quoteId, ...input })
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const updateItem = useMutation({
+    mutationFn: async (input: {
+      itemId: string
+      patch: Parameters<typeof localDb.updateQuotationItem>[1]
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_create', isBrowserOnline())
+      return formal
+        ? supabaseRepos.updateQuotationItem(user, input.itemId, input.patch)
+        : localDb.updateQuotationItem(input.itemId, input.patch)
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const removeItem = useMutation({
+    mutationFn: async (itemId: string) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_create', isBrowserOnline())
+      if (formal) await supabaseRepos.removeQuotationItem(user, itemId)
+      else localDb.removeQuotationItem(itemId)
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const reorderItems = useMutation({
+    mutationFn: async (orderedIds: string[]) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_create', isBrowserOnline())
+      if (formal) {
+        await supabaseRepos.reorderQuotationItems(user, quoteId, orderedIds)
+      } else {
+        localDb.reorderQuotationItems(quoteId, orderedIds)
+      }
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const exportVersion = useMutation({
+    mutationFn: async (format: QuoteExportFormat = 'snapshot') => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.exportQuotationVersion(user, quoteId, format)
+        : localDb.exportQuotationVersion(
+            { id: user.id, role: user.role },
+            quoteId,
+            format,
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const setStatus = useMutation({
+    mutationFn: async (workflowStatus: QuoteWorkflowStatus) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.setQuoteWorkflowStatus(user, quoteId, workflowStatus)
+        : localDb.setQuoteWorkflowStatus(
+            { id: user.id, role: user.role },
+            quoteId,
+            workflowStatus,
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
+  return {
+    quote: quoteQuery.data ?? null,
+    items: itemsQuery.data ?? [],
+    versions: versionsQuery.data ?? [],
+    isLoading: quoteQuery.isLoading || itemsQuery.isLoading,
+    error: quoteQuery.error || itemsQuery.error,
+    updateMeta: updateMeta.mutateAsync,
+    addItem: addItem.mutateAsync,
+    updateItem: updateItem.mutateAsync,
+    removeItem: removeItem.mutateAsync,
+    reorderItems: reorderItems.mutateAsync,
+    exportVersion: exportVersion.mutateAsync,
+    setStatus: setStatus.mutateAsync,
+    saving:
+      updateMeta.isPending ||
+      addItem.isPending ||
+      updateItem.isPending ||
+      removeItem.isPending ||
+      reorderItems.isPending ||
+      exportVersion.isPending ||
+      setStatus.isPending,
+  }
 }

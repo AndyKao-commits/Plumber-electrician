@@ -6,13 +6,20 @@ import {
 } from '@/domain/emergencyLimits'
 import { applyInboundMovingAverage } from '@/domain/inventoryCost'
 import {
+  assertCanExportQuote,
+  assertCanMarkQuoteAccept,
+} from '@/domain/permissions'
+import {
   assertQuoteAssociation,
   assertQuoteDraftEditable,
   calcFinalPayable,
   calcQuoteItemAmount,
-  calcQuoteTax,
-  sumQuoteItems,
 } from '@/domain/rules'
+import {
+  buildQuoteExportSnapshot,
+  calcQuoteTotals,
+  legacyStatusFromWorkflow,
+} from '@/domain/quoteWorkflow'
 import type {
   AppNotice,
   AppUser,
@@ -22,6 +29,9 @@ import type {
   Quotation,
   QuotationItem,
   QuotationItemKind,
+  QuotationVersion,
+  QuoteExportFormat,
+  QuoteWorkflowStatus,
   RepairCase,
   SiteProject,
   TaxMode,
@@ -40,8 +50,9 @@ const KEYS = {
   shortcuts: 'eg.shortcuts.v2',
   emergencyEvents: 'eg.emergencyEvents.v1',
   repairCases: 'eg.repairCases.v1',
-  quotations: 'eg.quotations.v1',
+  quotations: 'eg.quotations.v2',
   quotationItems: 'eg.quotationItems.v1',
+  quotationVersions: 'eg.quotationVersions.v1',
   materials: 'eg.materials.v1',
 } as const
 
@@ -64,10 +75,32 @@ const emptyEvents: EmergencyLimitEvent[] = []
 const emptyRepairs: RepairCase[] = []
 const emptyQuotes: Quotation[] = []
 const emptyQuoteItems: QuotationItem[] = []
+const emptyQuoteVersions: QuotationVersion[] = []
 const emptyMaterials: MaterialStock[] = []
 
 function write<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value))
+}
+
+function normalizeLocalQuote(q: Quotation): Quotation {
+  const workflowStatus =
+    q.workflowStatus ||
+    (q.status === 'published'
+      ? 'exported'
+      : q.status === 'void'
+        ? 'cancelled'
+        : 'editing')
+  return {
+    ...q,
+    workflowStatus,
+    quoteNumber: q.quoteNumber || `Q-${q.id.slice(-8).toUpperCase()}`,
+    customerName: q.customerName || '',
+    siteAddress: q.siteAddress || '',
+    discount: Number(q.discount ?? 0) || 0,
+    currentVersion: Number(q.currentVersion ?? 0) || 0,
+    updatedAt: q.updatedAt || q.createdAt,
+    paymentTerms: q.paymentTerms ?? '依約定',
+  }
 }
 
 function seedIfNeeded() {
@@ -235,6 +268,7 @@ function seedIfNeeded() {
   write(KEYS.repairCases, seededRepairs)
   write(KEYS.quotations, emptyQuotes)
   write(KEYS.quotationItems, emptyQuoteItems)
+  write(KEYS.quotationVersions, emptyQuoteVersions)
   write(KEYS.materials, seededMaterials)
   write(KEYS.shortcuts, [
     'clock',
@@ -532,7 +566,11 @@ export const localDb = {
   },
 
   getQuotations(): Quotation[] {
-    return read(KEYS.quotations, emptyQuotes)
+    return read(KEYS.quotations, emptyQuotes).map(normalizeLocalQuote)
+  },
+
+  getQuotation(quoteId: string): Quotation | null {
+    return this.getQuotations().find((q) => q.id === quoteId) ?? null
   },
 
   getQuotationItems(quotationId: string): QuotationItem[] {
@@ -541,25 +579,44 @@ export const localDb = {
       .sort((a, b) => a.lineNo - b.lineNo)
   },
 
+  getQuotationVersions(quotationId: string): QuotationVersion[] {
+    return read(KEYS.quotationVersions, emptyQuoteVersions)
+      .filter((v) => v.quotationId === quotationId)
+      .sort((a, b) => b.versionNo - a.versionNo)
+  },
+
   recalcQuoteHeader(quoteId: string): Quotation {
     const all = this.getQuotations()
     const idx = all.findIndex((q) => q.id === quoteId)
     if (idx < 0) throw new Error('找不到報價')
     const current = all[idx]
-    assertQuoteDraftEditable(current)
+    assertQuoteDraftEditable({ workflowStatus: current.workflowStatus })
     const items = this.getQuotationItems(quoteId)
-    const { total } = sumQuoteItems(items)
-    const tax = calcQuoteTax({
-      amountBeforeTax: total,
+    const totals = calcQuoteTotals({
+      items,
+      discount: current.discount,
       taxMode: current.taxMode,
       taxRate: current.taxRate,
     })
     const next: Quotation = {
       ...current,
-      amountBeforeTax: total,
-      taxAmount: tax.taxAmount,
-      amountAfterTax: tax.amountAfterTax,
-      taxRate: tax.taxRate,
+      amountBeforeTax: totals.subtotal,
+      discount: totals.discount,
+      taxAmount: totals.taxAmount,
+      amountAfterTax: totals.total,
+      taxRate: totals.taxRate,
+      updatedAt: new Date().toISOString(),
+      workflowStatus:
+        current.workflowStatus === 'exported' ||
+        current.workflowStatus === 'sent_to_customer'
+          ? 'editing'
+          : current.workflowStatus,
+      status: legacyStatusFromWorkflow(
+        current.workflowStatus === 'exported' ||
+          current.workflowStatus === 'sent_to_customer'
+          ? 'editing'
+          : current.workflowStatus,
+      ),
     }
     all[idx] = next
     write(KEYS.quotations, all)
@@ -572,39 +629,80 @@ export const localDb = {
     projectId?: string | null
     repairCaseId?: string | null
     taxMode: TaxMode
-    amountBeforeTax?: number
-    taxRate?: number
+    customerName?: string
+    siteAddress?: string
+    paymentTerms?: string
+    validUntil?: string | null
+    notes?: string
+    discount?: number
   }): Quotation {
     assertQuoteAssociation(input)
     if (!input.taxMode) throw new Error('建立報價必須選擇稅務模式（REV-03）')
-
-    const amountBeforeTax = Number(input.amountBeforeTax ?? 0) || 0
-    const tax = calcQuoteTax({
-      amountBeforeTax,
-      taxMode: input.taxMode,
-      taxRate: input.taxRate,
-    })
-
+    const now = new Date().toISOString()
+    const id = `quo-${crypto.randomUUID()}`
     const quote: Quotation = {
-      id: `quo-${crypto.randomUUID()}`,
+      id,
       organizationId: ORG_ID,
       projectId: input.projectId ?? null,
       repairCaseId: input.repairCaseId ?? null,
       title: input.title.trim(),
       status: 'draft',
+      workflowStatus: 'editing',
+      quoteNumber: `Q-${now.slice(0, 10).replace(/-/g, '')}-${id.slice(-4).toUpperCase()}`,
+      customerName: (input.customerName || '').trim(),
+      siteAddress: (input.siteAddress || '').trim(),
       taxMode: input.taxMode,
-      taxRate: tax.taxRate,
-      amountBeforeTax,
-      taxAmount: tax.taxAmount,
-      amountAfterTax: tax.amountAfterTax,
+      taxRate: input.taxMode === 'zero' ? 0 : 0.05,
+      amountBeforeTax: 0,
+      discount: Number(input.discount ?? 0) || 0,
+      taxAmount: 0,
+      amountAfterTax: 0,
+      notes: input.notes ?? null,
+      paymentTerms: input.paymentTerms ?? '依約定',
+      validUntil: input.validUntil ?? null,
+      currentVersion: 0,
+      lastExportedAt: null,
       frozen: false,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       createdBy: input.createdBy,
     }
     const all = this.getQuotations()
     all.unshift(quote)
     write(KEYS.quotations, all)
     return quote
+  },
+
+  updateQuotationMeta(
+    quoteId: string,
+    patch: Partial<{
+      title: string
+      customerName: string
+      siteAddress: string
+      taxMode: TaxMode
+      discount: number
+      notes: string | null
+      paymentTerms: string | null
+      validUntil: string | null
+    }>,
+  ): Quotation {
+    const all = this.getQuotations()
+    const idx = all.findIndex((q) => q.id === quoteId)
+    if (idx < 0) throw new Error('找不到報價')
+    const current = all[idx]
+    assertQuoteDraftEditable({ workflowStatus: current.workflowStatus })
+    all[idx] = {
+      ...current,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+      workflowStatus:
+        current.workflowStatus === 'exported' ||
+        current.workflowStatus === 'sent_to_customer'
+          ? 'editing'
+          : current.workflowStatus,
+    }
+    write(KEYS.quotations, all)
+    return this.recalcQuoteHeader(quoteId)
   },
 
   addQuotationItem(input: {
@@ -615,9 +713,9 @@ export const localDb = {
     unit?: string
     unitPrice: number
   }): QuotationItem {
-    const quote = this.getQuotations().find((q) => q.id === input.quotationId)
+    const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
-    assertQuoteDraftEditable(quote)
+    assertQuoteDraftEditable({ workflowStatus: quote.workflowStatus })
 
     const description = input.description.trim()
     if (!description) throw new Error('請填寫細項說明')
@@ -649,36 +747,172 @@ export const localDb = {
     return item
   },
 
+  updateQuotationItem(
+    itemId: string,
+    patch: Partial<{
+      kind: QuotationItemKind
+      description: string
+      qty: number
+      unit: string
+      unitPrice: number
+    }>,
+  ): QuotationItem {
+    const all = read(KEYS.quotationItems, emptyQuoteItems)
+    const idx = all.findIndex((i) => i.id === itemId)
+    if (idx < 0) throw new Error('找不到細項')
+    const item = all[idx]
+    const quote = this.getQuotation(item.quotationId)
+    if (!quote) throw new Error('找不到報價')
+    assertQuoteDraftEditable({ workflowStatus: quote.workflowStatus })
+    const next = {
+      ...item,
+      ...patch,
+      description: (patch.description ?? item.description).trim(),
+      updatedAt: new Date().toISOString(),
+    }
+    next.amount = calcQuoteItemAmount({
+      qty: next.qty,
+      unitPrice: next.unitPrice,
+    })
+    all[idx] = next
+    write(KEYS.quotationItems, all)
+    this.recalcQuoteHeader(item.quotationId)
+    return next
+  },
+
   removeQuotationItem(itemId: string): void {
     const all = read(KEYS.quotationItems, emptyQuoteItems)
     const idx = all.findIndex((i) => i.id === itemId)
     if (idx < 0) throw new Error('找不到細項')
     const item = all[idx]
-    const quote = this.getQuotations().find((q) => q.id === item.quotationId)
+    const quote = this.getQuotation(item.quotationId)
     if (!quote) throw new Error('找不到報價')
-    assertQuoteDraftEditable(quote)
+    assertQuoteDraftEditable({ workflowStatus: quote.workflowStatus })
     all.splice(idx, 1)
     write(KEYS.quotationItems, all)
     this.recalcQuoteHeader(item.quotationId)
   },
 
-  publishQuotation(quoteId: string): Quotation {
+  reorderQuotationItems(quotationId: string, orderedIds: string[]): void {
+    const quote = this.getQuotation(quotationId)
+    if (!quote) throw new Error('找不到報價')
+    assertQuoteDraftEditable({ workflowStatus: quote.workflowStatus })
+    const all = read(KEYS.quotationItems, emptyQuoteItems)
+    const others = all.filter((i) => i.quotationId !== quotationId)
+    const mine = all.filter((i) => i.quotationId === quotationId)
+    const byId = new Map(mine.map((i) => [i.id, i]))
+    const reordered: QuotationItem[] = []
+    orderedIds.forEach((id, index) => {
+      const row = byId.get(id)
+      if (row) {
+        reordered.push({
+          ...row,
+          lineNo: index + 1,
+          updatedAt: new Date().toISOString(),
+        })
+        byId.delete(id)
+      }
+    })
+    for (const leftover of byId.values()) {
+      reordered.push({
+        ...leftover,
+        lineNo: reordered.length + 1,
+      })
+    }
+    write(KEYS.quotationItems, [...others, ...reordered])
+    this.recalcQuoteHeader(quotationId)
+  },
+
+  exportQuotationVersion(
+    actor: { id: string; role: string },
+    quoteId: string,
+    format: QuoteExportFormat = 'snapshot',
+  ): { quote: Quotation; version: QuotationVersion } {
+    assertCanExportQuote(actor.role)
     const all = this.getQuotations()
     const idx = all.findIndex((q) => q.id === quoteId)
     if (idx < 0) throw new Error('找不到報價')
     const current = all[idx]
-    if (!current.taxMode) throw new Error('發布前必須已有稅務模式')
-    const items = this.getQuotationItems(quoteId)
-    if (items.length === 0) throw new Error('請先新增至少一筆報價細項再發布')
-    const published: Quotation = {
-      ...current,
-      status: 'published',
-      frozen: true,
-      publishedAt: new Date().toISOString(),
+    if (current.workflowStatus === 'cancelled') {
+      throw new Error('已取消報價不可匯出')
     }
-    all[idx] = published
+    const items = this.getQuotationItems(quoteId)
+    if (items.length === 0) throw new Error('請先新增至少一筆細項再匯出')
+    const versionNo = current.currentVersion + 1
+    const snapshot = buildQuoteExportSnapshot({
+      quote: current,
+      items,
+      versionNo,
+    })
+    const version: QuotationVersion = {
+      id: `qver-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      quotationId: quoteId,
+      versionNo,
+      quoteNumber: current.quoteNumber,
+      snapshot,
+      exportedAt: new Date().toISOString(),
+      exportedBy: actor.id,
+      exportFormat: format,
+    }
+    const versions = read(KEYS.quotationVersions, emptyQuoteVersions)
+    versions.unshift(version)
+    write(KEYS.quotationVersions, versions)
+    const next: Quotation = {
+      ...current,
+      currentVersion: versionNo,
+      lastExportedAt: version.exportedAt,
+      workflowStatus: 'exported',
+      status: 'published',
+      updatedAt: version.exportedAt,
+    }
+    all[idx] = next
     write(KEYS.quotations, all)
-    return published
+    return { quote: next, version }
+  },
+
+  /** @deprecated use exportQuotationVersion */
+  publishQuotation(quoteId: string, actorRole = 'boss'): Quotation {
+    return this.exportQuotationVersion(
+      { id: 'local', role: actorRole },
+      quoteId,
+      'snapshot',
+    ).quote
+  },
+
+  setQuoteWorkflowStatus(
+    actor: { id: string; role: string },
+    quoteId: string,
+    workflowStatus: QuoteWorkflowStatus,
+  ): Quotation {
+    if (
+      workflowStatus === 'accepted' ||
+      workflowStatus === 'rejected' ||
+      workflowStatus === 'sent_to_customer'
+    ) {
+      assertCanMarkQuoteAccept(actor.role)
+    }
+    const all = this.getQuotations()
+    const idx = all.findIndex((q) => q.id === quoteId)
+    if (idx < 0) throw new Error('找不到報價')
+    const current = all[idx]
+    if (
+      workflowStatus === 'accepted' &&
+      current.workflowStatus !== 'exported' &&
+      current.workflowStatus !== 'sent_to_customer' &&
+      current.workflowStatus !== 'rejected'
+    ) {
+      throw new Error('請先匯出或提供客戶後再標記接受')
+    }
+    const next: Quotation = {
+      ...current,
+      workflowStatus,
+      status: legacyStatusFromWorkflow(workflowStatus),
+      updatedAt: new Date().toISOString(),
+    }
+    all[idx] = next
+    write(KEYS.quotations, all)
+    return next
   },
 
   getMaterials(): MaterialStock[] {

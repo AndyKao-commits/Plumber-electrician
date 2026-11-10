@@ -1,6 +1,7 @@
 import {
   assertCanApprovePurchase,
-  assertCanPublishQuote,
+  assertCanExportQuote,
+  assertCanMarkQuoteAccept,
   assertPermission,
   assertSameOrganization,
   hasPermission,
@@ -18,9 +19,13 @@ import {
   assertQuoteDraftEditable,
   calcFinalPayable,
   calcQuoteItemAmount,
-  calcQuoteTax,
   requiresPreApproval,
 } from '@/domain/rules'
+import {
+  buildQuoteExportSnapshot,
+  legacyStatusFromWorkflow,
+  workflowFromLegacy,
+} from '@/domain/quoteWorkflow'
 import type {
   AppNotice,
   AppUser,
@@ -34,6 +39,10 @@ import type {
   Quotation,
   QuotationItem,
   QuotationItemKind,
+  QuotationVersion,
+  QuoteExportFormat,
+  QuoteExportSnapshot,
+  QuoteWorkflowStatus,
   RepairCase,
   SiteDefect,
   SiteProject,
@@ -48,6 +57,47 @@ import { supabase } from '@/lib/supabase'
 function sb() {
   if (!supabase) throw new AppError('尚未設定 Supabase，無法使用正式模式')
   return supabase
+}
+
+const QUOTE_SELECT =
+  'id, organization_id, project_id, repair_case_id, title, status, workflow_status, quote_number, customer_name, site_address, tax_mode, tax_rate, amount_before_tax, discount, tax_amount, amount_after_tax, notes, payment_terms, valid_until, current_version, last_exported_at, frozen, created_at, updated_at, published_at, created_by'
+
+function mapQuotationRow(row: Record<string, unknown>): Quotation {
+  const status = row.status as Quotation['status']
+  const workflowStatus = workflowFromLegacy(
+    status,
+    row.workflow_status as string | null,
+  )
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    projectId: (row.project_id as string | null) ?? null,
+    repairCaseId: (row.repair_case_id as string | null) ?? null,
+    title: String(row.title),
+    status,
+    workflowStatus,
+    quoteNumber:
+      String(row.quote_number || '') ||
+      `Q-${String(row.id).replace(/-/g, '').slice(0, 8).toUpperCase()}`,
+    customerName: String(row.customer_name || ''),
+    siteAddress: String(row.site_address || ''),
+    taxMode: row.tax_mode as TaxMode,
+    taxRate: Number(row.tax_rate),
+    amountBeforeTax: Number(row.amount_before_tax),
+    discount: Number(row.discount ?? 0) || 0,
+    taxAmount: Number(row.tax_amount),
+    amountAfterTax: Number(row.amount_after_tax),
+    notes: (row.notes as string | null) ?? null,
+    paymentTerms: (row.payment_terms as string | null) ?? '依約定',
+    validUntil: (row.valid_until as string | null) ?? null,
+    currentVersion: Number(row.current_version ?? 0) || 0,
+    lastExportedAt: (row.last_exported_at as string | null) ?? null,
+    frozen: Boolean(row.frozen),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at || row.created_at),
+    publishedAt: (row.published_at as string | null) ?? null,
+    createdBy: String(row.created_by ?? ''),
+  }
 }
 
 function mapUser(row: {
@@ -751,28 +801,24 @@ export const supabaseRepos = {
   async listQuotations(): Promise<Quotation[]> {
     const { data, error } = await sb()
       .from('quotations')
-      .select(
-        'id, organization_id, project_id, repair_case_id, title, status, tax_mode, tax_rate, amount_before_tax, tax_amount, amount_after_tax, frozen, created_at, published_at, created_by',
-      )
-      .order('created_at', { ascending: false })
+      .select(QUOTE_SELECT)
+      .order('updated_at', { ascending: false })
     if (error) throw new AppError(toUserMessage(error, '無法載入報價'))
-    return (data ?? []).map((row) => ({
-      id: String(row.id),
-      organizationId: String(row.organization_id),
-      projectId: (row.project_id as string | null) ?? null,
-      repairCaseId: (row.repair_case_id as string | null) ?? null,
-      title: String(row.title),
-      status: row.status as Quotation['status'],
-      taxMode: row.tax_mode as TaxMode,
-      taxRate: Number(row.tax_rate),
-      amountBeforeTax: Number(row.amount_before_tax),
-      taxAmount: Number(row.tax_amount),
-      amountAfterTax: Number(row.amount_after_tax),
-      frozen: Boolean(row.frozen),
-      createdAt: String(row.created_at),
-      publishedAt: (row.published_at as string | null) ?? null,
-      createdBy: String(row.created_by),
-    }))
+    return (data ?? []).map((row) =>
+      mapQuotationRow(row as Record<string, unknown>),
+    )
+  },
+
+  async getQuotation(quoteId: string): Promise<Quotation> {
+    const qid = requireUuid(quoteId, '報價')
+    const { data, error } = await sb()
+      .from('quotations')
+      .select(QUOTE_SELECT)
+      .eq('id', qid)
+      .maybeSingle()
+    if (error) throw new AppError(toUserMessage(error, '無法讀取報價'))
+    if (!data) throw new AppError('找不到報價')
+    return mapQuotationRow(data as Record<string, unknown>)
   },
 
   async createQuotation(
@@ -782,8 +828,12 @@ export const supabaseRepos = {
       projectId?: string | null
       repairCaseId?: string | null
       taxMode: TaxMode
-      amountBeforeTax?: number
-      taxRate?: number
+      customerName?: string
+      siteAddress?: string
+      paymentTerms?: string
+      validUntil?: string | null
+      notes?: string
+      discount?: number
     },
   ): Promise<Quotation> {
     assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
@@ -793,12 +843,8 @@ export const supabaseRepos = {
     const repairCaseId = optionalUuid(input.repairCaseId, '維修案件')
     assertQuoteAssociation({ projectId, repairCaseId })
     if (!input.taxMode) throw new AppError('建立報價必須選擇稅務模式（REV-03）')
-    const amountBeforeTax = Number(input.amountBeforeTax ?? 0) || 0
-    const tax = calcQuoteTax({
-      amountBeforeTax,
-      taxMode: input.taxMode,
-      taxRate: input.taxRate,
-    })
+    const taxRate = input.taxMode === 'zero' ? 0 : 0.05
+    const quoteNumber = `Q-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
 
     const { data, error } = await sb()
       .from('quotations')
@@ -807,118 +853,220 @@ export const supabaseRepos = {
         repair_case_id: repairCaseId,
         title: input.title.trim(),
         status: 'draft',
+        workflow_status: 'editing',
+        quote_number: quoteNumber,
+        customer_name: (input.customerName || '').trim(),
+        site_address: (input.siteAddress || '').trim(),
         tax_mode: input.taxMode,
-        tax_rate: tax.taxRate,
-        amount_before_tax: amountBeforeTax,
-        tax_amount: tax.taxAmount,
-        amount_after_tax: tax.amountAfterTax,
+        tax_rate: taxRate,
+        amount_before_tax: 0,
+        discount: Number(input.discount ?? 0) || 0,
+        tax_amount: 0,
+        amount_after_tax: 0,
+        notes: input.notes ?? null,
+        payment_terms: input.paymentTerms ?? '依約定',
+        valid_until: input.validUntil ?? null,
+        current_version: 0,
         frozen: false,
         created_by: actor.id,
       })
-      .select(
-        'id, organization_id, project_id, repair_case_id, title, status, tax_mode, tax_rate, amount_before_tax, tax_amount, amount_after_tax, frozen, created_at, published_at, created_by',
-      )
+      .select(QUOTE_SELECT)
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法建立報價'))
-    const quote = {
-      id: String(data.id),
-      organizationId: String(data.organization_id),
-      projectId: (data.project_id as string | null) ?? null,
-      repairCaseId: (data.repair_case_id as string | null) ?? null,
-      title: String(data.title),
-      status: data.status as Quotation['status'],
-      taxMode: data.tax_mode as TaxMode,
-      taxRate: Number(data.tax_rate),
-      amountBeforeTax: Number(data.amount_before_tax),
-      taxAmount: Number(data.tax_amount),
-      amountAfterTax: Number(data.amount_after_tax),
-      frozen: Boolean(data.frozen),
-      createdAt: String(data.created_at),
-      publishedAt: (data.published_at as string | null) ?? null,
-      createdBy: String(data.created_by),
-    }
+    const quote = mapQuotationRow(data as Record<string, unknown>)
     assertSameOrganization(actor.organizationId, quote.organizationId)
     return quote
   },
 
-  async publishQuotation(actor: AppUser, quoteId: string): Promise<Quotation> {
-    assertCanPublishQuote(actor.role)
-    const qid = requireUuid(quoteId, '報價')
-    const { data: current, error: loadError } = await sb()
+  async updateQuotationMeta(
+    actor: AppUser,
+    quoteId: string,
+    patch: Partial<{
+      title: string
+      customerName: string
+      siteAddress: string
+      taxMode: TaxMode
+      discount: number
+      notes: string | null
+      paymentTerms: string | null
+      validUntil: string | null
+    }>,
+  ): Promise<Quotation> {
+    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const current = await this.getQuotation(quoteId)
+    assertSameOrganization(actor.organizationId, current.organizationId)
+    assertQuoteDraftEditable({ workflowStatus: current.workflowStatus })
+    const nextWs =
+      current.workflowStatus === 'exported' ||
+      current.workflowStatus === 'sent_to_customer'
+        ? 'editing'
+        : current.workflowStatus
+    const { data, error } = await sb()
       .from('quotations')
-      .select(
-        'id, organization_id, project_id, repair_case_id, title, status, tax_mode, tax_rate, amount_before_tax, tax_amount, amount_after_tax, frozen, created_at, published_at, created_by',
-      )
-      .eq('id', qid)
-      .maybeSingle()
-    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取報價'))
-    if (!current) throw new AppError('找不到報價')
-    assertSameOrganization(actor.organizationId, String(current.organization_id))
-    if (current.frozen || current.status === 'published') {
-      throw new AppError('報價已發布，稅務快照不可覆寫')
-    }
-    if (!current.tax_mode) throw new AppError('發布前必須已有稅務模式')
+      .update({
+        title: patch.title ?? current.title,
+        customer_name: patch.customerName ?? current.customerName,
+        site_address: patch.siteAddress ?? current.siteAddress,
+        tax_mode: patch.taxMode ?? current.taxMode,
+        discount: patch.discount ?? current.discount,
+        notes: patch.notes === undefined ? current.notes : patch.notes,
+        payment_terms:
+          patch.paymentTerms === undefined
+            ? current.paymentTerms
+            : patch.paymentTerms,
+        valid_until:
+          patch.validUntil === undefined ? current.validUntil : patch.validUntil,
+        workflow_status: nextWs,
+        status: legacyStatusFromWorkflow(nextWs),
+      })
+      .eq('id', quoteId)
+      .select(QUOTE_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新報價'))
+    return mapQuotationRow(data as Record<string, unknown>)
+  },
 
-    const { count, error: itemsCountError } = await sb()
-      .from('quotation_items')
-      .select('id', { count: 'exact', head: true })
-      .eq('quotation_id', qid)
-    if (itemsCountError) {
-      throw new AppError(toUserMessage(itemsCountError, '無法檢查報價細項'))
+  /** Export creates immutable version snapshot (primary formal action). */
+  async exportQuotationVersion(
+    actor: AppUser,
+    quoteId: string,
+    format: QuoteExportFormat = 'snapshot',
+  ): Promise<{ quote: Quotation; version: QuotationVersion }> {
+    assertCanExportQuote(actor.role)
+    const qid = requireUuid(quoteId, '報價')
+    const current = await this.getQuotation(qid)
+    assertSameOrganization(actor.organizationId, current.organizationId)
+    if (current.workflowStatus === 'cancelled') {
+      throw new AppError('已取消報價不可匯出')
     }
-    if (!count || count < 1) {
-      throw new AppError('請先新增至少一筆報價細項再發布')
+    const items = await this.listQuotationItems(qid)
+    if (items.length === 0) {
+      throw new AppError('請先新增至少一筆報價細項再匯出')
     }
+    const versionNo = current.currentVersion + 1
+    const snapshot = buildQuoteExportSnapshot({
+      quote: current,
+      items,
+      versionNo,
+    })
+    const { data: ver, error: verErr } = await sb()
+      .from('quotation_versions')
+      .insert({
+        quotation_id: qid,
+        version_no: versionNo,
+        quote_number: current.quoteNumber,
+        snapshot,
+        exported_by: actor.id,
+        export_format: format,
+      })
+      .select(
+        'id, organization_id, quotation_id, version_no, quote_number, snapshot, exported_at, exported_by, export_format',
+      )
+      .single()
+    if (verErr) throw new AppError(toUserMessage(verErr, '無法建立匯出版本'))
 
     const { data, error } = await sb()
       .from('quotations')
       .update({
+        current_version: versionNo,
+        last_exported_at: ver.exported_at,
+        workflow_status: 'exported',
         status: 'published',
-        frozen: true,
-        published_at: new Date().toISOString(),
+        published_at: ver.exported_at,
       })
       .eq('id', qid)
-      .eq('frozen', false)
-      .select(
-        'id, organization_id, project_id, repair_case_id, title, status, tax_mode, tax_rate, amount_before_tax, tax_amount, amount_after_tax, frozen, created_at, published_at, created_by',
-      )
+      .select(QUOTE_SELECT)
       .single()
-    if (error) throw new AppError(toUserMessage(error, '發布報價失敗'))
-    const quote = {
-      id: String(data.id),
-      organizationId: String(data.organization_id),
-      projectId: (data.project_id as string | null) ?? null,
-      repairCaseId: (data.repair_case_id as string | null) ?? null,
-      title: String(data.title),
-      status: data.status as Quotation['status'],
-      taxMode: data.tax_mode as TaxMode,
-      taxRate: Number(data.tax_rate),
-      amountBeforeTax: Number(data.amount_before_tax),
-      taxAmount: Number(data.tax_amount),
-      amountAfterTax: Number(data.amount_after_tax),
-      frozen: Boolean(data.frozen),
-      createdAt: String(data.created_at),
-      publishedAt: (data.published_at as string | null) ?? null,
-      createdBy: String(data.created_by),
+    if (error) throw new AppError(toUserMessage(error, '無法更新報價狀態'))
+
+    const quote = mapQuotationRow(data as Record<string, unknown>)
+    const version: QuotationVersion = {
+      id: String(ver.id),
+      organizationId: String(ver.organization_id),
+      quotationId: String(ver.quotation_id),
+      versionNo: Number(ver.version_no),
+      quoteNumber: String(ver.quote_number),
+      snapshot: ver.snapshot as QuoteExportSnapshot,
+      exportedAt: String(ver.exported_at),
+      exportedBy: (ver.exported_by as string | null) ?? null,
+      exportFormat: ver.export_format as QuoteExportFormat,
     }
-    void safeNotifyApprovers({
-      eventType: 'quote.published',
-      title: `報價已發布：${quote.title}`,
-      detail: `稅後金額 NT$${quote.amountAfterTax.toLocaleString()}`,
-      href: '/quotes',
-      asTodo: false,
-    })
     if (quote.createdBy) {
       void safeNotify({
         recipientIds: [quote.createdBy],
         eventType: 'quote.published',
-        title: `報價已發布：${quote.title}`,
-        detail: `稅後金額 NT$${quote.amountAfterTax.toLocaleString()}`,
-        href: '/quotes',
+        title: `報價已匯出：${quote.title}`,
+        detail: `${quote.quoteNumber} v${versionNo} · NT$${quote.amountAfterTax.toLocaleString()}`,
+        href: `/quotes/${quote.id}`,
         asTodo: false,
       })
     }
-    return quote
+    return { quote, version }
+  },
+
+  /** @deprecated Prefer exportQuotationVersion */
+  async publishQuotation(actor: AppUser, quoteId: string): Promise<Quotation> {
+    return (await this.exportQuotationVersion(actor, quoteId, 'snapshot')).quote
+  },
+
+  async setQuoteWorkflowStatus(
+    actor: AppUser,
+    quoteId: string,
+    workflowStatus: QuoteWorkflowStatus,
+  ): Promise<Quotation> {
+    if (
+      workflowStatus === 'accepted' ||
+      workflowStatus === 'rejected' ||
+      workflowStatus === 'sent_to_customer'
+    ) {
+      assertCanMarkQuoteAccept(actor.role)
+    }
+    const current = await this.getQuotation(quoteId)
+    assertSameOrganization(actor.organizationId, current.organizationId)
+    if (
+      workflowStatus === 'accepted' &&
+      current.workflowStatus !== 'exported' &&
+      current.workflowStatus !== 'sent_to_customer' &&
+      current.workflowStatus !== 'rejected'
+    ) {
+      throw new AppError('請先匯出或提供客戶後再標記接受')
+    }
+    const { data, error } = await sb()
+      .from('quotations')
+      .update({
+        workflow_status: workflowStatus,
+        status: legacyStatusFromWorkflow(workflowStatus),
+      })
+      .eq('id', quoteId)
+      .select(QUOTE_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新狀態'))
+    return mapQuotationRow(data as Record<string, unknown>)
+  },
+
+  async listQuotationVersions(quotationId: string): Promise<QuotationVersion[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('quotation_versions')
+      .select(
+        'id, organization_id, quotation_id, version_no, quote_number, snapshot, exported_at, exported_by, export_format',
+      )
+      .eq('quotation_id', qid)
+      .order('version_no', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入版本'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      quotationId: String(row.quotation_id),
+      versionNo: Number(row.version_no),
+      quoteNumber: String(row.quote_number),
+      snapshot: row.snapshot as QuoteExportSnapshot,
+      exportedAt: String(row.exported_at),
+      exportedBy: (row.exported_by as string | null) ?? null,
+      exportFormat: row.export_format as QuoteExportFormat,
+    }))
   },
 
   async listQuotationItems(quotationId: string): Promise<QuotationItem[]> {
@@ -962,18 +1110,9 @@ export const supabaseRepos = {
       financeAuthorized: actor.financeAuthorized,
     })
     const qid = requireUuid(input.quotationId, '報價')
-    const { data: quote, error: quoteError } = await sb()
-      .from('quotations')
-      .select('id, organization_id, status, frozen')
-      .eq('id', qid)
-      .maybeSingle()
-    if (quoteError) throw new AppError(toUserMessage(quoteError, '無法讀取報價'))
-    if (!quote) throw new AppError('找不到報價')
-    assertSameOrganization(actor.organizationId, String(quote.organization_id))
-    assertQuoteDraftEditable({
-      frozen: Boolean(quote.frozen),
-      status: String(quote.status),
-    })
+    const quote = await this.getQuotation(qid)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    assertQuoteDraftEditable({ workflowStatus: quote.workflowStatus })
 
     const description = input.description.trim()
     if (!description) throw new AppError('請填寫細項說明')
@@ -1008,6 +1147,81 @@ export const supabaseRepos = {
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法新增報價細項'))
+    if (
+      quote.workflowStatus === 'exported' ||
+      quote.workflowStatus === 'sent_to_customer'
+    ) {
+      await sb()
+        .from('quotations')
+        .update({
+          workflow_status: 'editing',
+          status: 'draft',
+        })
+        .eq('id', qid)
+    }
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      quotationId: String(data.quotation_id),
+      lineNo: Number(data.line_no),
+      kind: data.kind as QuotationItemKind,
+      description: String(data.description),
+      qty: Number(data.qty),
+      unit: String(data.unit),
+      unitPrice: Number(data.unit_price),
+      amount: Number(data.amount),
+      createdAt: String(data.created_at),
+      updatedAt: data.updated_at ? String(data.updated_at) : undefined,
+    }
+  },
+
+  async updateQuotationItem(
+    actor: AppUser,
+    itemId: string,
+    patch: Partial<{
+      kind: QuotationItemKind
+      description: string
+      qty: number
+      unit: string
+      unitPrice: number
+    }>,
+  ): Promise<QuotationItem> {
+    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const iid = requireUuid(itemId, '報價細項')
+    const { data: item, error: loadError } = await sb()
+      .from('quotation_items')
+      .select(
+        'id, organization_id, quotation_id, kind, description, qty, unit, unit_price',
+      )
+      .eq('id', iid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取細項'))
+    if (!item) throw new AppError('找不到細項')
+    assertSameOrganization(actor.organizationId, String(item.organization_id))
+    const quote = await this.getQuotation(String(item.quotation_id))
+    assertQuoteDraftEditable({ workflowStatus: quote.workflowStatus })
+    const qty = patch.qty ?? Number(item.qty)
+    const unitPrice = patch.unitPrice ?? Number(item.unit_price)
+    const amount = calcQuoteItemAmount({ qty, unitPrice })
+    const { data, error } = await sb()
+      .from('quotation_items')
+      .update({
+        kind: patch.kind ?? item.kind,
+        description: (patch.description ?? String(item.description)).trim(),
+        qty,
+        unit: patch.unit ?? String(item.unit),
+        unit_price: unitPrice,
+        amount,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', iid)
+      .select(
+        'id, organization_id, quotation_id, line_no, kind, description, qty, unit, unit_price, amount, created_at, updated_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新細項'))
     return {
       id: String(data.id),
       organizationId: String(data.organization_id),
@@ -1037,21 +1251,31 @@ export const supabaseRepos = {
     if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取細項'))
     if (!item) throw new AppError('找不到細項')
     assertSameOrganization(actor.organizationId, String(item.organization_id))
-
-    const { data: quote, error: quoteError } = await sb()
-      .from('quotations')
-      .select('status, frozen')
-      .eq('id', item.quotation_id)
-      .maybeSingle()
-    if (quoteError) throw new AppError(toUserMessage(quoteError, '無法讀取報價'))
-    if (!quote) throw new AppError('找不到報價')
-    assertQuoteDraftEditable({
-      frozen: Boolean(quote.frozen),
-      status: String(quote.status),
-    })
-
+    const quote = await this.getQuotation(String(item.quotation_id))
+    assertQuoteDraftEditable({ workflowStatus: quote.workflowStatus })
     const { error } = await sb().from('quotation_items').delete().eq('id', iid)
     if (error) throw new AppError(toUserMessage(error, '無法刪除報價細項'))
+  },
+
+  async reorderQuotationItems(
+    actor: AppUser,
+    quotationId: string,
+    orderedIds: string[],
+  ): Promise<void> {
+    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const quote = await this.getQuotation(quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    assertQuoteDraftEditable({ workflowStatus: quote.workflowStatus })
+    for (let i = 0; i < orderedIds.length; i++) {
+      const { error } = await sb()
+        .from('quotation_items')
+        .update({ line_no: i + 1, updated_at: new Date().toISOString() })
+        .eq('id', orderedIds[i])
+        .eq('quotation_id', quotationId)
+      if (error) throw new AppError(toUserMessage(error, '無法排序細項'))
+    }
   },
 
   async bindLineUserId(lineUserId: string | null): Promise<AppUser> {

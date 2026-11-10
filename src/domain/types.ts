@@ -98,7 +98,20 @@ export interface PurchaseRecord {
 
 export type TaxMode = 'inclusive' | 'exclusive' | 'zero'
 
+/** Legacy DB enum — kept for column compatibility; prefer workflowStatus. */
 export type QuoteStatus = 'draft' | 'published' | 'void'
+
+/**
+ * Case-centric quote workflow (primary UI status).
+ * Only `accepted` counts toward effective contract amount.
+ */
+export type QuoteWorkflowStatus =
+  | 'editing'
+  | 'exported'
+  | 'sent_to_customer'
+  | 'accepted'
+  | 'rejected'
+  | 'cancelled'
 
 export interface RepairCase {
   id: string
@@ -116,16 +129,28 @@ export interface Quotation {
   projectId?: string | null
   repairCaseId?: string | null
   title: string
+  /** @deprecated use workflowStatus */
   status: QuoteStatus
+  workflowStatus: QuoteWorkflowStatus
+  quoteNumber: string
+  customerName: string
+  siteAddress: string
   taxMode: TaxMode
   taxRate: number
-  /** Derived from sum(quotation_items.amount) when items exist (FIN-02). */
+  /** Subtotal from items (before discount). */
   amountBeforeTax: number
+  discount: number
   taxAmount: number
   amountAfterTax: number
-  /** Frozen on publish */
+  notes?: string | null
+  paymentTerms?: string | null
+  validUntil?: string | null
+  currentVersion: number
+  lastExportedAt?: string | null
+  /** Legacy; versions are the real freeze boundary. */
   frozen?: boolean
   createdAt: string
+  updatedAt: string
   publishedAt?: string | null
   createdBy: string
 }
@@ -146,6 +171,47 @@ export interface QuotationItem {
   amount: number
   createdAt: string
   updatedAt?: string
+}
+
+export type QuoteExportFormat = 'snapshot' | 'pdf' | 'csv' | 'print'
+
+export interface QuotationVersion {
+  id: string
+  organizationId: string
+  quotationId: string
+  versionNo: number
+  quoteNumber: string
+  snapshot: QuoteExportSnapshot
+  exportedAt: string
+  exportedBy?: string | null
+  exportFormat: QuoteExportFormat
+}
+
+export interface QuoteExportSnapshot {
+  quoteNumber: string
+  versionNo: number
+  quoteDate: string
+  title: string
+  customerName: string
+  siteAddress: string
+  taxMode: TaxMode
+  taxRate: number
+  items: Array<{
+    lineNo: number
+    kind: QuotationItemKind
+    description: string
+    qty: number
+    unit: string
+    unitPrice: number
+    amount: number
+  }>
+  subtotal: number
+  discount: number
+  taxAmount: number
+  total: number
+  paymentTerms: string
+  validUntil: string | null
+  notes: string
 }
 
 export interface MaterialStock {

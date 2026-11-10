@@ -191,6 +191,13 @@ async function handleEvent(
     return [textMsg(await handleBind(admin, bindCode, lineUserId))]
   }
 
+  // Quote cases: view-only (list / detail / export link) — no LINE editor
+  if (/報價管理|報價案件|報價/.test(text) && !/採購/.test(text)) {
+    const profile = await requireProfile(admin, lineUserId)
+    if ('error' in profile) return [textMsg(profile.error)]
+    return buildQuotesLineMessages(admin, profile)
+  }
+
   return handleTextCommand(admin, lineUserId, text)
 }
 
@@ -457,6 +464,10 @@ async function handlePostback(
 
   if (action === 'todo_view') {
     return viewTodo(admin, profile, params.id || '')
+  }
+
+  if (action === 'quote_view') {
+    return viewQuoteOnLine(admin, profile, params.id || '')
   }
 
   void lineToken
@@ -801,6 +812,134 @@ async function completePhotoBatch(admin: Sb, draft: DraftRow): Promise<LineMessa
         PHOTO_TYPE_LABELS[String(payload.photoType)] || payload.photoType
       }`,
       buttons: [{ label: '查看照片', uri: photosUri, style: 'primary' }],
+    }),
+  ]
+}
+
+async function buildQuotesLineMessages(
+  admin: Sb,
+  profile: Profile,
+): Promise<LineMessage[]> {
+  const { data, error } = await admin
+    .from('quotations')
+    .select(
+      'id, title, quote_number, customer_name, site_address, amount_after_tax, workflow_status, current_version, updated_at',
+    )
+    .eq('organization_id', profile.organization_id)
+    .order('updated_at', { ascending: false })
+    .limit(10)
+  if (error) {
+    console.warn('[line-webhook] quotes query failed', error.message)
+    return [textMsg('讀取報價失敗，請稍後再試。')]
+  }
+  const rows = data ?? []
+  if (rows.length === 0) {
+    return [
+      flexMenu({
+        altText: '尚無報價案件',
+        eyebrow: '報價管理',
+        title: '尚無報價案件',
+        body: '請到工程管家建立報價案件後再查看',
+        buttons: [
+          {
+            label: '開啟報價',
+            uri: `${appBaseUrl()}/quotes`,
+            style: 'primary',
+          },
+        ],
+      }),
+    ]
+  }
+
+  const appBase = appBaseUrl()
+  const bubbles = rows.map((q) => {
+    const status = String(q.workflow_status || 'editing')
+    const total = Number(q.amount_after_tax || 0)
+    return actionBubble({
+      eyebrow: '報價案件',
+      title: String(q.title || '報價').slice(0, 40),
+      body: `${q.quote_number || ''}\n客戶：${q.customer_name || '—'}\n總額：NT$${total.toLocaleString()}\n狀態：${status}${
+        q.current_version ? ` · v${q.current_version}` : ''
+      }`,
+      buttons: [
+        {
+          label: '查看細項',
+          data: `a=quote_view&id=${q.id}`,
+          style: 'primary',
+        },
+        {
+          label: '開啟匯出',
+          uri: `${appBase}/quotes/${q.id}?export=1`,
+          style: 'secondary',
+        },
+      ],
+    })
+  })
+
+  return [
+    {
+      type: 'flex',
+      altText: `報價案件 ${rows.length} 筆`,
+      contents: {
+        type: 'carousel',
+        contents: bubbles.slice(0, 10),
+      },
+    },
+  ]
+}
+
+async function viewQuoteOnLine(
+  admin: Sb,
+  profile: Profile,
+  quoteId: string,
+): Promise<LineMessage[]> {
+  const { data: quote, error } = await admin
+    .from('quotations')
+    .select(
+      'id, title, quote_number, customer_name, site_address, amount_after_tax, amount_before_tax, discount, tax_amount, workflow_status, current_version',
+    )
+    .eq('id', quoteId)
+    .eq('organization_id', profile.organization_id)
+    .maybeSingle()
+  if (error || !quote) {
+    return [textMsg('找不到此報價案件。')]
+  }
+  const { data: items } = await admin
+    .from('quotation_items')
+    .select('line_no, kind, description, qty, unit, unit_price, amount')
+    .eq('quotation_id', quoteId)
+    .order('line_no', { ascending: true })
+    .limit(20)
+  const lines = (items ?? [])
+    .map(
+      (i) =>
+        `${i.line_no}. ${i.description} ${i.qty}${i.unit} NT$${Number(i.amount).toLocaleString()}`,
+    )
+    .join('\n')
+  return [
+    flexMenu({
+      altText: `報價 ${quote.title}`,
+      eyebrow: '報價細項',
+      title: String(quote.title).slice(0, 40),
+      body: `${quote.quote_number || ''}\n客戶：${quote.customer_name || '—'}\n地址：${
+        quote.site_address || '—'
+      }\n小計 NT$${Number(quote.amount_before_tax || 0).toLocaleString()} · 折扣 NT$${Number(
+        quote.discount || 0,
+      ).toLocaleString()} · 稅額 NT$${Number(quote.tax_amount || 0).toLocaleString()}\n總額 NT$${Number(
+        quote.amount_after_tax || 0,
+      ).toLocaleString()}\n\n${lines || '（無細項）'}`,
+      buttons: [
+        {
+          label: '匯出報價連結',
+          uri: `${appBaseUrl()}/quotes/${quote.id}?export=1`,
+          style: 'primary',
+        },
+        {
+          label: '開啟案件',
+          uri: `${appBaseUrl()}/quotes/${quote.id}`,
+          style: 'secondary',
+        },
+      ],
     }),
   ]
 }
