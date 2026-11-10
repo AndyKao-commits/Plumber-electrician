@@ -154,6 +154,41 @@ export function assertPermission(
   }
 }
 
+export function assertCanPublishQuote(
+  role: UserRole | SpecRole | string,
+): void {
+  if (!hasPermission(role, PERMISSIONS.QUOTE_PUBLISH)) {
+    throw new Error('無權發布報價')
+  }
+}
+
+/** Admin/Member without finance grant must not read cost/margin/payroll/bank/ACL. */
+export function assertCanViewSensitiveFinance(
+  role: UserRole | SpecRole | string,
+  financeAuthorized = false,
+): void {
+  if (!canViewSensitiveFinance(role, financeAuthorized)) {
+    throw new Error('無權查看敏感財務資料')
+  }
+}
+
+export function assertCanViewCost(
+  role: UserRole | SpecRole | string,
+  financeAuthorized = false,
+): void {
+  if (!hasPermission(role, PERMISSIONS.FINANCE_COST_READ, { financeAuthorized })) {
+    throw new Error('無權查看成本資料')
+  }
+}
+
+export function assertCanManageAccess(
+  role: UserRole | SpecRole | string,
+): void {
+  if (!hasPermission(role, PERMISSIONS.SENSITIVE_ACCESS_CONTROL)) {
+    throw new Error('無權管理存取權限')
+  }
+}
+
 export function canViewSensitiveFinance(
   role: UserRole | SpecRole | string,
   financeAuthorized = false,

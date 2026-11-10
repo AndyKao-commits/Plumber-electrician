@@ -67,9 +67,10 @@ export function useQuotes(userId: string | undefined) {
 
   const publishMutation = useMutation({
     mutationFn: async (quoteId: string) => {
+      if (!user) throw new Error('尚未登入')
       try {
         return formal
-          ? await supabaseRepos.publishQuotation(quoteId)
+          ? await supabaseRepos.publishQuotation(user, quoteId)
           : localDb.publishQuotation(quoteId)
       } catch (e) {
         throw new Error(toUserMessage(e, '發布報價失敗'))

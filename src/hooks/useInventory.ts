@@ -3,6 +3,7 @@ import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
 import { supabaseRepos } from '@/lib/supabaseRepos'
+import { useUser } from '@/hooks/useUser'
 
 export const inventoryKeys = {
   all: ['inventory'] as const,
@@ -11,13 +12,16 @@ export const inventoryKeys = {
 export function useInventory(userId: string | undefined) {
   const queryClient = useQueryClient()
   const formal = isFormalMode()
+  const { user } = useUser()
 
   const listQuery = useQuery({
     queryKey: inventoryKeys.all,
     enabled: Boolean(userId),
     queryFn: async () => {
       try {
-        return formal ? await supabaseRepos.listMaterials() : localDb.getMaterials()
+        return formal
+          ? await supabaseRepos.listMaterials(user ?? undefined)
+          : localDb.getMaterials()
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入庫存'))
       }
@@ -30,9 +34,10 @@ export function useInventory(userId: string | undefined) {
       qty: number
       unitCost: number
     }) => {
+      if (!user) throw new Error('尚未登入')
       try {
         return formal
-          ? await supabaseRepos.inboundMaterial(input)
+          ? await supabaseRepos.inboundMaterial(user, input)
           : localDb.inboundMaterial(input)
       } catch (e) {
         throw new Error(toUserMessage(e, '入庫失敗'))

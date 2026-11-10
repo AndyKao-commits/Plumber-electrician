@@ -1,8 +1,12 @@
 import {
   assertCanApprovePurchase,
+  assertCanPublishQuote,
+  assertPermission,
+  assertSameOrganization,
   hasPermission,
   PERMISSIONS,
 } from '@/domain/permissions'
+import { isUuid, optionalUuid, requireUuid } from '@/lib/ids'
 import { safeNotify, safeNotifyApprovers } from '@/lib/lineNotify'
 import {
   assertEmergencyReserveAllowed,
@@ -165,7 +169,12 @@ export const supabaseRepos = {
     if (error) throw new AppError(toUserMessage(error, '登出失敗'))
   },
 
-  async listSites(): Promise<SiteProject[]> {
+  async listSites(actor?: AppUser): Promise<SiteProject[]> {
+    if (actor) {
+      assertPermission(actor.role, PERMISSIONS.SITE_READ, {
+        financeAuthorized: actor.financeAuthorized,
+      })
+    }
     const { data, error } = await sb()
       .from('sites')
       .select(
@@ -176,7 +185,14 @@ export const supabaseRepos = {
     return (data ?? []).map((row) => mapSite(row))
   },
 
-  async getSite(id: string): Promise<SiteProject | null> {
+  async getSite(id: string, actor?: AppUser): Promise<SiteProject | null> {
+    // Invalid route ids must not hit Postgres or crash the page.
+    if (!isUuid(id)) return null
+    if (actor) {
+      assertPermission(actor.role, PERMISSIONS.SITE_READ, {
+        financeAuthorized: actor.financeAuthorized,
+      })
+    }
     const { data, error } = await sb()
       .from('sites')
       .select(
@@ -185,15 +201,24 @@ export const supabaseRepos = {
       .eq('id', id)
       .maybeSingle()
     if (error) throw new AppError(toUserMessage(error, '無法載入工地'))
-    return data ? mapSite(data) : null
+    if (!data) return null
+    const site = mapSite(data)
+    if (actor) assertSameOrganization(actor.organizationId, site.organizationId)
+    return site
   },
 
-  async createSite(input: {
-    name: string
-    kind: SiteProject['kind']
-    address?: string
-    customerName?: string
-  }): Promise<SiteProject> {
+  async createSite(
+    actor: AppUser,
+    input: {
+      name: string
+      kind: SiteProject['kind']
+      address?: string
+      customerName?: string
+    },
+  ): Promise<SiteProject> {
+    assertPermission(actor.role, PERMISSIONS.SITE_WRITE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
     // organization_id set by DB trigger from current_user_org_id()
     const { data, error } = await sb()
       .from('sites')
@@ -209,10 +234,13 @@ export const supabaseRepos = {
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法建立工地'))
-    return mapSite(data)
+    const site = mapSite(data)
+    assertSameOrganization(actor.organizationId, site.organizationId)
+    return site
   },
 
   async getOpenAttendance(userId: string): Promise<AttendanceRecord | null> {
+    requireUuid(userId, '使用者')
     const { data, error } = await sb()
       .from('attendance')
       .select(
@@ -226,6 +254,7 @@ export const supabaseRepos = {
   },
 
   async listAttendance(userId: string): Promise<AttendanceRecord[]> {
+    requireUuid(userId, '使用者')
     const { data, error } = await sb()
       .from('attendance')
       .select(
@@ -243,13 +272,14 @@ export const supabaseRepos = {
     latitude?: number | null
     longitude?: number | null
   }): Promise<AttendanceRecord> {
-    const open = await this.getOpenAttendance(input.userId)
+    const userId = requireUuid(input.userId, '使用者')
+    const open = await this.getOpenAttendance(userId)
     if (open) throw new AppError('目前已在上班中，請先下班')
 
     const { data, error } = await sb()
       .from('attendance')
       .insert({
-        user_id: input.userId,
+        user_id: userId,
         status: 'clocked_in',
         clock_in_at: new Date().toISOString(),
         latitude: input.latitude ?? null,
@@ -272,7 +302,8 @@ export const supabaseRepos = {
   },
 
   async clockOut(userId: string): Promise<AttendanceRecord> {
-    const open = await this.getOpenAttendance(userId)
+    const uid = requireUuid(userId, '使用者')
+    const open = await this.getOpenAttendance(uid)
     if (!open) throw new AppError('目前沒有進行中的班次')
 
     const { data, error } = await sb()
@@ -282,7 +313,7 @@ export const supabaseRepos = {
         clock_out_at: new Date().toISOString(),
       })
       .eq('id', open.id)
-      .eq('user_id', userId)
+      .eq('user_id', uid)
       .select(
         'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
       )
@@ -300,14 +331,16 @@ export const supabaseRepos = {
   },
 
   async assignSite(userId: string, siteId: string): Promise<AttendanceRecord> {
-    const open = await this.getOpenAttendance(userId)
+    const uid = requireUuid(userId, '使用者')
+    const sid = requireUuid(siteId, '工地')
+    const open = await this.getOpenAttendance(uid)
     if (!open) throw new AppError('請先上班再選擇工地')
 
     const { data, error } = await sb()
       .from('attendance')
-      .update({ site_id: siteId, job_type: 'project' })
+      .update({ site_id: sid, job_type: 'project' })
       .eq('id', open.id)
-      .eq('user_id', userId)
+      .eq('user_id', uid)
       .select(
         'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
       )
@@ -333,7 +366,10 @@ export const supabaseRepos = {
     return (data ?? []).map((row) => mapPurchase(row))
   },
 
-  async listPendingPurchases(): Promise<PurchaseRecord[]> {
+  async listPendingPurchases(actor: AppUser): Promise<PurchaseRecord[]> {
+    assertPermission(actor.role, PERMISSIONS.PURCHASE_APPROVE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
     const { data, error } = await sb()
       .from('purchases')
       .select(
@@ -342,10 +378,20 @@ export const supabaseRepos = {
       .eq('status', 'pending_approval')
       .order('created_at', { ascending: false })
     if (error) throw new AppError(toUserMessage(error, '無法載入待核准採購'))
-    return (data ?? []).map((row) => mapPurchase(row))
+    return (data ?? [])
+      .map((row) => mapPurchase(row))
+      .filter((p) => {
+        try {
+          assertSameOrganization(actor.organizationId, p.organizationId)
+          return true
+        } catch {
+          return false
+        }
+      })
   },
 
   async emergencyUsedToday(userId: string, businessDate?: string): Promise<number> {
+    requireUuid(userId, '使用者')
     const day = businessDate ?? formatTaipei(new Date(), 'yyyy-MM-dd')
     const { data, error } = await sb()
       .from('emergency_limit_events')
@@ -380,6 +426,10 @@ export const supabaseRepos = {
       otherBuyerFees?: number
     },
   ): Promise<PurchaseRecord> {
+    assertPermission(actor.role, PERMISSIONS.PURCHASE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const siteId = optionalUuid(input.siteId, '工地')
     const finalPayable = calcFinalPayable(input)
     const businessDate = formatTaipei(new Date(), 'yyyy-MM-dd')
     const needsApproval = input.mode === 'normal' && requiresPreApproval(finalPayable)
@@ -407,7 +457,7 @@ export const supabaseRepos = {
       .from('purchases')
       .insert({
         user_id: actor.id,
-        site_id: input.siteId || null,
+        site_id: siteId,
         mode: input.mode,
         status: needsApproval ? 'pending_approval' : 'purchased',
         title: input.title.trim(),
@@ -456,16 +506,18 @@ export const supabaseRepos = {
   },
 
   async approvePurchase(actor: AppUser, purchaseId: string): Promise<PurchaseRecord> {
+    const pid = requireUuid(purchaseId, '採購')
     const { data: current, error: loadError } = await sb()
       .from('purchases')
       .select(
         'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
       )
-      .eq('id', purchaseId)
+      .eq('id', pid)
       .maybeSingle()
     if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取採購'))
     if (!current) throw new AppError('找不到採購')
     if (current.status !== 'pending_approval') throw new AppError('此採購不在待核准狀態')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
 
     assertCanApprovePurchase({
       actorRole: actor.role,
@@ -480,7 +532,7 @@ export const supabaseRepos = {
         approved_by: actor.id,
         approved_at: new Date().toISOString(),
       })
-      .eq('id', purchaseId)
+      .eq('id', pid)
       .select(
         'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
       )
@@ -503,16 +555,18 @@ export const supabaseRepos = {
     purchaseId: string,
     reason: string,
   ): Promise<PurchaseRecord> {
+    const pid = requireUuid(purchaseId, '採購')
     const { data: current, error: loadError } = await sb()
       .from('purchases')
       .select(
         'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
       )
-      .eq('id', purchaseId)
+      .eq('id', pid)
       .maybeSingle()
     if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取採購'))
     if (!current) throw new AppError('找不到採購')
     if (current.status !== 'pending_approval') throw new AppError('此採購不在待核准狀態')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
 
     assertCanApprovePurchase({
       actorRole: actor.role,
@@ -531,7 +585,7 @@ export const supabaseRepos = {
         approved_by: actor.id,
         approved_at: new Date().toISOString(),
       })
-      .eq('id', purchaseId)
+      .eq('id', pid)
       .select(
         'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
       )
@@ -544,7 +598,7 @@ export const supabaseRepos = {
         business_date: current.business_date,
         event_type: 'RELEASE',
         amount_delta: -Number(current.final_payable),
-        purchase_id: purchaseId,
+        purchase_id: pid,
         reason: `駁回釋放：${trimmed}`,
         created_by: actor.id,
       })
@@ -568,18 +622,23 @@ export const supabaseRepos = {
     purchaseId: string,
     reason: string,
   ): Promise<PurchaseRecord> {
+    const pid = requireUuid(purchaseId, '採購')
     const { data: current, error: loadError } = await sb()
       .from('purchases')
       .select(
         'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
       )
-      .eq('id', purchaseId)
+      .eq('id', pid)
       .maybeSingle()
     if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取採購'))
     if (!current) throw new AppError('找不到採購')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
     if (current.mode !== 'emergency') throw new AppError('僅緊急採購可走額度釋放')
     if (current.status === 'cancelled') throw new AppError('已取消')
-    if (actor.role !== 'boss' && actor.id !== current.user_id) {
+    if (
+      !hasPermission(actor.role, PERMISSIONS.PURCHASE_APPROVE) &&
+      actor.id !== current.user_id
+    ) {
       throw new AppError('無權取消此緊急採購')
     }
 
@@ -589,7 +648,7 @@ export const supabaseRepos = {
         status: 'cancelled',
         rejected_reason: reason,
       })
-      .eq('id', purchaseId)
+      .eq('id', pid)
       .select(
         'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason',
       )
@@ -601,7 +660,7 @@ export const supabaseRepos = {
       business_date: current.business_date,
       event_type: 'RELEASE',
       amount_delta: -Number(current.final_payable),
-      purchase_id: purchaseId,
+      purchase_id: pid,
       reason,
       created_by: actor.id,
     })
@@ -664,7 +723,12 @@ export const supabaseRepos = {
       taxRate?: number
     },
   ): Promise<Quotation> {
-    assertQuoteAssociation(input)
+    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const projectId = optionalUuid(input.projectId, '工程')
+    const repairCaseId = optionalUuid(input.repairCaseId, '維修案件')
+    assertQuoteAssociation({ projectId, repairCaseId })
     if (!input.taxMode) throw new AppError('建立報價必須選擇稅務模式（REV-03）')
     const tax = calcQuoteTax({
       amountBeforeTax: input.amountBeforeTax,
@@ -675,8 +739,8 @@ export const supabaseRepos = {
     const { data, error } = await sb()
       .from('quotations')
       .insert({
-        project_id: input.projectId ?? null,
-        repair_case_id: input.repairCaseId ?? null,
+        project_id: projectId,
+        repair_case_id: repairCaseId,
         title: input.title.trim(),
         status: 'draft',
         tax_mode: input.taxMode,
@@ -692,7 +756,7 @@ export const supabaseRepos = {
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法建立報價'))
-    return {
+    const quote = {
       id: String(data.id),
       organizationId: String(data.organization_id),
       projectId: (data.project_id as string | null) ?? null,
@@ -709,18 +773,23 @@ export const supabaseRepos = {
       publishedAt: (data.published_at as string | null) ?? null,
       createdBy: String(data.created_by),
     }
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    return quote
   },
 
-  async publishQuotation(quoteId: string): Promise<Quotation> {
+  async publishQuotation(actor: AppUser, quoteId: string): Promise<Quotation> {
+    assertCanPublishQuote(actor.role)
+    const qid = requireUuid(quoteId, '報價')
     const { data: current, error: loadError } = await sb()
       .from('quotations')
       .select(
         'id, organization_id, project_id, repair_case_id, title, status, tax_mode, tax_rate, amount_before_tax, tax_amount, amount_after_tax, frozen, created_at, published_at, created_by',
       )
-      .eq('id', quoteId)
+      .eq('id', qid)
       .maybeSingle()
     if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取報價'))
     if (!current) throw new AppError('找不到報價')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
     if (current.frozen || current.status === 'published') {
       throw new AppError('報價已發布，稅務快照不可覆寫')
     }
@@ -733,7 +802,7 @@ export const supabaseRepos = {
         frozen: true,
         published_at: new Date().toISOString(),
       })
-      .eq('id', quoteId)
+      .eq('id', qid)
       .eq('frozen', false)
       .select(
         'id, organization_id, project_id, repair_case_id, title, status, tax_mode, tax_rate, amount_before_tax, tax_amount, amount_after_tax, frozen, created_at, published_at, created_by',
@@ -795,7 +864,12 @@ export const supabaseRepos = {
     return mapUser(data)
   },
 
-  async listMaterials(): Promise<MaterialStock[]> {
+  async listMaterials(actor?: AppUser): Promise<MaterialStock[]> {
+    if (actor) {
+      assertPermission(actor.role, PERMISSIONS.INVENTORY_READ, {
+        financeAuthorized: actor.financeAuthorized,
+      })
+    }
     const { data, error } = await sb()
       .from('materials')
       .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
@@ -812,21 +886,29 @@ export const supabaseRepos = {
     }))
   },
 
-  async inboundMaterial(input: {
-    materialId: string
-    qty: number
-    unitCost: number
-  }): Promise<MaterialStock> {
+  async inboundMaterial(
+    actor: AppUser,
+    input: {
+      materialId: string
+      qty: number
+      unitCost: number
+    },
+  ): Promise<MaterialStock> {
+    assertPermission(actor.role, PERMISSIONS.INVENTORY_INBOUND, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const materialId = requireUuid(input.materialId, '材料')
     if (input.qty <= 0) throw new AppError('入庫數量必須大於 0')
     if (input.unitCost < 0) throw new AppError('入庫單價不可為負')
 
     const { data: current, error: loadError } = await sb()
       .from('materials')
       .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
-      .eq('id', input.materialId)
+      .eq('id', materialId)
       .maybeSingle()
     if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取材料'))
     if (!current) throw new AppError('找不到材料')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
 
     const next = applyInboundMovingAverage({
       oldQty: Number(current.qty),
@@ -843,7 +925,7 @@ export const supabaseRepos = {
         unit_cost: next.unitCost,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', input.materialId)
+      .eq('id', materialId)
       .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
       .single()
     if (error) throw new AppError(toUserMessage(error, '入庫失敗'))
@@ -859,12 +941,13 @@ export const supabaseRepos = {
   },
 
   async listNotices(userId: string): Promise<AppNotice[]> {
+    const uid = requireUuid(userId, '使用者')
     const { data, error } = await sb()
       .from('notices')
       .select(
         'id, organization_id, user_id, kind, title, detail, status, unread, href, created_at',
       )
-      .eq('user_id', userId)
+      .eq('user_id', uid)
       .order('created_at', { ascending: false })
     if (error) throw new AppError(toUserMessage(error, '無法載入通知'))
     return (data ?? []).map((row) => ({
@@ -882,18 +965,20 @@ export const supabaseRepos = {
   },
 
   async markNoticeRead(id: string): Promise<void> {
+    const nid = requireUuid(id, '通知')
     const { error } = await sb()
       .from('notices')
       .update({ unread: false })
-      .eq('id', id)
+      .eq('id', nid)
     if (error) throw new AppError(toUserMessage(error, '無法標記已讀'))
   },
 
   async completeNotice(id: string): Promise<void> {
+    const nid = requireUuid(id, '通知')
     const { error } = await sb()
       .from('notices')
       .update({ unread: false, status: 'done' })
-      .eq('id', id)
+      .eq('id', nid)
     if (error) throw new AppError(toUserMessage(error, '無法完成待辦'))
   },
 

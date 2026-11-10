@@ -4,6 +4,7 @@ import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
 import { supabaseRepos } from '@/lib/supabaseRepos'
+import { useUser } from '@/hooks/useUser'
 
 export const siteKeys = {
   all: ['sites'] as const,
@@ -37,12 +38,15 @@ function createLocalSite(input: {
 export function useSites() {
   const queryClient = useQueryClient()
   const formal = isFormalMode()
+  const { user } = useUser()
 
   const listQuery = useQuery({
     queryKey: siteKeys.list(),
     queryFn: async () => {
       try {
-        return formal ? await supabaseRepos.listSites() : localDb.getSites()
+        return formal
+          ? await supabaseRepos.listSites(user ?? undefined)
+          : localDb.getSites()
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入工地列表'))
       }
@@ -56,9 +60,10 @@ export function useSites() {
       address?: string
       customerName?: string
     }) => {
+      if (formal && !user) throw new Error('尚未登入')
       try {
         return formal
-          ? await supabaseRepos.createSite(input)
+          ? await supabaseRepos.createSite(user!, input)
           : createLocalSite(input)
       } catch (e) {
         throw new Error(toUserMessage(e, '無法建立工地'))
@@ -81,13 +86,16 @@ export function useSites() {
 
 export function useSite(id: string | undefined) {
   const formal = isFormalMode()
+  const { user } = useUser()
   return useQuery({
     queryKey: siteKeys.detail(id ?? 'missing'),
     enabled: Boolean(id),
     queryFn: async () => {
       if (!id) return null
       try {
-        return formal ? await supabaseRepos.getSite(id) : localDb.getSite(id)
+        return formal
+          ? await supabaseRepos.getSite(id, user ?? undefined)
+          : localDb.getSite(id)
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入工地'))
       }
