@@ -1,10 +1,12 @@
 # 工程交付說明（給工程師）
 
-## 官方原檔（已匯入 part1）
+## 官方原檔（part1＋part2 已匯入完整）
 
-- ZIP：`original/electrical_project_package_part1_balanced_70aa.zip`
-- 解壓：`original/chatgpt-part1/`
-- 文字版：`original/chatgpt-part1/extracted-text/` 與 `package/from-chatgpt-part1/`
+- 完整包：`original/electrical_project_complete_package.zip`
+- part1：`original/electrical_project_package_part1_balanced_70aa.zip`
+- part2：`original/electrical_project_package_part2_pdfs_04_09.zip`
+- 展開：`original/chatgpt-part1/`（Word 00～09、PDF 00～09）
+- 文字版：`original/chatgpt-part1/extracted-text/`
 
 **閱讀順序：** 先讀 `00_最終整合開發規格`，再 DOC-01～09。  
 若與早期文件衝突，以已確認政策與 DOC-08／09 為準；**不可假定已正式封版**。
