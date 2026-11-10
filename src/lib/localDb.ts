@@ -96,10 +96,19 @@ import type {
   QuotationVersion,
   QuoteExportFormat,
   QuoteWorkflowStatus,
+  RepairAssignment,
   RepairCase,
+  RepairCaseStatus,
+  RepairVisit,
   SiteProject,
   TaxMode,
 } from '@/domain/types'
+import {
+  assertProblemDescription,
+  nextRepairStatusAfterDispatch,
+  nextRepairStatusAfterVisit,
+  visitCreatesAttendance,
+} from '@/domain/repairs'
 import { formatTaipei } from '@/lib/time'
 
 const ORG_ID = 'org-demo'
@@ -113,7 +122,9 @@ const KEYS = {
   notices: 'eg.notices.v1',
   shortcuts: 'eg.shortcuts.v2',
   emergencyEvents: 'eg.emergencyEvents.v1',
-  repairCases: 'eg.repairCases.v1',
+  repairCases: 'eg.repairCases.v2',
+  repairAssignments: 'eg.repairAssignments.v1',
+  repairVisits: 'eg.repairVisits.v1',
   quotations: 'eg.quotations.v2',
   quotationItems: 'eg.quotationItems.v1',
   quotationVersions: 'eg.quotationVersions.v1',
@@ -152,6 +163,8 @@ const emptyPurchases: PurchaseRecord[] = []
 const emptyNotices: AppNotice[] = []
 const emptyEvents: EmergencyLimitEvent[] = []
 const emptyRepairs: RepairCase[] = []
+const emptyRepairAssignments: RepairAssignment[] = []
+const emptyRepairVisits: RepairVisit[] = []
 const emptyQuotes: Quotation[] = []
 const emptyQuoteItems: QuotationItem[] = []
 const emptyQuoteVersions: QuotationVersion[] = []
@@ -174,6 +187,22 @@ const emptyMaterials: MaterialStock[] = []
 
 function write<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value))
+}
+
+function normalizeLocalRepair(r: RepairCase & { title?: string }): RepairCase {
+  const problemDescription =
+    r.problemDescription?.trim() || r.title?.trim() || '（未填問題）'
+  return {
+    ...r,
+    caseNumber: r.caseNumber || `RC-${r.id.slice(-6)}`,
+    problemDescription,
+    title: r.title?.trim() || problemDescription,
+    status: r.status || 'pending_schedule',
+    customerName: r.customerName ?? null,
+    customerId: r.customerId ?? null,
+    siteId: r.siteId ?? null,
+    updatedAt: r.updatedAt || r.createdAt,
+  }
 }
 
 function normalizeLocalQuote(q: Quotation): Quotation {
@@ -305,10 +334,14 @@ function seedIfNeeded() {
     {
       id: 'repair-1',
       organizationId: ORG_ID,
+      caseNumber: 'RC-SEED-0001',
+      problemDescription: '廚房水管漏水',
+      title: '廚房水管漏水',
+      status: 'pending_schedule',
       siteId: 'site-b',
       customerName: '陳小姐',
-      title: '廚房水管漏水',
       createdAt: now,
+      updatedAt: now,
     },
   ]
 
@@ -360,6 +393,8 @@ function seedIfNeeded() {
   write(KEYS.notices, seededNotices)
   write(KEYS.emergencyEvents, emptyEvents)
   write(KEYS.repairCases, seededRepairs)
+  write(KEYS.repairAssignments, emptyRepairAssignments)
+  write(KEYS.repairVisits, emptyRepairVisits)
   write(KEYS.quotations, emptyQuotes)
   write(KEYS.quotationItems, emptyQuoteItems)
   write(KEYS.quotationVersions, emptyQuoteVersions)
@@ -672,6 +707,143 @@ export const localDb = {
 
   getRepairCases(): RepairCase[] {
     return read(KEYS.repairCases, emptyRepairs)
+      .map(normalizeLocalRepair)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  },
+
+  getRepairCase(id: string): RepairCase | null {
+    return this.getRepairCases().find((r) => r.id === id) ?? null
+  },
+
+  createRepairCase(
+    actor: { id: string; name?: string },
+    input: {
+      problemDescription: string
+      customerName?: string | null
+      customerId?: string | null
+      siteId?: string | null
+    },
+  ): RepairCase {
+    const problemDescription = assertProblemDescription(
+      input.problemDescription,
+    )
+    const now = new Date().toISOString()
+    const id = `repair-${crypto.randomUUID()}`
+    const row: RepairCase = {
+      id,
+      organizationId: ORG_ID,
+      caseNumber: `RC-${now.slice(0, 10).replace(/-/g, '')}-${id.slice(-4).toUpperCase()}`,
+      problemDescription,
+      title: problemDescription,
+      status: 'pending_schedule',
+      siteId: input.siteId || null,
+      customerId: input.customerId || null,
+      customerName: input.customerName?.trim() || null,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.repairCases, emptyRepairs)
+    all.unshift(row)
+    write(KEYS.repairCases, all)
+    return row
+  },
+
+  setRepairCaseStatus(
+    _actor: { id: string },
+    repairCaseId: string,
+    status: RepairCaseStatus,
+  ): RepairCase {
+    const all = read(KEYS.repairCases, emptyRepairs).map(normalizeLocalRepair)
+    const idx = all.findIndex((r) => r.id === repairCaseId)
+    if (idx < 0) throw new Error('找不到維修案件')
+    all[idx] = {
+      ...all[idx],
+      status,
+      updatedAt: new Date().toISOString(),
+    }
+    write(KEYS.repairCases, all)
+    return all[idx]
+  },
+
+  listRepairAssignments(repairCaseId: string): RepairAssignment[] {
+    return read(KEYS.repairAssignments, emptyRepairAssignments)
+      .filter((a) => a.repairCaseId === repairCaseId)
+      .sort((a, b) => b.assignedAt.localeCompare(a.assignedAt))
+  },
+
+  assignRepair(
+    actor: { id: string; name: string },
+    input: {
+      repairCaseId: string
+      assigneeUserId: string
+      assigneeName: string
+      note?: string | null
+    },
+  ): RepairAssignment {
+    const repair = this.getRepairCase(input.repairCaseId)
+    if (!repair) throw new Error('找不到維修案件')
+    const now = new Date().toISOString()
+    const row: RepairAssignment = {
+      id: `ra-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      repairCaseId: repair.id,
+      assigneeUserId: input.assigneeUserId,
+      assigneeName: input.assigneeName.trim() || '未命名',
+      note: input.note?.trim() || null,
+      assignedAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.repairAssignments, emptyRepairAssignments)
+    all.unshift(row)
+    write(KEYS.repairAssignments, all)
+    const next = nextRepairStatusAfterDispatch(repair.status)
+    if (next !== repair.status) {
+      this.setRepairCaseStatus(actor, repair.id, next)
+    }
+    return row
+  },
+
+  listRepairVisits(repairCaseId: string): RepairVisit[] {
+    return read(KEYS.repairVisits, emptyRepairVisits)
+      .filter((v) => v.repairCaseId === repairCaseId)
+      .sort((a, b) => b.visitedAt.localeCompare(a.visitedAt))
+  },
+
+  recordRepairVisit(
+    actor: { id: string; name: string },
+    input: {
+      repairCaseId: string
+      note?: string | null
+      visitedAt?: string
+    },
+  ): RepairVisit {
+    const repair = this.getRepairCase(input.repairCaseId)
+    if (!repair) throw new Error('找不到維修案件')
+    // REP-03: explicitly do not create attendance
+    if (visitCreatesAttendance()) {
+      throw new Error('內部錯誤：到場不得建立出勤')
+    }
+    const now = input.visitedAt || new Date().toISOString()
+    const row: RepairVisit = {
+      id: `rv-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      repairCaseId: repair.id,
+      visitorUserId: actor.id,
+      visitorName: actor.name,
+      note: input.note?.trim() || null,
+      visitedAt: now,
+      createdBy: actor.id,
+      attendanceCreated: false,
+    }
+    const all = read(KEYS.repairVisits, emptyRepairVisits)
+    all.unshift(row)
+    write(KEYS.repairVisits, all)
+    const next = nextRepairStatusAfterVisit(repair.status)
+    if (next !== repair.status) {
+      this.setRepairCaseStatus(actor, repair.id, next)
+    }
+    return row
   },
 
   listCustomers(): Customer[] {

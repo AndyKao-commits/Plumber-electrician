@@ -229,7 +229,7 @@ export function QuotesPage() {
                   onChange={(e) => {
                     setRepairCaseId(e.target.value)
                     const r = repairCases.find((x) => x.id === e.target.value)
-                    if (r && !customerName) setCustomerName(r.customerName)
+                    if (r && !customerName) setCustomerName(r.customerName || '')
                   }}
                   required
                   disabled={repairCases.length === 0}
@@ -239,7 +239,8 @@ export function QuotesPage() {
                   ) : null}
                   {repairCases.map((r) => (
                     <option key={r.id} value={r.id}>
-                      {r.title}（{r.customerName}）
+                      {r.problemDescription || r.title}
+                      {r.customerName ? `（${r.customerName}）` : ''}
                     </option>
                   ))}
                 </select>
@@ -270,8 +271,8 @@ export function QuotesPage() {
               onSubmit={(e) => {
                 e.preventDefault()
                 void createRepairCase({
-                  title: repairTitle,
-                  customerName: repairCustomer,
+                  problemDescription: repairTitle,
+                  customerName: repairCustomer || null,
                   siteId: repairSiteId || null,
                 }).then(() => {
                   setRepairTitle('')
@@ -281,7 +282,7 @@ export function QuotesPage() {
               }}
             >
               <div className="field">
-                <label htmlFor="repair-title">標題</label>
+                <label htmlFor="repair-title">問題描述（必填）</label>
                 <input
                   id="repair-title"
                   value={repairTitle}
@@ -290,12 +291,11 @@ export function QuotesPage() {
                 />
               </div>
               <div className="field">
-                <label htmlFor="repair-customer">客戶</label>
+                <label htmlFor="repair-customer">客戶（選填）</label>
                 <input
                   id="repair-customer"
                   value={repairCustomer}
                   onChange={(e) => setRepairCustomer(e.target.value)}
-                  required
                 />
               </div>
               <div className="field">

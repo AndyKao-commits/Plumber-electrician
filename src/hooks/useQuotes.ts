@@ -126,13 +126,25 @@ export function useQuotes(userId: string | undefined) {
 
   const createRepairMutation = useMutation({
     mutationFn: async (input: {
-      title: string
-      customerName: string
+      problemDescription: string
+      customerName?: string | null
       siteId?: string | null
+      /** @deprecated */
+      title?: string
     }) => {
       if (!user) throw new Error('尚未登入')
-      if (!formal) throw new Error('本機示範模式請使用既有維修案件')
-      return supabaseRepos.createRepairCase(user, input)
+      const payload = {
+        problemDescription:
+          input.problemDescription || input.title || '',
+        customerName: input.customerName || null,
+        siteId: input.siteId || null,
+      }
+      return formal
+        ? supabaseRepos.createRepairCase(user, payload)
+        : localDb.createRepairCase(
+            { id: user.id, name: user.name },
+            payload,
+          )
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['repair-cases'] })
