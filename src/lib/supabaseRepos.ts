@@ -916,6 +916,17 @@ export const supabaseRepos = {
     return mapUser(data)
   },
 
+  async createLineBindCode(): Promise<{ code: string; expiresAt: string }> {
+    const { data, error } = await sb().rpc('create_line_bind_code')
+    if (error) throw new AppError(toUserMessage(error, '無法產生 LINE 綁定碼'))
+    const row = Array.isArray(data) ? data[0] : data
+    if (!row?.code) throw new AppError('無法產生 LINE 綁定碼')
+    return {
+      code: String(row.code),
+      expiresAt: String(row.expires_at),
+    }
+  },
+
   async listMaterials(actor?: AppUser): Promise<MaterialStock[]> {
     if (actor) {
       assertPermission(actor.role, PERMISSIONS.INVENTORY_READ, {

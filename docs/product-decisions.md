@@ -116,6 +116,7 @@ Admin **不得因此自動取得**（須獨立細項授權，與採購／報價 
 
 LINE 官方帳號只作操作入口：
 - 使用者主動傳訊或加好友時，由 Edge Function `line-webhook` **回覆**功能選單（六個入口連結）。
+- 個人帳號綁定：App 產生短時綁定碼 → 使用者對 OA 傳「綁定 代碼」→ 寫入 `profiles.line_user_id`（不作登入憑證）。
 - 通知與待辦只寫入系統內（`create_org_notices`）；`safeNotify` 不再 enqueue outbox、不再呼叫 `line-push`。
 
 硬性約束：

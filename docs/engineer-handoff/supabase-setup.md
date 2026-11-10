@@ -66,6 +66,14 @@ bash scripts/deploy-line-webhook.sh
 - 建議關閉 Messaging API 的「自動回應訊息／歡迎訊息」以免與 webhook 搶回覆
 - 主流程通知：只寫系統內通知；`safeNotify` **不**呼叫 `line-push`
 
+## 4b. 個人 LINE 綁定碼
+
+在 SQL Editor 執行：`supabase/migrations/20261110_line_bind_code.sql`（或整份 `apply.sql` 末段）。
+
+流程：App「今日團隊」→ 產生綁定碼 → LINE 傳「綁定 代碼」→ webhook 寫入 `profiles.line_user_id`。
+
+重新部署 `line-webhook` 後才支援綁定指令。
+
 ## 5. 驗證
 
 - Production：登入頁顯示「Supabase 正式模式」

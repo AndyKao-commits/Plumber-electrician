@@ -11,14 +11,27 @@ export function TeamPage() {
     bindLineUserId,
     isBindingLine,
     bindLineError,
+    createLineBindCode,
+    isCreatingLineBindCode,
+    createLineBindCodeError,
+    refetch,
   } = useUser()
   const [lineDraft, setLineDraft] = useState<string | null>(null)
+  const [bindCode, setBindCode] = useState<string | null>(null)
+  const [bindExpiresAt, setBindExpiresAt] = useState<string | null>(null)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const lineUserId = lineDraft ?? user?.lineUserId ?? ''
 
   async function onBindLine(event: FormEvent) {
     event.preventDefault()
     const next = await bindLineUserId(lineUserId.trim() || null)
     setLineDraft(next.lineUserId ?? '')
+  }
+
+  async function onCreateBindCode() {
+    const result = await createLineBindCode()
+    setBindCode(result.code)
+    setBindExpiresAt(result.expiresAt)
   }
 
   return (
@@ -35,52 +48,104 @@ export function TeamPage() {
 
       {isFormalMode ? (
         <section className="panel stack">
-          <strong>LINE 入口（僅回覆）</strong>
+          <strong>個人 LINE 綁定</strong>
           <p className="muted" style={{ margin: 0 }}>
-            系統不主動推播 LINE。請對官方帳號傳任意訊息（或加好友），會回覆功能選單連結。
-            登入仍用 Email／密碼；通知與待辦只在系統內。
+            系統不主動推播。綁定後，官方帳號傳訊會對應到你的系統帳號。
           </p>
-          <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-            下方綁定為選用（記錄自己的 LINE User ID），與推播無關。
-          </p>
-          <form className="stack" onSubmit={(e) => void onBindLine(e)}>
-            <div className="field">
-              <label htmlFor="line-user-id">LINE User ID（選填）</label>
-              <input
-                id="line-user-id"
-                value={lineUserId}
-                onChange={(e) => setLineDraft(e.target.value)}
-                placeholder="Uxxxxxxxx…（可留空）"
-                autoComplete="off"
-              />
-            </div>
-            {bindLineError ? (
-              <p style={{ color: 'var(--danger)', margin: 0 }}>{bindLineError.message}</p>
-            ) : null}
-            <div className="row" style={{ gap: 8 }}>
-              <button className="btn btn-steel" type="submit" disabled={isBindingLine}>
-                {isBindingLine ? '儲存中…' : '儲存綁定'}
-              </button>
+
+          {user?.lineUserId ? (
+            <div className="site-link stack">
+              <strong style={{ margin: 0 }}>已綁定</strong>
+              <p className="muted" style={{ margin: 0, wordBreak: 'break-all' }}>
+                {user.lineUserId}
+              </p>
               <button
                 className="btn btn-ghost"
                 type="button"
-                disabled={isBindingLine || !user?.lineUserId}
+                disabled={isBindingLine}
                 onClick={() => {
                   setLineDraft('')
+                  setBindCode(null)
                   void bindLineUserId(null).then(() => setLineDraft(null))
                 }}
               >
                 解除綁定
               </button>
             </div>
-            {user?.lineUserId ? (
-              <p className="muted" style={{ margin: 0 }}>
-                目前已綁定：{user.lineUserId}
-              </p>
-            ) : (
-              <p className="muted" style={{ margin: 0 }}>尚未綁定（不影響使用）</p>
-            )}
-          </form>
+          ) : (
+            <div className="stack">
+              <ol className="muted" style={{ margin: 0, paddingLeft: '1.2rem' }}>
+                <li>按「產生綁定碼」（10 分鐘內有效）</li>
+                <li>打開 LINE 官方帳號，傳送：綁定 代碼</li>
+                <li>收到「綁定成功」後，回這裡按「重新整理」</li>
+              </ol>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-steel"
+                  type="button"
+                  disabled={isCreatingLineBindCode}
+                  onClick={() => void onCreateBindCode()}
+                >
+                  {isCreatingLineBindCode ? '產生中…' : '產生綁定碼'}
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  onClick={() => void refetch()}
+                >
+                  重新整理
+                </button>
+              </div>
+              {createLineBindCodeError ? (
+                <p style={{ color: 'var(--danger)', margin: 0 }}>
+                  {createLineBindCodeError.message}
+                </p>
+              ) : null}
+              {bindCode ? (
+                <div className="site-link stack">
+                  <p className="muted" style={{ margin: 0 }}>請在 LINE 傳送：</p>
+                  <strong style={{ fontSize: '1.4rem', letterSpacing: '0.12em' }}>
+                    綁定 {bindCode}
+                  </strong>
+                  {bindExpiresAt ? (
+                    <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+                      有效至 {new Date(bindExpiresAt).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}（台北時間）
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            style={{ alignSelf: 'flex-start' }}
+          >
+            {showAdvanced ? '收合進階' : '進階：手動貼上 LINE User ID'}
+          </button>
+
+          {showAdvanced ? (
+            <form className="stack" onSubmit={(e) => void onBindLine(e)}>
+              <div className="field">
+                <label htmlFor="line-user-id">LINE User ID</label>
+                <input
+                  id="line-user-id"
+                  value={lineUserId}
+                  onChange={(e) => setLineDraft(e.target.value)}
+                  placeholder="Uxxxxxxxx…"
+                  autoComplete="off"
+                />
+              </div>
+              {bindLineError ? (
+                <p style={{ color: 'var(--danger)', margin: 0 }}>{bindLineError.message}</p>
+              ) : null}
+              <button className="btn btn-steel" type="submit" disabled={isBindingLine}>
+                {isBindingLine ? '儲存中…' : '儲存綁定'}
+              </button>
+            </form>
+          ) : null}
         </section>
       ) : null}
 

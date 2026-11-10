@@ -1,4 +1,7 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
+
 const DEFAULT_APP_URL = 'https://plumber-electrician-seven.vercel.app'
+const BIND_RE = /^(?:綁定|bind)\s*([A-Za-z0-9]{6})\s*$/i
 
 type LineEvent = {
   type?: string
@@ -13,6 +16,8 @@ Deno.serve(async (req) => {
   const token = Deno.env.get('LINE_CHANNEL_ACCESS_TOKEN') ?? ''
   const secret = Deno.env.get('LINE_CHANNEL_SECRET') ?? ''
   const appUrl = (Deno.env.get('APP_PUBLIC_URL') || DEFAULT_APP_URL).replace(/\/$/, '')
+  const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 
   if (req.method === 'GET' || req.method === 'HEAD') {
     return json({
@@ -20,6 +25,7 @@ Deno.serve(async (req) => {
       mode: 'reply_only',
       hasToken: token.length > 0,
       hasSecret: secret.length > 0,
+      hasServiceKey: serviceKey.length > 0,
       appUrl,
     })
   }
@@ -53,6 +59,13 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: 'invalid json' }, 400)
   }
 
+  const admin =
+    supabaseUrl && serviceKey
+      ? createClient(supabaseUrl, serviceKey, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        })
+      : null
+
   const events = body.events ?? []
   console.info('[line-webhook] events', events.length, events.map((e) => e.type).join(','))
 
@@ -63,13 +76,75 @@ Deno.serve(async (req) => {
     if (event.type !== 'message' && event.type !== 'follow' && event.type !== 'postback') {
       continue
     }
-    const ok = await replyMenu(token, event.replyToken, appUrl)
+
+    const lineUserId = String(event.source?.userId ?? '').trim()
+    const text = String(event.message?.text ?? '').trim()
+    const bindMatch = text.match(BIND_RE)
+
+    let replyText: string
+    if (bindMatch) {
+      replyText = await handleBind(admin, bindMatch[1], lineUserId)
+    } else if (event.type === 'follow') {
+      replyText = menuText(appUrl) + '\n\n若要綁定個人帳號：到系統「今日團隊」產生綁定碼，再傳「綁定 代碼」。'
+    } else {
+      replyText = menuText(appUrl) + '\n\n綁定個人帳號：系統產生綁定碼後，傳「綁定 代碼」給我。'
+    }
+
+    const ok = await replyTextMessage(token, event.replyToken, replyText)
     if (ok) replied += 1
     else failed += 1
   }
 
   return json({ ok: true, replied, failed, eventCount: events.length })
 })
+
+async function handleBind(
+  admin: ReturnType<typeof createClient> | null,
+  code: string,
+  lineUserId: string,
+): Promise<string> {
+  if (!admin) {
+    return '綁定失敗：伺服器尚未設定資料庫金鑰。請稍後再試或聯絡管理員。'
+  }
+  if (!lineUserId) {
+    return '綁定失敗：讀不到你的 LINE User ID。'
+  }
+
+  const { data, error } = await admin.rpc('consume_line_bind_code', {
+    p_code: code,
+    p_line_user_id: lineUserId,
+  })
+
+  if (error) {
+    console.warn('[line-webhook] consume failed', error.message)
+    return '綁定失敗：系統錯誤，請稍後再試。'
+  }
+
+  const result = data as { ok?: boolean; error?: string; name?: string } | null
+  if (!result?.ok) {
+    const err = result?.error ?? 'unknown'
+    if (err === 'code_not_found_or_expired') {
+      return '綁定失敗：代碼無效或已過期。請回系統重新產生綁定碼。'
+    }
+    return `綁定失敗（${err}）。請回系統重新產生綁定碼。`
+  }
+
+  const name = result.name ? `，${result.name}` : ''
+  return `綁定成功${name}！之後在官方帳號傳訊可對應到你的系統帳號。`
+}
+
+function menuText(appUrl: string) {
+  return [
+    '工程管家入口（僅回覆、不主動推播）',
+    '',
+    `上下班打卡：${appUrl}/attendance`,
+    `切換工地：${appUrl}/sites`,
+    `施工回報：${appUrl}/sites`,
+    `材料採購：${appUrl}/purchases`,
+    `我的出勤：${appUrl}/attendance`,
+    `工程系統：${appUrl}/`,
+  ].join('\n')
+}
 
 async function verifyLineSignature(body: string, signature: string, channelSecret: string) {
   if (!signature) return false
@@ -92,25 +167,7 @@ async function verifyLineSignature(body: string, signature: string, channelSecre
   }
 }
 
-async function replyMenu(token: string, replyToken: string, appUrl: string) {
-  const lines = [
-    '工程管家入口（僅回覆、不主動推播）',
-    '',
-    `上下班打卡：${appUrl}/attendance`,
-    `切換工地：${appUrl}/sites`,
-    `施工回報：${appUrl}/sites`,
-    `材料採購：${appUrl}/purchases`,
-    `我的出勤：${appUrl}/attendance`,
-    `工程系統：${appUrl}/`,
-  ]
-
-  const messages = [
-    {
-      type: 'text',
-      text: lines.join('\n').slice(0, 4000),
-    },
-  ]
-
+async function replyTextMessage(token: string, replyToken: string, text: string) {
   try {
     const res = await fetch('https://api.line.me/v2/bot/message/reply', {
       method: 'POST',
@@ -118,14 +175,15 @@ async function replyMenu(token: string, replyToken: string, appUrl: string) {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ replyToken, messages }),
+      body: JSON.stringify({
+        replyToken,
+        messages: [{ type: 'text', text: text.slice(0, 4000) }],
+      }),
     })
     if (!res.ok) {
-      const errText = (await res.text()).slice(0, 300)
-      console.warn('[line-webhook] reply failed', res.status, errText)
+      console.warn('[line-webhook] reply failed', res.status, (await res.text()).slice(0, 300))
       return false
     }
-    console.info('[line-webhook] reply ok')
     return true
   } catch (err) {
     console.warn('[line-webhook] reply threw', String(err).slice(0, 200))
