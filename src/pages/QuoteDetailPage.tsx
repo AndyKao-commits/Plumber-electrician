@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import {
+  canSoftDeleteQuoteCase,
+  canSoftDeleteQuoteVersion,
+} from '@/domain/quoteDelete'
 import { hasPermission, PERMISSIONS } from '@/domain/permissions'
 import {
   CUSTOMER_ACCEPT_LABELS,
@@ -8,20 +12,28 @@ import {
   isQuoteEditable,
 } from '@/domain/quoteWorkflow'
 import { QUOTE_ITEM_KIND_LABELS } from '@/domain/rules'
-import type { QuotationItemKind, TaxMode } from '@/domain/types'
+import type {
+  QuoteExportSnapshot,
+  QuotationItemKind,
+  TaxMode,
+} from '@/domain/types'
 import { useQuoteDetail } from '@/hooks/useQuotes'
 import { useUser } from '@/hooks/useUser'
 import {
   buildQuoteCsv,
   buildQuotePrintHtml,
+  downloadBlob,
   downloadTextFile,
-  openPrintWindow,
+  generateQuotePdfBlob,
+  printHtmlDocument,
+  quotePdfFilename,
 } from '@/lib/quoteExport'
 import { formatTaipei } from '@/lib/time'
 
 export function QuoteDetailPage() {
   const { quoteId = '' } = useParams()
   const [search] = useSearchParams()
+  const navigate = useNavigate()
   const { user } = useUser()
   const {
     quote,
@@ -36,6 +48,8 @@ export function QuoteDetailPage() {
     reorderItems,
     exportVersion,
     setStatus,
+    softDeleteVersion,
+    softDeleteCase,
     saving,
   } = useQuoteDetail(quoteId)
 
@@ -49,8 +63,12 @@ export function QuoteDetailPage() {
       hasPermission(user!.role, PERMISSIONS.QUOTE_PUBLISH))
   const canMark =
     Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_MARK_ACCEPT)
+  const canDelete =
+    Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_DELETE)
 
   const [actionError, setActionError] = useState<string | null>(null)
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
   const [title, setTitle] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [siteAddress, setSiteAddress] = useState('')
@@ -96,9 +114,35 @@ export function QuoteDetailPage() {
     }
   }, [search, quote, canExport])
 
+  function pdfOptions() {
+    return {
+      contactPhone: quote?.customerPhone ?? null,
+      constructionNotes: quote?.constructionNotes ?? null,
+    }
+  }
+
+  function assertQuoteReadyForExport() {
+    if (!quote) throw new Error('案件資料尚未載入，請稍後再試')
+    if (isLoading) throw new Error('報價資料載入中，請稍後再試')
+    if (typeof quote.amountAfterTax !== 'number') {
+      throw new Error('總金額尚未就緒，請重新整理後再試')
+    }
+  }
+
+  async function renderPdfDownload(snapshot: QuoteExportSnapshot) {
+    const blob = await generateQuotePdfBlob(snapshot, pdfOptions())
+    downloadBlob(quotePdfFilename(snapshot), blob)
+  }
+
+  async function renderPrint(snapshot: QuoteExportSnapshot) {
+    const html = buildQuotePrintHtml(snapshot, pdfOptions())
+    await printHtmlDocument(html)
+  }
+
   async function saveMeta(e: FormEvent) {
     e.preventDefault()
     setActionError(null)
+    setActionSuccess(null)
     try {
       await updateMeta({
         title,
@@ -110,6 +154,7 @@ export function QuoteDetailPage() {
         paymentTerms,
         validUntil: validUntil || null,
       })
+      setActionSuccess('案件資料已儲存')
     } catch (err) {
       setActionError(err instanceof Error ? err.message : '儲存失敗')
     }
@@ -118,6 +163,7 @@ export function QuoteDetailPage() {
   async function submitItem(e: FormEvent) {
     e.preventDefault()
     setActionError(null)
+    setActionSuccess(null)
     try {
       if (editingId) {
         await updateItem({
@@ -150,46 +196,132 @@ export function QuoteDetailPage() {
 
   async function doExport(format: 'pdf' | 'csv' | 'print') {
     setActionError(null)
+    setActionSuccess(null)
+    setExporting(true)
     try {
+      assertQuoteReadyForExport()
       const { version } = await exportVersion(format)
       const snap = version.snapshot
       if (format === 'csv') {
         downloadTextFile(
-          `${snap.quoteNumber}-v${snap.versionNo}.csv`,
+          quotePdfFilename(snap).replace(/\.pdf$/i, '.csv'),
           buildQuoteCsv(snap),
           'text/csv;charset=utf-8',
         )
+        setActionSuccess('CSV 已下載')
+      } else if (format === 'pdf') {
+        await renderPdfDownload(snap)
+        setActionSuccess('PDF 已產生並開始下載')
       } else {
-        const html = buildQuotePrintHtml(snap)
-        if (format === 'pdf') {
-          downloadTextFile(
-            `${snap.quoteNumber}-v${snap.versionNo}.html`,
-            html,
-            'text/html;charset=utf-8',
-          )
-          openPrintWindow(html)
-        } else {
-          openPrintWindow(html)
-        }
+        await renderPrint(snap)
+        setActionSuccess('已開啟列印預覽')
       }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : '匯出失敗')
+    } finally {
+      setExporting(false)
     }
   }
 
-  async function reExportLatest() {
+  async function downloadLatestPdf() {
     setActionError(null)
+    setActionSuccess(null)
+    setExporting(true)
     try {
+      assertQuoteReadyForExport()
       const latest = versions[0]
       if (latest) {
-        openPrintWindow(buildQuotePrintHtml(latest.snapshot))
-      } else {
-        await doExport('pdf')
+        await renderPdfDownload(latest.snapshot)
+        setActionSuccess('最新版本 PDF 已下載')
+        return
       }
+      const { version } = await exportVersion('pdf')
+      await renderPdfDownload(version.snapshot)
+      setActionSuccess('PDF 已產生並開始下載')
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : '重新匯出失敗')
+      setActionError(err instanceof Error ? err.message : '下載失敗')
+    } finally {
+      setExporting(false)
     }
   }
+
+  async function viewVersion(
+    snapshot: QuoteExportSnapshot,
+    mode: 'pdf' | 'print',
+  ) {
+    setActionError(null)
+    setActionSuccess(null)
+    setExporting(true)
+    try {
+      if (mode === 'pdf') {
+        await renderPdfDownload(snapshot)
+        setActionSuccess('版本 PDF 已下載')
+      } else {
+        await renderPrint(snapshot)
+        setActionSuccess('已開啟列印預覽')
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : '開啟失敗')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  function confirmDeleteVersion(v: {
+    id: string
+    versionNo: number
+    exportedAt: string
+    snapshot: QuoteExportSnapshot
+  }) {
+    if (!user || !quote) return
+    const gate = canSoftDeleteQuoteVersion(user.role, quote, v)
+    if (!gate.ok) {
+      setActionError(gate.reason)
+      return
+    }
+    const amount = `NT$ ${Number(v.snapshot.total || 0).toLocaleString('zh-TW')}`
+    const when = formatTaipei(v.exportedAt, 'yyyy/MM/dd HH:mm')
+    const ok = window.confirm(
+      `確定要刪除報價版本 v${v.versionNo} 嗎？刪除後將無法在一般列表中查看。\n\n建立時間：${when}\n金額：${amount}`,
+    )
+    if (!ok) return
+    setActionError(null)
+    setActionSuccess(null)
+    void softDeleteVersion({ versionId: v.id })
+      .then(() => setActionSuccess(`已刪除版本 v${v.versionNo}`))
+      .catch((e: unknown) =>
+        setActionError(e instanceof Error ? e.message : '刪除版本失敗'),
+      )
+  }
+
+  function confirmDeleteCase() {
+    if (!user || !quote) return
+    const gate = canSoftDeleteQuoteCase(user.role, quote)
+    if (!gate.ok) {
+      setActionError(gate.reason)
+      return
+    }
+    const amount = `NT$ ${Number(quote.amountAfterTax || 0).toLocaleString('zh-TW')}`
+    const ok = window.confirm(
+      `確定要刪除這個報價案件嗎？\n\n案件：${quote.title}\n客戶：${quote.customerName || '—'}\n目前報價金額：${amount}\n\n刪除後案件會從一般列表隱藏，但系統會保留稽核紀錄。`,
+    )
+    if (!ok) return
+    const ok2 = window.confirm(
+      '再次確認：刪除後案件會從一般列表隱藏，但系統會保留稽核紀錄。確定刪除？',
+    )
+    if (!ok2) return
+    setActionError(null)
+    setActionSuccess(null)
+    void softDeleteCase()
+      .then(() => {
+        navigate('/quotes', { replace: true })
+      })
+      .catch((e: unknown) =>
+        setActionError(e instanceof Error ? e.message : '刪除案件失敗'),
+      )
+  }
+
+  const busy = saving || exporting
 
   if (isLoading) {
     return (
@@ -206,6 +338,10 @@ export function QuoteDetailPage() {
       </div>
     )
   }
+
+  const caseDeleteGate = user
+    ? canSoftDeleteQuoteCase(user.role, quote)
+    : { ok: false as const, reason: '尚未登入' }
 
   return (
     <div className="stack fade-up">
@@ -227,6 +363,24 @@ export function QuoteDetailPage() {
           <br />
           更新：{formatTaipei(quote.updatedAt, 'yyyy/MM/dd HH:mm')}
         </p>
+        {canDelete ? (
+          <div>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={busy || !caseDeleteGate.ok}
+              title={!caseDeleteGate.ok ? caseDeleteGate.reason : undefined}
+              onClick={() => confirmDeleteCase()}
+            >
+              刪除案件
+            </button>
+            {!caseDeleteGate.ok ? (
+              <p className="muted" style={{ margin: '6px 0 0' }}>
+                {caseDeleteGate.reason}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="panel stack" id="export-panel">
@@ -239,15 +393,15 @@ export function QuoteDetailPage() {
             <button
               type="button"
               className="btn btn-steel"
-              disabled={saving}
+              disabled={busy}
               onClick={() => void doExport('pdf')}
             >
-              匯出 PDF
+              {exporting ? '匯出中…' : '匯出 PDF'}
             </button>
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={saving}
+              disabled={busy}
               onClick={() => void doExport('csv')}
             >
               匯出 Excel／CSV
@@ -255,7 +409,7 @@ export function QuoteDetailPage() {
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={saving}
+              disabled={busy}
               onClick={() => void doExport('print')}
             >
               列印
@@ -263,21 +417,22 @@ export function QuoteDetailPage() {
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={saving}
-              onClick={() => void reExportLatest()}
+              disabled={busy}
+              onClick={() => void downloadLatestPdf()}
             >
-              下載／重新匯出最新版本
+              下載最新版本 PDF
             </button>
           </div>
         ) : (
           <p className="muted">匯出正式版本需老闆／管理員權限</p>
         )}
+        {exporting ? <p className="muted">正在產生報價單，請稍候…</p> : null}
         {canMark ? (
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={saving}
+              disabled={busy}
               onClick={() =>
                 void setStatus('sent_to_customer').catch((e: unknown) =>
                   setActionError(e instanceof Error ? e.message : '失敗'),
@@ -289,7 +444,7 @@ export function QuoteDetailPage() {
             <button
               type="button"
               className="btn btn-steel"
-              disabled={saving}
+              disabled={busy}
               onClick={() =>
                 void setStatus('accepted').catch((e: unknown) =>
                   setActionError(e instanceof Error ? e.message : '失敗'),
@@ -301,7 +456,7 @@ export function QuoteDetailPage() {
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={saving}
+              disabled={busy}
               onClick={() =>
                 void setStatus('rejected').catch((e: unknown) =>
                   setActionError(e instanceof Error ? e.message : '失敗'),
@@ -313,7 +468,7 @@ export function QuoteDetailPage() {
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={saving}
+              disabled={busy}
               onClick={() =>
                 void setStatus('cancelled').catch((e: unknown) =>
                   setActionError(e instanceof Error ? e.message : '失敗'),
@@ -327,21 +482,49 @@ export function QuoteDetailPage() {
         {versions.length > 0 ? (
           <div className="stack">
             <strong>歷史版本（不可覆寫）</strong>
-            {versions.map((v) => (
-              <div key={v.id} className="row between">
-                <span>
-                  v{v.versionNo} · {formatTaipei(v.exportedAt, 'MM/dd HH:mm')} ·{' '}
-                  {v.exportFormat}
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => openPrintWindow(buildQuotePrintHtml(v.snapshot))}
-                >
-                  查看
-                </button>
-              </div>
-            ))}
+            {versions.map((v) => {
+              const vGate = user
+                ? canSoftDeleteQuoteVersion(user.role, quote, v)
+                : { ok: false as const, reason: '尚未登入' }
+              return (
+                <div key={v.id} className="row between" style={{ gap: 8 }}>
+                  <span>
+                    v{v.versionNo} · {formatTaipei(v.exportedAt, 'MM/dd HH:mm')}{' '}
+                    · {v.exportFormat} · NT${' '}
+                    {Number(v.snapshot.total || 0).toLocaleString('zh-TW')}
+                  </span>
+                  <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={busy}
+                      onClick={() => void viewVersion(v.snapshot, 'pdf')}
+                    >
+                      下載 PDF
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={busy}
+                      onClick={() => void viewVersion(v.snapshot, 'print')}
+                    >
+                      列印
+                    </button>
+                    {canDelete ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        disabled={busy || !vGate.ok}
+                        title={!vGate.ok ? vGate.reason : undefined}
+                        onClick={() => confirmDeleteVersion(v)}
+                      >
+                        刪除
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         ) : null}
       </section>
@@ -437,7 +620,7 @@ export function QuoteDetailPage() {
             />
           </div>
           {canEdit ? (
-            <button className="btn btn-ghost" type="submit" disabled={saving}>
+            <button className="btn btn-ghost" type="submit" disabled={busy}>
               儲存案件資料
             </button>
           ) : null}
@@ -462,7 +645,7 @@ export function QuoteDetailPage() {
                       <button
                         type="button"
                         className="btn btn-ghost"
-                        disabled={saving || index === 0}
+                        disabled={busy || index === 0}
                         onClick={() => {
                           const ids = items.map((i) => i.id)
                           ;[ids[index - 1], ids[index]] = [
@@ -477,7 +660,7 @@ export function QuoteDetailPage() {
                       <button
                         type="button"
                         className="btn btn-ghost"
-                        disabled={saving || index === items.length - 1}
+                        disabled={busy || index === items.length - 1}
                         onClick={() => {
                           const ids = items.map((i) => i.id)
                           ;[ids[index + 1], ids[index]] = [
@@ -506,7 +689,7 @@ export function QuoteDetailPage() {
                       <button
                         type="button"
                         className="btn btn-ghost"
-                        disabled={saving}
+                        disabled={busy}
                         onClick={() =>
                           void removeItem(item.id).catch((e: unknown) =>
                             setActionError(
@@ -581,7 +764,7 @@ export function QuoteDetailPage() {
               </div>
             </div>
             <div className="row" style={{ gap: 8 }}>
-              <button className="btn btn-steel" type="submit" disabled={saving}>
+              <button className="btn btn-steel" type="submit" disabled={busy}>
                 {editingId ? '更新細項' : '加入細項'}
               </button>
               {editingId ? (
@@ -624,6 +807,9 @@ export function QuoteDetailPage() {
         )}
       </section>
 
+      {actionSuccess ? (
+        <p style={{ color: 'var(--ok, #0a7a3e)' }}>{actionSuccess}</p>
+      ) : null}
       {actionError ? (
         <p style={{ color: 'var(--danger)' }}>{actionError}</p>
       ) : null}

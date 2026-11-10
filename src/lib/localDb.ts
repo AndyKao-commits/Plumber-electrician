@@ -10,6 +10,10 @@ import {
   assertCanMarkQuoteAccept,
 } from '@/domain/permissions'
 import {
+  assertCanSoftDeleteQuoteCase,
+  assertCanSoftDeleteQuoteVersion,
+} from '@/domain/quoteDelete'
+import {
   assertQuoteAssociation,
   assertQuoteDraftEditable,
   calcFinalPayable,
@@ -566,6 +570,10 @@ export const localDb = {
   },
 
   getQuotations(): Quotation[] {
+    return this.getAllQuotationsRaw().filter((q) => !q.deletedAt)
+  },
+
+  getAllQuotationsRaw(): Quotation[] {
     return read(KEYS.quotations, emptyQuotes).map(normalizeLocalQuote)
   },
 
@@ -581,13 +589,13 @@ export const localDb = {
 
   getQuotationVersions(quotationId: string): QuotationVersion[] {
     return read(KEYS.quotationVersions, emptyQuoteVersions)
-      .filter((v) => v.quotationId === quotationId)
+      .filter((v) => v.quotationId === quotationId && !v.deletedAt)
       .sort((a, b) => b.versionNo - a.versionNo)
   },
 
   recalcQuoteHeader(quoteId: string): Quotation {
-    const all = this.getQuotations()
-    const idx = all.findIndex((q) => q.id === quoteId)
+    const all = read(KEYS.quotations, emptyQuotes).map(normalizeLocalQuote)
+    const idx = all.findIndex((q) => q.id === quoteId && !q.deletedAt)
     if (idx < 0) throw new Error('找不到報價')
     const current = all[idx]
     assertQuoteDraftEditable({ workflowStatus: current.workflowStatus })
@@ -667,7 +675,7 @@ export const localDb = {
       updatedAt: now,
       createdBy: input.createdBy,
     }
-    const all = this.getQuotations()
+    const all = this.getAllQuotationsRaw()
     all.unshift(quote)
     write(KEYS.quotations, all)
     return quote
@@ -686,10 +694,11 @@ export const localDb = {
       validUntil: string | null
     }>,
   ): Quotation {
-    const all = this.getQuotations()
+    const all = this.getAllQuotationsRaw()
     const idx = all.findIndex((q) => q.id === quoteId)
     if (idx < 0) throw new Error('找不到報價')
     const current = all[idx]
+    if (current.deletedAt) throw new Error('報價案件已刪除')
     assertQuoteDraftEditable({ workflowStatus: current.workflowStatus })
     all[idx] = {
       ...current,
@@ -829,15 +838,15 @@ export const localDb = {
     format: QuoteExportFormat = 'snapshot',
   ): { quote: Quotation; version: QuotationVersion } {
     assertCanExportQuote(actor.role)
-    const all = this.getQuotations()
+    const all = this.getAllQuotationsRaw()
     const idx = all.findIndex((q) => q.id === quoteId)
     if (idx < 0) throw new Error('找不到報價')
     const current = all[idx]
+    if (current.deletedAt) throw new Error('報價案件已刪除')
     if (current.workflowStatus === 'cancelled') {
       throw new Error('已取消報價不可匯出')
     }
     const items = this.getQuotationItems(quoteId)
-    if (items.length === 0) throw new Error('請先新增至少一筆細項再匯出')
     const versionNo = current.currentVersion + 1
     const snapshot = buildQuoteExportSnapshot({
       quote: current,
@@ -892,8 +901,8 @@ export const localDb = {
     ) {
       assertCanMarkQuoteAccept(actor.role)
     }
-    const all = this.getQuotations()
-    const idx = all.findIndex((q) => q.id === quoteId)
+    const all = read(KEYS.quotations, emptyQuotes).map(normalizeLocalQuote)
+    const idx = all.findIndex((q) => q.id === quoteId && !q.deletedAt)
     if (idx < 0) throw new Error('找不到報價')
     const current = all[idx]
     if (
@@ -913,6 +922,61 @@ export const localDb = {
     all[idx] = next
     write(KEYS.quotations, all)
     return next
+  },
+
+  softDeleteQuotationVersion(
+    actor: { id: string; role: string },
+    versionId: string,
+    reason?: string,
+  ): void {
+    const all = read(KEYS.quotationVersions, emptyQuoteVersions)
+    const idx = all.findIndex((v) => v.id === versionId)
+    if (idx < 0) throw new Error('找不到版本')
+    const ver = all[idx]
+    const quote = this.getQuotation(ver.quotationId)
+    if (!quote) throw new Error('找不到報價')
+    assertCanSoftDeleteQuoteVersion(actor.role, quote, ver)
+    all[idx] = {
+      ...ver,
+      deletedAt: new Date().toISOString(),
+      deletedBy: actor.id,
+      deleteReason: reason?.trim() || '使用者刪除歷史版本',
+    }
+    write(KEYS.quotationVersions, all)
+  },
+
+  softDeleteQuotation(
+    actor: { id: string; role: string },
+    quoteId: string,
+    reason?: string,
+  ): void {
+    const allRaw = this.getAllQuotationsRaw()
+    const quote = allRaw.find((q) => q.id === quoteId) ?? null
+    if (!quote) throw new Error('找不到報價')
+    assertCanSoftDeleteQuoteCase(actor.role, quote)
+    const now = new Date().toISOString()
+    const all = allRaw
+    const idx = all.findIndex((q) => q.id === quoteId)
+    if (idx < 0) throw new Error('找不到報價')
+    all[idx] = {
+      ...all[idx],
+      deletedAt: now,
+      deletedBy: actor.id,
+      deleteReason: reason?.trim() || '使用者刪除報價案件',
+      updatedAt: now,
+    }
+    write(KEYS.quotations, all)
+    const versions = read(KEYS.quotationVersions, emptyQuoteVersions).map((v) =>
+      v.quotationId === quoteId && !v.deletedAt
+        ? {
+            ...v,
+            deletedAt: now,
+            deletedBy: actor.id,
+            deleteReason: '隨案件刪除而隱藏',
+          }
+        : v,
+    )
+    write(KEYS.quotationVersions, versions)
   },
 
   getMaterials(): MaterialStock[] {

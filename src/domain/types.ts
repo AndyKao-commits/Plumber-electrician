@@ -143,6 +143,8 @@ export interface Quotation {
   taxAmount: number
   amountAfterTax: number
   notes?: string | null
+  constructionNotes?: string | null
+  customerPhone?: string | null
   paymentTerms?: string | null
   validUntil?: string | null
   currentVersion: number
@@ -153,6 +155,9 @@ export interface Quotation {
   updatedAt: string
   publishedAt?: string | null
   createdBy: string
+  deletedAt?: string | null
+  deletedBy?: string | null
+  deleteReason?: string | null
 }
 
 /** FIN-02: material / labor shown separately; amounts sum once into header. */
@@ -185,6 +190,9 @@ export interface QuotationVersion {
   exportedAt: string
   exportedBy?: string | null
   exportFormat: QuoteExportFormat
+  deletedAt?: string | null
+  deletedBy?: string | null
+  deleteReason?: string | null
 }
 
 export interface QuoteExportSnapshot {
