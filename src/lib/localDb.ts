@@ -39,6 +39,11 @@ import {
   assertOperatingCostAmount,
 } from '@/domain/financeSummary'
 import {
+  assertCanLinkCustomerToSite,
+  assertContactName,
+  assertCustomerName,
+} from '@/domain/crm'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   calcChangeOrderTotals,
@@ -73,10 +78,13 @@ import type {
   ChangeOrderKind,
   ChangeOrderStatus,
   CaseOperatingCost,
+  Customer,
   CustomerAdvance,
+  CustomerContact,
   CustomerCreditNote,
   CustomerPayment,
   CustomerRefund,
+  CustomerSiteLink,
   MaterialStock,
   OperatingCostKind,
   PaymentAllocation,
@@ -121,6 +129,9 @@ const KEYS = {
   customerCreditNotes: 'eg.customerCreditNotes.v1',
   customerRefunds: 'eg.customerRefunds.v1',
   caseOperatingCosts: 'eg.caseOperatingCosts.v1',
+  customers: 'eg.customers.v1',
+  customerContacts: 'eg.customerContacts.v1',
+  customerSiteLinks: 'eg.customerSiteLinks.v1',
   materials: 'eg.materials.v1',
 } as const
 
@@ -156,6 +167,9 @@ const emptyAdvanceApplications: AdvanceApplication[] = []
 const emptyCustomerCreditNotes: CustomerCreditNote[] = []
 const emptyCustomerRefunds: CustomerRefund[] = []
 const emptyCaseOperatingCosts: CaseOperatingCost[] = []
+const emptyCustomers: Customer[] = []
+const emptyCustomerContacts: CustomerContact[] = []
+const emptyCustomerSiteLinks: CustomerSiteLink[] = []
 const emptyMaterials: MaterialStock[] = []
 
 function write<T>(key: string, value: T) {
@@ -361,6 +375,9 @@ function seedIfNeeded() {
   write(KEYS.customerCreditNotes, emptyCustomerCreditNotes)
   write(KEYS.customerRefunds, emptyCustomerRefunds)
   write(KEYS.caseOperatingCosts, emptyCaseOperatingCosts)
+  write(KEYS.customers, emptyCustomers)
+  write(KEYS.customerContacts, emptyCustomerContacts)
+  write(KEYS.customerSiteLinks, emptyCustomerSiteLinks)
   write(KEYS.materials, seededMaterials)
   write(KEYS.shortcuts, [
     'clock',
@@ -655,6 +672,114 @@ export const localDb = {
 
   getRepairCases(): RepairCase[] {
     return read(KEYS.repairCases, emptyRepairs)
+  },
+
+  listCustomers(): Customer[] {
+    return read(KEYS.customers, emptyCustomers).sort((a, b) =>
+      a.name.localeCompare(b.name, 'zh-Hant'),
+    )
+  },
+
+  getCustomer(customerId: string): Customer | null {
+    return this.listCustomers().find((c) => c.id === customerId) ?? null
+  },
+
+  createCustomer(
+    actor: { id: string },
+    input: { name: string; phone?: string | null; notes?: string | null },
+  ): Customer {
+    const name = assertCustomerName(input.name)
+    const now = new Date().toISOString()
+    const row: Customer = {
+      id: `cust-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      name,
+      phone: input.phone?.trim() || null,
+      notes: input.notes?.trim() || null,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.customers, emptyCustomers)
+    all.unshift(row)
+    write(KEYS.customers, all)
+    return row
+  },
+
+  listCustomerContacts(customerId: string): CustomerContact[] {
+    return read(KEYS.customerContacts, emptyCustomerContacts)
+      .filter((c) => c.customerId === customerId)
+      .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
+  },
+
+  addCustomerContact(
+    _actor: { id: string },
+    input: {
+      customerId: string
+      name: string
+      phone?: string | null
+      email?: string | null
+      isPrimary?: boolean
+      notes?: string | null
+    },
+  ): CustomerContact {
+    if (!this.getCustomer(input.customerId)) throw new Error('找不到客戶')
+    const name = assertContactName(input.name)
+    const now = new Date().toISOString()
+    const row: CustomerContact = {
+      id: `ccon-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      customerId: input.customerId,
+      name,
+      phone: input.phone?.trim() || null,
+      email: input.email?.trim() || null,
+      isPrimary: Boolean(input.isPrimary),
+      notes: input.notes?.trim() || null,
+      createdAt: now,
+    }
+    const all = read(KEYS.customerContacts, emptyCustomerContacts)
+    if (row.isPrimary) {
+      for (const c of all) {
+        if (c.customerId === input.customerId) c.isPrimary = false
+      }
+    }
+    all.unshift(row)
+    write(KEYS.customerContacts, all)
+    return row
+  },
+
+  listCustomerSiteLinks(customerId?: string): CustomerSiteLink[] {
+    const all = read(KEYS.customerSiteLinks, emptyCustomerSiteLinks)
+    if (!customerId) return all
+    return all.filter((l) => l.customerId === customerId)
+  },
+
+  linkCustomerToSite(
+    _actor: { id: string },
+    input: { customerId: string; siteId: string },
+  ): CustomerSiteLink {
+    if (!this.getCustomer(input.customerId)) throw new Error('找不到客戶')
+    if (!this.getSites().some((s) => s.id === input.siteId)) {
+      throw new Error('找不到工地／地址')
+    }
+    const existing = this.listCustomerSiteLinks()
+    assertCanLinkCustomerToSite({
+      customerId: input.customerId,
+      siteId: input.siteId,
+      existingLinks: existing,
+    })
+    const now = new Date().toISOString()
+    const row: CustomerSiteLink = {
+      id: `csl-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      customerId: input.customerId,
+      siteId: input.siteId,
+      createdAt: now,
+    }
+    const all = read(KEYS.customerSiteLinks, emptyCustomerSiteLinks)
+    all.push(row)
+    write(KEYS.customerSiteLinks, all)
+    return row
   },
 
   getQuotations(): Quotation[] {

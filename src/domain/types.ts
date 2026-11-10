@@ -122,6 +122,39 @@ export interface RepairCase {
   createdAt: string
 }
 
+/** CRM-001: customer master — name is the only required field. */
+export interface Customer {
+  id: string
+  organizationId: string
+  name: string
+  phone?: string | null
+  notes?: string | null
+  createdAt: string
+  updatedAt: string
+  createdBy?: string | null
+}
+
+export interface CustomerContact {
+  id: string
+  organizationId: string
+  customerId: string
+  name: string
+  phone?: string | null
+  email?: string | null
+  isPrimary: boolean
+  notes?: string | null
+  createdAt: string
+}
+
+/** Many-to-many: multiple customers may share one site/address. */
+export interface CustomerSiteLink {
+  id: string
+  organizationId: string
+  customerId: string
+  siteId: string
+  createdAt: string
+}
+
 export interface Quotation {
   id: string
   organizationId: string

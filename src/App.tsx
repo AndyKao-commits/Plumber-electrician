@@ -5,6 +5,7 @@ import { AppShell } from '@/components/AppShell'
 import { RequireAuth } from '@/components/RequireAuth'
 import { queryClient } from '@/lib/queryClient'
 import { AttendancePage } from '@/pages/AttendancePage'
+import { CustomersPage } from '@/pages/CustomersPage'
 import { HomePage } from '@/pages/HomePage'
 import { InventoryPage } from '@/pages/InventoryPage'
 import { LineBindCallbackPage } from '@/pages/LineBindCallbackPage'
@@ -36,6 +37,7 @@ export default function App() {
             <Route path="/" element={<Protected><HomePage /></Protected>} />
             <Route path="/sites" element={<Protected><SitesPage /></Protected>} />
             <Route path="/sites/:siteId" element={<Protected><SiteDetailPage /></Protected>} />
+            <Route path="/customers" element={<Protected><CustomersPage /></Protected>} />
             <Route path="/attendance" element={<Protected><AttendancePage /></Protected>} />
             <Route path="/purchases" element={<Protected><PurchasesPage /></Protected>} />
             <Route path="/quotes" element={<Protected><QuotesPage /></Protected>} />
