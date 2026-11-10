@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { assertOnlineForOp } from '@/domain/offlineOps'
 import type {
+  ChangeOrderKind,
+  ChangeOrderStatus,
   QuotationItemKind,
   QuoteExportFormat,
   QuoteWorkflowStatus,
@@ -18,6 +20,12 @@ export const quoteKeys = {
   one: (id: string) => ['quotes', id] as const,
   items: (quoteId: string) => ['quote-items', quoteId] as const,
   versions: (quoteId: string) => ['quote-versions', quoteId] as const,
+  changeOrders: (quoteId?: string) =>
+    quoteId
+      ? (['change-orders', quoteId] as const)
+      : (['change-orders'] as const),
+  changeOrderItems: (changeOrderId: string) =>
+    ['change-order-items', changeOrderId] as const,
 }
 
 export function useQuotes(userId: string | undefined) {
@@ -49,6 +57,20 @@ export function useQuotes(userId: string | undefined) {
           : localDb.getRepairCases()
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入維修案件'))
+      }
+    },
+  })
+
+  const changeOrdersQuery = useQuery({
+    queryKey: quoteKeys.changeOrders(),
+    enabled: Boolean(userId),
+    queryFn: async () => {
+      try {
+        return formal
+          ? await supabaseRepos.listChangeOrders()
+          : localDb.listChangeOrders()
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入追加減'))
       }
     },
   })
@@ -98,6 +120,7 @@ export function useQuotes(userId: string | undefined) {
 
   return {
     quotes: listQuery.data ?? [],
+    changeOrders: changeOrdersQuery.data ?? [],
     isLoading: listQuery.isLoading,
     repairCases: repairsQuery.data ?? [],
     createQuote: createMutation.mutateAsync,
@@ -161,6 +184,23 @@ export function useQuoteDetail(quoteId: string | undefined) {
     },
   })
 
+  const changeOrdersQuery = useQuery({
+    queryKey: quoteId
+      ? quoteKeys.changeOrders(quoteId)
+      : ['change-orders', 'none'],
+    enabled: Boolean(quoteId),
+    queryFn: async () => {
+      if (!quoteId) return []
+      try {
+        return formal
+          ? await supabaseRepos.listChangeOrders(quoteId)
+          : localDb.listChangeOrders(quoteId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入追加減'))
+      }
+    },
+  })
+
   function invalidateAll() {
     if (!quoteId) return
     void queryClient.invalidateQueries({ queryKey: quoteKeys.all })
@@ -168,6 +208,12 @@ export function useQuoteDetail(quoteId: string | undefined) {
     void queryClient.invalidateQueries({ queryKey: quoteKeys.items(quoteId) })
     void queryClient.invalidateQueries({
       queryKey: quoteKeys.versions(quoteId),
+    })
+    void queryClient.invalidateQueries({
+      queryKey: quoteKeys.changeOrders(quoteId),
+    })
+    void queryClient.invalidateQueries({
+      queryKey: quoteKeys.changeOrders(),
     })
   }
 
@@ -319,14 +365,99 @@ export function useQuoteDetail(quoteId: string | undefined) {
         void queryClient.removeQueries({
           queryKey: quoteKeys.versions(quoteId),
         })
+        void queryClient.removeQueries({
+          queryKey: quoteKeys.changeOrders(quoteId),
+        })
       }
     },
   })
+
+  const createChangeOrder = useMutation({
+    mutationFn: async (input: {
+      kind: ChangeOrderKind
+      title: string
+      notes?: string
+    }) => {
+      if (!user || !quoteId) throw new Error('尚未登入')
+      assertOnlineForOp('quote_create', isBrowserOnline())
+      return formal
+        ? supabaseRepos.createChangeOrder(user, {
+            quotationId: quoteId,
+            ...input,
+          })
+        : localDb.createChangeOrder(
+            { id: user.id, role: user.role },
+            { quotationId: quoteId, ...input },
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const addChangeOrderItem = useMutation({
+    mutationFn: async (input: {
+      changeOrderId: string
+      kind: QuotationItemKind
+      description: string
+      qty: number
+      unit?: string
+      unitPrice: number
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_create', isBrowserOnline())
+      return formal
+        ? supabaseRepos.addChangeOrderItem(user, input)
+        : localDb.addChangeOrderItem(input)
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const removeChangeOrderItem = useMutation({
+    mutationFn: async (itemId: string) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_create', isBrowserOnline())
+      if (formal) await supabaseRepos.removeChangeOrderItem(user, itemId)
+      else localDb.removeChangeOrderItem(itemId)
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const setChangeOrderStatus = useMutation({
+    mutationFn: async (input: {
+      changeOrderId: string
+      status: ChangeOrderStatus
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('quote_publish', isBrowserOnline())
+      return formal
+        ? supabaseRepos.setChangeOrderStatus(
+            user,
+            input.changeOrderId,
+            input.status,
+          )
+        : localDb.setChangeOrderStatus(
+            { id: user.id, role: user.role },
+            input.changeOrderId,
+            input.status,
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const listChangeOrderItems = async (changeOrderId: string) => {
+    try {
+      return formal
+        ? await supabaseRepos.listChangeOrderItems(changeOrderId)
+        : localDb.getChangeOrderItems(changeOrderId)
+    } catch (e) {
+      throw new Error(toUserMessage(e, '無法載入追加減細項'))
+    }
+  }
 
   return {
     quote: quoteQuery.data ?? null,
     items: itemsQuery.data ?? [],
     versions: versionsQuery.data ?? [],
+    changeOrders: changeOrdersQuery.data ?? [],
     isLoading: quoteQuery.isLoading || itemsQuery.isLoading,
     error: quoteQuery.error || itemsQuery.error,
     updateMeta: updateMeta.mutateAsync,
@@ -338,6 +469,11 @@ export function useQuoteDetail(quoteId: string | undefined) {
     setStatus: setStatus.mutateAsync,
     softDeleteVersion: softDeleteVersion.mutateAsync,
     softDeleteCase: softDeleteCase.mutateAsync,
+    createChangeOrder: createChangeOrder.mutateAsync,
+    addChangeOrderItem: addChangeOrderItem.mutateAsync,
+    removeChangeOrderItem: removeChangeOrderItem.mutateAsync,
+    setChangeOrderStatus: setChangeOrderStatus.mutateAsync,
+    listChangeOrderItems,
     saving:
       updateMeta.isPending ||
       addItem.isPending ||
@@ -347,6 +483,10 @@ export function useQuoteDetail(quoteId: string | undefined) {
       exportVersion.isPending ||
       setStatus.isPending ||
       softDeleteVersion.isPending ||
-      softDeleteCase.isPending,
+      softDeleteCase.isPending ||
+      createChangeOrder.isPending ||
+      addChangeOrderItem.isPending ||
+      removeChangeOrderItem.isPending ||
+      setChangeOrderStatus.isPending,
   }
 }

@@ -46,7 +46,10 @@ export function assertQuoteCaseEditable(input: {
   }
 }
 
-/** Only 客戶已接受 counts toward effective contract. */
+/**
+ * Effective contract from accepted quotes only.
+ * Prefer `effectiveContractAmountWithChangeOrders` when 追加減 exist (FIN-002).
+ */
 export function effectiveContractAmount(
   quotes: Array<Pick<Quotation, 'workflowStatus' | 'amountAfterTax'>>,
 ): number {

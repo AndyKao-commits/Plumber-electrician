@@ -22,6 +22,11 @@ import {
   requiresPreApproval,
 } from '@/domain/rules'
 import {
+  assertCanMarkChangeOrderAccept,
+  assertChangeOrderEditable,
+  canCreateChangeOrder,
+} from '@/domain/changeOrders'
+import {
   assertCanSoftDeleteQuoteCase,
   assertCanSoftDeleteQuoteVersion,
 } from '@/domain/quoteDelete'
@@ -34,6 +39,10 @@ import type {
   AppNotice,
   AppUser,
   AttendanceRecord,
+  ChangeOrder,
+  ChangeOrderItem,
+  ChangeOrderKind,
+  ChangeOrderStatus,
   MaterialStock,
   PurchaseMode,
   PurchaseRecord,
@@ -106,6 +115,47 @@ function mapQuotationRow(row: Record<string, unknown>): Quotation {
     deletedAt: (row.deleted_at as string | null) ?? null,
     deletedBy: (row.deleted_by as string | null) ?? null,
     deleteReason: (row.delete_reason as string | null) ?? null,
+  }
+}
+
+function mapChangeOrderRow(row: Record<string, unknown>): ChangeOrder {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    quotationId: String(row.quotation_id),
+    changeNumber: String(row.change_number),
+    kind: row.kind as ChangeOrderKind,
+    title: String(row.title),
+    status: row.status as ChangeOrderStatus,
+    taxMode: row.tax_mode as TaxMode,
+    taxRate: Number(row.tax_rate),
+    amountBeforeTax: Number(row.amount_before_tax),
+    discount: Number(row.discount ?? 0) || 0,
+    taxAmount: Number(row.tax_amount),
+    amountAfterTax: Number(row.amount_after_tax),
+    notes: (row.notes as string | null) ?? null,
+    acceptedAt: (row.accepted_at as string | null) ?? null,
+    acceptedBy: (row.accepted_by as string | null) ?? null,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at || row.created_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapChangeOrderItemRow(row: Record<string, unknown>): ChangeOrderItem {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    changeOrderId: String(row.change_order_id),
+    lineNo: Number(row.line_no),
+    kind: row.kind as QuotationItemKind,
+    description: String(row.description),
+    qty: Number(row.qty),
+    unit: String(row.unit),
+    unitPrice: Number(row.unit_price),
+    amount: Number(row.amount),
+    createdAt: String(row.created_at),
+    updatedAt: row.updated_at ? String(row.updated_at) : undefined,
   }
 }
 
@@ -1143,6 +1193,189 @@ export const supabaseRepos = {
       })
       .eq('quotation_id', quoteId)
       .is('deleted_at', null)
+  },
+
+  async listChangeOrders(quotationId?: string): Promise<ChangeOrder[]> {
+    let q = sb()
+      .from('change_orders')
+      .select(
+        'id, organization_id, quotation_id, change_number, kind, title, status, tax_mode, tax_rate, amount_before_tax, discount, tax_amount, amount_after_tax, notes, accepted_at, accepted_by, created_at, updated_at, created_by',
+      )
+      .order('updated_at', { ascending: false })
+    if (quotationId) {
+      q = q.eq('quotation_id', requireUuid(quotationId, '報價'))
+    }
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入追加減'))
+    return (data ?? []).map((row) => mapChangeOrderRow(row as Record<string, unknown>))
+  },
+
+  async getChangeOrder(changeOrderId: string): Promise<ChangeOrder> {
+    const id = requireUuid(changeOrderId, '追加減')
+    const { data, error } = await sb()
+      .from('change_orders')
+      .select(
+        'id, organization_id, quotation_id, change_number, kind, title, status, tax_mode, tax_rate, amount_before_tax, discount, tax_amount, amount_after_tax, notes, accepted_at, accepted_by, created_at, updated_at, created_by',
+      )
+      .eq('id', id)
+      .maybeSingle()
+    if (error) throw new AppError(toUserMessage(error, '無法讀取追加減'))
+    if (!data) throw new AppError('找不到追加減')
+    return mapChangeOrderRow(data as Record<string, unknown>)
+  },
+
+  async listChangeOrderItems(changeOrderId: string): Promise<ChangeOrderItem[]> {
+    const cid = requireUuid(changeOrderId, '追加減')
+    const { data, error } = await sb()
+      .from('change_order_items')
+      .select(
+        'id, organization_id, change_order_id, line_no, kind, description, qty, unit, unit_price, amount, created_at, updated_at',
+      )
+      .eq('change_order_id', cid)
+      .order('line_no', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入追加減細項'))
+    return (data ?? []).map((row) => mapChangeOrderItemRow(row as Record<string, unknown>))
+  },
+
+  async createChangeOrder(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      kind: ChangeOrderKind
+      title: string
+      notes?: string
+      discount?: number
+    },
+  ): Promise<ChangeOrder> {
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canCreateChangeOrder(actor.role, quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const changeNumber = `CO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+    const { data, error } = await sb()
+      .from('change_orders')
+      .insert({
+        quotation_id: quote.id,
+        change_number: changeNumber,
+        kind: input.kind,
+        title: input.title.trim() || (input.kind === 'addition' ? '追加' : '追減'),
+        status: 'draft',
+        tax_mode: quote.taxMode,
+        tax_rate: quote.taxRate,
+        discount: Number(input.discount ?? 0) || 0,
+        notes: input.notes ?? null,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, quotation_id, change_number, kind, title, status, tax_mode, tax_rate, amount_before_tax, discount, tax_amount, amount_after_tax, notes, accepted_at, accepted_by, created_at, updated_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立追加減'))
+    return mapChangeOrderRow(data as Record<string, unknown>)
+  },
+
+  async addChangeOrderItem(
+    actor: AppUser,
+    input: {
+      changeOrderId: string
+      kind: QuotationItemKind
+      description: string
+      qty: number
+      unit?: string
+      unitPrice: number
+    },
+  ): Promise<ChangeOrderItem> {
+    const co = await this.getChangeOrder(input.changeOrderId)
+    assertSameOrganization(actor.organizationId, co.organizationId)
+    assertChangeOrderEditable({ status: co.status })
+    if (!hasPermission(actor.role, PERMISSIONS.QUOTE_CREATE)) {
+      throw new AppError('無權編輯追加減')
+    }
+    const existing = await this.listChangeOrderItems(co.id)
+    const amount = calcQuoteItemAmount({
+      qty: input.qty,
+      unitPrice: input.unitPrice,
+    })
+    const { data, error } = await sb()
+      .from('change_order_items')
+      .insert({
+        change_order_id: co.id,
+        line_no: existing.length + 1,
+        kind: input.kind,
+        description: input.description.trim(),
+        qty: input.qty,
+        unit: input.unit || '式',
+        unit_price: input.unitPrice,
+        amount,
+      })
+      .select(
+        'id, organization_id, change_order_id, line_no, kind, description, qty, unit, unit_price, amount, created_at, updated_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法新增細項'))
+    return mapChangeOrderItemRow(data as Record<string, unknown>)
+  },
+
+  async removeChangeOrderItem(actor: AppUser, itemId: string): Promise<void> {
+    const iid = requireUuid(itemId, '細項')
+    const { data: item, error: loadError } = await sb()
+      .from('change_order_items')
+      .select('id, organization_id, change_order_id')
+      .eq('id', iid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取細項'))
+    if (!item) throw new AppError('找不到細項')
+    assertSameOrganization(actor.organizationId, String(item.organization_id))
+    const co = await this.getChangeOrder(String(item.change_order_id))
+    assertChangeOrderEditable({ status: co.status })
+    if (!hasPermission(actor.role, PERMISSIONS.QUOTE_CREATE)) {
+      throw new AppError('無權編輯追加減')
+    }
+    const { error } = await sb()
+      .from('change_order_items')
+      .delete()
+      .eq('id', iid)
+    if (error) throw new AppError(toUserMessage(error, '無法刪除細項'))
+  },
+
+  async setChangeOrderStatus(
+    actor: AppUser,
+    changeOrderId: string,
+    status: ChangeOrderStatus,
+  ): Promise<ChangeOrder> {
+    if (
+      status === 'accepted' ||
+      status === 'rejected' ||
+      status === 'sent_to_customer'
+    ) {
+      assertCanMarkChangeOrderAccept(actor.role)
+    }
+    const co = await this.getChangeOrder(changeOrderId)
+    assertSameOrganization(actor.organizationId, co.organizationId)
+    if (co.status === 'accepted' || co.status === 'cancelled') {
+      throw new AppError('已接受或已取消的追加減不可再改狀態')
+    }
+    if (status === 'accepted') {
+      const items = await this.listChangeOrderItems(co.id)
+      if (items.length === 0) {
+        throw new AppError('請先新增至少一筆細項再標記接受')
+      }
+    }
+    const patch: Record<string, unknown> = { status }
+    if (status === 'accepted') {
+      patch.accepted_at = new Date().toISOString()
+      patch.accepted_by = actor.id
+    }
+    const { data, error } = await sb()
+      .from('change_orders')
+      .update(patch)
+      .eq('id', co.id)
+      .select(
+        'id, organization_id, quotation_id, change_number, kind, title, status, tax_mode, tax_rate, amount_before_tax, discount, tax_amount, amount_after_tax, notes, accepted_at, accepted_by, created_at, updated_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新追加減狀態'))
+    return mapChangeOrderRow(data as Record<string, unknown>)
   },
 
   async listQuotationItems(quotationId: string): Promise<QuotationItem[]> {

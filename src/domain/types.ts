@@ -222,6 +222,53 @@ export interface QuoteExportSnapshot {
   notes: string
 }
 
+/** FIN-002: 追加／追減；僅 accepted 計入有效合約。 */
+export type ChangeOrderKind = 'addition' | 'reduction'
+
+export type ChangeOrderStatus =
+  | 'draft'
+  | 'sent_to_customer'
+  | 'accepted'
+  | 'rejected'
+  | 'cancelled'
+
+export interface ChangeOrder {
+  id: string
+  organizationId: string
+  quotationId: string
+  changeNumber: string
+  kind: ChangeOrderKind
+  title: string
+  status: ChangeOrderStatus
+  taxMode: TaxMode
+  taxRate: number
+  amountBeforeTax: number
+  discount: number
+  taxAmount: number
+  amountAfterTax: number
+  notes?: string | null
+  acceptedAt?: string | null
+  acceptedBy?: string | null
+  createdAt: string
+  updatedAt: string
+  createdBy: string
+}
+
+export interface ChangeOrderItem {
+  id: string
+  organizationId: string
+  changeOrderId: string
+  lineNo: number
+  kind: QuotationItemKind
+  description: string
+  qty: number
+  unit: string
+  unitPrice: number
+  amount: number
+  createdAt: string
+  updatedAt?: string
+}
+
 export interface MaterialStock {
   id: string
   organizationId: string

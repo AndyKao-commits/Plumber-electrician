@@ -10,6 +10,12 @@ import {
   assertCanMarkQuoteAccept,
 } from '@/domain/permissions'
 import {
+  assertCanMarkChangeOrderAccept,
+  assertChangeOrderEditable,
+  calcChangeOrderTotals,
+  canCreateChangeOrder,
+} from '@/domain/changeOrders'
+import {
   assertCanSoftDeleteQuoteCase,
   assertCanSoftDeleteQuoteVersion,
 } from '@/domain/quoteDelete'
@@ -28,6 +34,10 @@ import type {
   AppNotice,
   AppUser,
   AttendanceRecord,
+  ChangeOrder,
+  ChangeOrderItem,
+  ChangeOrderKind,
+  ChangeOrderStatus,
   MaterialStock,
   PurchaseRecord,
   Quotation,
@@ -57,6 +67,8 @@ const KEYS = {
   quotations: 'eg.quotations.v2',
   quotationItems: 'eg.quotationItems.v1',
   quotationVersions: 'eg.quotationVersions.v1',
+  changeOrders: 'eg.changeOrders.v1',
+  changeOrderItems: 'eg.changeOrderItems.v1',
   materials: 'eg.materials.v1',
 } as const
 
@@ -80,6 +92,8 @@ const emptyRepairs: RepairCase[] = []
 const emptyQuotes: Quotation[] = []
 const emptyQuoteItems: QuotationItem[] = []
 const emptyQuoteVersions: QuotationVersion[] = []
+const emptyChangeOrders: ChangeOrder[] = []
+const emptyChangeOrderItems: ChangeOrderItem[] = []
 const emptyMaterials: MaterialStock[] = []
 
 function write<T>(key: string, value: T) {
@@ -273,6 +287,8 @@ function seedIfNeeded() {
   write(KEYS.quotations, emptyQuotes)
   write(KEYS.quotationItems, emptyQuoteItems)
   write(KEYS.quotationVersions, emptyQuoteVersions)
+  write(KEYS.changeOrders, emptyChangeOrders)
+  write(KEYS.changeOrderItems, emptyChangeOrderItems)
   write(KEYS.materials, seededMaterials)
   write(KEYS.shortcuts, [
     'clock',
@@ -943,6 +959,184 @@ export const localDb = {
       deleteReason: reason?.trim() || '使用者刪除歷史版本',
     }
     write(KEYS.quotationVersions, all)
+  },
+
+  listChangeOrders(quotationId?: string): ChangeOrder[] {
+    return read(KEYS.changeOrders, emptyChangeOrders)
+      .filter((c) => (quotationId ? c.quotationId === quotationId : true))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  },
+
+  getChangeOrder(changeOrderId: string): ChangeOrder | null {
+    return (
+      read(KEYS.changeOrders, emptyChangeOrders).find(
+        (c) => c.id === changeOrderId,
+      ) ?? null
+    )
+  },
+
+  getChangeOrderItems(changeOrderId: string): ChangeOrderItem[] {
+    return read(KEYS.changeOrderItems, emptyChangeOrderItems)
+      .filter((i) => i.changeOrderId === changeOrderId)
+      .sort((a, b) => a.lineNo - b.lineNo)
+  },
+
+  createChangeOrder(
+    actor: { id: string; role: string },
+    input: {
+      quotationId: string
+      kind: ChangeOrderKind
+      title: string
+      notes?: string
+      discount?: number
+    },
+  ): ChangeOrder {
+    const quote = this.getQuotation(input.quotationId)
+    if (!quote) throw new Error('找不到報價')
+    const gate = canCreateChangeOrder(actor.role, quote)
+    if (!gate.ok) throw new Error(gate.reason)
+    const now = new Date().toISOString()
+    const id = `cho-${crypto.randomUUID()}`
+    const co: ChangeOrder = {
+      id,
+      organizationId: ORG_ID,
+      quotationId: input.quotationId,
+      changeNumber: `CO-${now.slice(0, 10).replace(/-/g, '')}-${id.slice(-4).toUpperCase()}`,
+      kind: input.kind,
+      title: input.title.trim() || (input.kind === 'addition' ? '追加' : '追減'),
+      status: 'draft',
+      taxMode: quote.taxMode,
+      taxRate: quote.taxRate,
+      amountBeforeTax: 0,
+      discount: Number(input.discount ?? 0) || 0,
+      taxAmount: 0,
+      amountAfterTax: 0,
+      notes: input.notes ?? null,
+      acceptedAt: null,
+      acceptedBy: null,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.changeOrders, emptyChangeOrders)
+    all.unshift(co)
+    write(KEYS.changeOrders, all)
+    return co
+  },
+
+  recalcChangeOrder(changeOrderId: string): ChangeOrder {
+    const all = read(KEYS.changeOrders, emptyChangeOrders)
+    const idx = all.findIndex((c) => c.id === changeOrderId)
+    if (idx < 0) throw new Error('找不到追加減')
+    const current = all[idx]
+    assertChangeOrderEditable({ status: current.status })
+    const items = this.getChangeOrderItems(changeOrderId)
+    const totals = calcChangeOrderTotals({
+      items,
+      discount: current.discount,
+      taxMode: current.taxMode,
+      taxRate: current.taxRate,
+    })
+    const next: ChangeOrder = {
+      ...current,
+      amountBeforeTax: totals.subtotal,
+      discount: totals.discount,
+      taxAmount: totals.taxAmount,
+      amountAfterTax: totals.total,
+      taxRate: totals.taxRate,
+      updatedAt: new Date().toISOString(),
+    }
+    all[idx] = next
+    write(KEYS.changeOrders, all)
+    return next
+  },
+
+  addChangeOrderItem(input: {
+    changeOrderId: string
+    kind: QuotationItemKind
+    description: string
+    qty: number
+    unit?: string
+    unitPrice: number
+  }): ChangeOrderItem {
+    const co = this.getChangeOrder(input.changeOrderId)
+    if (!co) throw new Error('找不到追加減')
+    assertChangeOrderEditable({ status: co.status })
+    const existing = this.getChangeOrderItems(input.changeOrderId)
+    const amount = calcQuoteItemAmount({
+      qty: input.qty,
+      unitPrice: input.unitPrice,
+    })
+    const item: ChangeOrderItem = {
+      id: `choi-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      changeOrderId: input.changeOrderId,
+      lineNo: existing.length + 1,
+      kind: input.kind,
+      description: input.description.trim(),
+      qty: input.qty,
+      unit: input.unit || '式',
+      unitPrice: input.unitPrice,
+      amount,
+      createdAt: new Date().toISOString(),
+    }
+    const all = read(KEYS.changeOrderItems, emptyChangeOrderItems)
+    all.push(item)
+    write(KEYS.changeOrderItems, all)
+    this.recalcChangeOrder(input.changeOrderId)
+    return item
+  },
+
+  removeChangeOrderItem(itemId: string): void {
+    const all = read(KEYS.changeOrderItems, emptyChangeOrderItems)
+    const item = all.find((i) => i.id === itemId)
+    if (!item) throw new Error('找不到細項')
+    const co = this.getChangeOrder(item.changeOrderId)
+    if (!co) throw new Error('找不到追加減')
+    assertChangeOrderEditable({ status: co.status })
+    const others = all.filter((i) => i.changeOrderId !== item.changeOrderId)
+    const mine = all
+      .filter((i) => i.changeOrderId === item.changeOrderId && i.id !== itemId)
+      .sort((a, b) => a.lineNo - b.lineNo)
+      .map((i, idx) => ({ ...i, lineNo: idx + 1 }))
+    write(KEYS.changeOrderItems, [...others, ...mine])
+    this.recalcChangeOrder(item.changeOrderId)
+  },
+
+  setChangeOrderStatus(
+    actor: { id: string; role: string },
+    changeOrderId: string,
+    status: ChangeOrderStatus,
+  ): ChangeOrder {
+    if (
+      status === 'accepted' ||
+      status === 'rejected' ||
+      status === 'sent_to_customer'
+    ) {
+      assertCanMarkChangeOrderAccept(actor.role)
+    }
+    const all = read(KEYS.changeOrders, emptyChangeOrders)
+    const idx = all.findIndex((c) => c.id === changeOrderId)
+    if (idx < 0) throw new Error('找不到追加減')
+    const current = all[idx]
+    if (current.status === 'accepted' || current.status === 'cancelled') {
+      throw new Error('已接受或已取消的追加減不可再改狀態')
+    }
+    if (status === 'accepted') {
+      const items = this.getChangeOrderItems(changeOrderId)
+      if (items.length === 0) throw new Error('請先新增至少一筆細項再標記接受')
+    }
+    const now = new Date().toISOString()
+    const next: ChangeOrder = {
+      ...current,
+      status,
+      updatedAt: now,
+      acceptedAt: status === 'accepted' ? now : current.acceptedAt,
+      acceptedBy: status === 'accepted' ? actor.id : current.acceptedBy,
+    }
+    all[idx] = next
+    write(KEYS.changeOrders, all)
+    return next
   },
 
   softDeleteQuotation(
