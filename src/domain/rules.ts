@@ -80,6 +80,7 @@ export const HOME_SHORTCUTS = [
   { id: 'sites', label: '工地列表', path: '/sites' },
   { id: 'customers', label: '客戶主檔', path: '/customers' },
   { id: 'repairs', label: '維修案件', path: '/repairs' },
+  { id: 'complaints', label: '客訴', path: '/complaints' },
   { id: 'purchase', label: '材料採購', path: '/purchases' },
   { id: 'quotes', label: '報價', path: '/quotes' },
   { id: 'inventory', label: '庫存成本', path: '/inventory' },

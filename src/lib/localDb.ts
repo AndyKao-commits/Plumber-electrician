@@ -102,10 +102,18 @@ import type {
   RepairVisit,
   SiteProject,
   TaxMode,
+  Complaint,
+  ComplaintStatus,
+  RelatedRepairCase,
   Warranty,
   WarrantyAssessment,
   WarrantyAssessmentClassification,
 } from '@/domain/types'
+import {
+  assertComplaintSubject,
+  assertDistinctRelatedCases,
+  assertRelatedCasesAreAssociationOnly,
+} from '@/domain/complaints'
 import {
   assertProblemDescription,
   nextRepairStatusAfterDispatch,
@@ -134,6 +142,8 @@ const KEYS = {
   repairVisits: 'eg.repairVisits.v1',
   warranties: 'eg.warranties.v1',
   warrantyAssessments: 'eg.warrantyAssessments.v1',
+  complaints: 'eg.complaints.v1',
+  relatedRepairCases: 'eg.relatedRepairCases.v1',
   quotations: 'eg.quotations.v2',
   quotationItems: 'eg.quotationItems.v1',
   quotationVersions: 'eg.quotationVersions.v1',
@@ -176,6 +186,8 @@ const emptyRepairAssignments: RepairAssignment[] = []
 const emptyRepairVisits: RepairVisit[] = []
 const emptyWarranties: Warranty[] = []
 const emptyWarrantyAssessments: WarrantyAssessment[] = []
+const emptyComplaints: Complaint[] = []
+const emptyRelatedRepairCases: RelatedRepairCase[] = []
 const emptyQuotes: Quotation[] = []
 const emptyQuoteItems: QuotationItem[] = []
 const emptyQuoteVersions: QuotationVersion[] = []
@@ -408,6 +420,8 @@ function seedIfNeeded() {
   write(KEYS.repairVisits, emptyRepairVisits)
   write(KEYS.warranties, emptyWarranties)
   write(KEYS.warrantyAssessments, emptyWarrantyAssessments)
+  write(KEYS.complaints, emptyComplaints)
+  write(KEYS.relatedRepairCases, emptyRelatedRepairCases)
   write(KEYS.quotations, emptyQuotes)
   write(KEYS.quotationItems, emptyQuoteItems)
   write(KEYS.quotationVersions, emptyQuoteVersions)
@@ -944,6 +958,117 @@ export const localDb = {
     const all = read(KEYS.warrantyAssessments, emptyWarrantyAssessments)
     all.unshift(row)
     write(KEYS.warrantyAssessments, all)
+    return row
+  },
+
+  listComplaints(): Complaint[] {
+    return read(KEYS.complaints, emptyComplaints).sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt),
+    )
+  },
+
+  createComplaint(
+    actor: { id: string },
+    input: {
+      subject: string
+      detail?: string | null
+      siteId?: string | null
+      repairCaseId?: string | null
+      customerName?: string | null
+    },
+  ): Complaint {
+    const subject = assertComplaintSubject(input.subject)
+    const now = new Date().toISOString()
+    const row: Complaint = {
+      id: `cmp-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      subject,
+      detail: input.detail?.trim() || null,
+      status: 'open',
+      siteId: input.siteId || null,
+      repairCaseId: input.repairCaseId || null,
+      customerName: input.customerName?.trim() || null,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.complaints, emptyComplaints)
+    all.unshift(row)
+    write(KEYS.complaints, all)
+    return row
+  },
+
+  setComplaintStatus(
+    _actor: { id: string },
+    complaintId: string,
+    status: ComplaintStatus,
+  ): Complaint {
+    const all = read(KEYS.complaints, emptyComplaints)
+    const idx = all.findIndex((c) => c.id === complaintId)
+    if (idx < 0) throw new Error('找不到客訴')
+    all[idx] = {
+      ...all[idx],
+      status,
+      updatedAt: new Date().toISOString(),
+    }
+    write(KEYS.complaints, all)
+    return all[idx]
+  },
+
+  listRelatedRepairCases(repairCaseId: string): RelatedRepairCase[] {
+    return read(KEYS.relatedRepairCases, emptyRelatedRepairCases).filter(
+      (r) =>
+        r.fromRepairCaseId === repairCaseId ||
+        r.toRepairCaseId === repairCaseId,
+    )
+  },
+
+  linkRelatedRepairCases(
+    actor: { id: string },
+    input: {
+      fromRepairCaseId: string
+      toRepairCaseId: string
+      note?: string | null
+    },
+  ): RelatedRepairCase {
+    assertDistinctRelatedCases(input.fromRepairCaseId, input.toRepairCaseId)
+    const policy = assertRelatedCasesAreAssociationOnly(input)
+    if (policy.mergesCases || policy.deletesCases) {
+      throw new Error('禁止合併或刪除原始維修案件')
+    }
+    if (!this.getRepairCase(input.fromRepairCaseId)) {
+      throw new Error('找不到來源維修案件')
+    }
+    if (!this.getRepairCase(input.toRepairCaseId)) {
+      throw new Error('找不到目標維修案件')
+    }
+    // Do not delete or merge either case
+    const before = this.getRepairCases().length
+    const now = new Date().toISOString()
+    const row: RelatedRepairCase = {
+      id: `rrc-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      fromRepairCaseId: input.fromRepairCaseId,
+      toRepairCaseId: input.toRepairCaseId,
+      note: input.note?.trim() || null,
+      createdAt: now,
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.relatedRepairCases, emptyRelatedRepairCases)
+    if (
+      all.some(
+        (r) =>
+          r.fromRepairCaseId === row.fromRepairCaseId &&
+          r.toRepairCaseId === row.toRepairCaseId,
+      )
+    ) {
+      throw new Error('案件已關聯')
+    }
+    all.push(row)
+    write(KEYS.relatedRepairCases, all)
+    if (this.getRepairCases().length !== before) {
+      throw new Error('關聯不得改變案件數量')
+    }
     return row
   },
 
