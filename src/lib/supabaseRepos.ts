@@ -1,8 +1,10 @@
 import {
   assertCanApprovePurchase,
+  assertPermission,
   hasPermission,
   PERMISSIONS,
 } from '@/domain/permissions'
+import { optionalUuid, requireUuid } from '@/lib/ids'
 import { safeNotify, safeNotifyApprovers } from '@/lib/lineNotify'
 import {
   assertEmergencyReserveAllowed,
@@ -380,6 +382,10 @@ export const supabaseRepos = {
       otherBuyerFees?: number
     },
   ): Promise<PurchaseRecord> {
+    assertPermission(actor.role, PERMISSIONS.PURCHASE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const siteId = optionalUuid(input.siteId, '工地')
     const finalPayable = calcFinalPayable(input)
     const businessDate = formatTaipei(new Date(), 'yyyy-MM-dd')
     const needsApproval = input.mode === 'normal' && requiresPreApproval(finalPayable)
@@ -407,7 +413,7 @@ export const supabaseRepos = {
       .from('purchases')
       .insert({
         user_id: actor.id,
-        site_id: input.siteId || null,
+        site_id: siteId,
         mode: input.mode,
         status: needsApproval ? 'pending_approval' : 'purchased',
         title: input.title.trim(),
@@ -664,7 +670,12 @@ export const supabaseRepos = {
       taxRate?: number
     },
   ): Promise<Quotation> {
-    assertQuoteAssociation(input)
+    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const projectId = optionalUuid(input.projectId, '工程')
+    const repairCaseId = optionalUuid(input.repairCaseId, '維修案件')
+    assertQuoteAssociation({ projectId, repairCaseId })
     if (!input.taxMode) throw new AppError('建立報價必須選擇稅務模式（REV-03）')
     const tax = calcQuoteTax({
       amountBeforeTax: input.amountBeforeTax,
@@ -675,8 +686,8 @@ export const supabaseRepos = {
     const { data, error } = await sb()
       .from('quotations')
       .insert({
-        project_id: input.projectId ?? null,
-        repair_case_id: input.repairCaseId ?? null,
+        project_id: projectId,
+        repair_case_id: repairCaseId,
         title: input.title.trim(),
         status: 'draft',
         tax_mode: input.taxMode,
@@ -711,7 +722,11 @@ export const supabaseRepos = {
     }
   },
 
-  async publishQuotation(quoteId: string): Promise<Quotation> {
+  async publishQuotation(actor: AppUser, quoteId: string): Promise<Quotation> {
+    assertPermission(actor.role, PERMISSIONS.QUOTE_PUBLISH, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    requireUuid(quoteId, '報價')
     const { data: current, error: loadError } = await sb()
       .from('quotations')
       .select(
@@ -812,18 +827,25 @@ export const supabaseRepos = {
     }))
   },
 
-  async inboundMaterial(input: {
-    materialId: string
-    qty: number
-    unitCost: number
-  }): Promise<MaterialStock> {
+  async inboundMaterial(
+    actor: AppUser,
+    input: {
+      materialId: string
+      qty: number
+      unitCost: number
+    },
+  ): Promise<MaterialStock> {
+    assertPermission(actor.role, PERMISSIONS.INVENTORY_INBOUND, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const materialId = requireUuid(input.materialId, '材料')
     if (input.qty <= 0) throw new AppError('入庫數量必須大於 0')
     if (input.unitCost < 0) throw new AppError('入庫單價不可為負')
 
     const { data: current, error: loadError } = await sb()
       .from('materials')
       .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
-      .eq('id', input.materialId)
+      .eq('id', materialId)
       .maybeSingle()
     if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取材料'))
     if (!current) throw new AppError('找不到材料')
@@ -843,7 +865,7 @@ export const supabaseRepos = {
         unit_cost: next.unitCost,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', input.materialId)
+      .eq('id', materialId)
       .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
       .single()
     if (error) throw new AppError(toUserMessage(error, '入庫失敗'))
