@@ -956,11 +956,12 @@ async function listSites(
   admin: Sb,
   organizationId: string,
 ): Promise<Array<{ id: string; name: string }>> {
+  // project_status enum: active | pending_close | closed | warranty (no "archived")
   const { data, error } = await admin
     .from('sites')
     .select('id, name, status')
     .eq('organization_id', organizationId)
-    .neq('status', 'archived')
+    .in('status', ['active', 'pending_close', 'warranty'])
     .order('updated_at', { ascending: false })
     .limit(10)
   if (error) {
