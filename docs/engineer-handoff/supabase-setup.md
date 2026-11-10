@@ -87,6 +87,13 @@ SQL：`20261110_line_bind_code_fix_random.sql`
 ### Webhook
 `line-webhook` 不再對「你好」回長選單（圖文選單負責入口）；只處理綁定碼／加好友短提示。請重新 Deploy webhook（JWT 關）。
 
+## 4c. 施工照片（LINE 直傳）
+
+1. SQL Editor 執行：`supabase/migrations/20261110_line_photo_uploads.sql`
+2. 重新 Deploy `line-webhook`（JWT 關）
+3. 圖文選單「上傳照片」建議改為**文字訊息**：`上傳照片`（不要用網址）；或直接在聊天室傳圖
+4. App 路徑：`/photos` 指定工地
+
 ## 5. 驗證
 
 - Production：登入頁顯示「Supabase 正式模式」

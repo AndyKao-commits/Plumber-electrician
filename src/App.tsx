@@ -10,6 +10,7 @@ import { InventoryPage } from '@/pages/InventoryPage'
 import { LineBindCallbackPage } from '@/pages/LineBindCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { NotificationsPage } from '@/pages/NotificationsPage'
+import { PhotosPage } from '@/pages/PhotosPage'
 import { PurchasesPage } from '@/pages/PurchasesPage'
 import { QuotesPage } from '@/pages/QuotesPage'
 import { SiteDetailPage } from '@/pages/SiteDetailPage'
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="/notifications" element={<Protected><NotificationsPage /></Protected>} />
             <Route path="/todos" element={<Protected><TodosPage /></Protected>} />
             <Route path="/team" element={<Protected><TeamPage /></Protected>} />
+            <Route path="/photos" element={<Protected><PhotosPage /></Protected>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

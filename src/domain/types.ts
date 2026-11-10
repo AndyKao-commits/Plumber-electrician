@@ -28,6 +28,8 @@ export type NoticeKind = 'notice' | 'todo'
 
 export type NoticeStatus = 'open' | 'done' | 'cancelled'
 
+export type PhotoUploadStatus = 'pending' | 'linked' | 'discarded'
+
 export interface AppUser {
   id: string
   organizationId: string
@@ -158,4 +160,20 @@ export interface PurchaseRuleSnapshot {
   preApprovalThresholdNtd: number
   emergencySingleLimitNtd: number
   emergencyDailyLimitNtd: number | null
+}
+
+export interface PhotoUpload {
+  id: string
+  organizationId: string
+  uploadedBy: string
+  uploaderName?: string
+  siteId?: string | null
+  siteName?: string | null
+  storagePath: string
+  contentType?: string | null
+  byteSize?: number | null
+  source: string
+  status: PhotoUploadStatus
+  previewUrl?: string | null
+  createdAt: string
 }
