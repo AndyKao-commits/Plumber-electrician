@@ -10,24 +10,41 @@ type LineEvent = {
 type LineWebhookBody = { events?: LineEvent[] }
 
 Deno.serve(async (req) => {
+  const token = Deno.env.get('LINE_CHANNEL_ACCESS_TOKEN') ?? ''
+  const secret = Deno.env.get('LINE_CHANNEL_SECRET') ?? ''
+  const appUrl = (Deno.env.get('APP_PUBLIC_URL') || DEFAULT_APP_URL).replace(/\/$/, '')
+
   if (req.method === 'GET' || req.method === 'HEAD') {
-    return new Response('ok', { status: 200 })
+    return json({
+      ok: true,
+      mode: 'reply_only',
+      hasToken: token.length > 0,
+      hasSecret: secret.length > 0,
+      appUrl,
+    })
   }
+
   if (req.method !== 'POST') {
     return new Response('method not allowed', { status: 405 })
   }
 
-  const token = Deno.env.get('LINE_CHANNEL_ACCESS_TOKEN')
-  const secret = Deno.env.get('LINE_CHANNEL_SECRET')
-  const appUrl = (Deno.env.get('APP_PUBLIC_URL') || DEFAULT_APP_URL).replace(/\/$/, '')
   const rawBody = await req.text()
   const signature = req.headers.get('x-line-signature') ?? ''
 
-  if (!secret) return json({ ok: false, error: 'LINE_CHANNEL_SECRET not set' }, 500)
+  if (!secret) {
+    console.warn('[line-webhook] LINE_CHANNEL_SECRET not set')
+    return json({ ok: false, error: 'LINE_CHANNEL_SECRET not set' }, 500)
+  }
+
   if (!(await verifyLineSignature(rawBody, signature, secret))) {
+    console.warn('[line-webhook] invalid signature')
     return json({ ok: false, error: 'invalid signature' }, 401)
   }
-  if (!token) return json({ ok: true, replied: 0, reason: 'no_token' })
+
+  if (!token) {
+    console.warn('[line-webhook] LINE_CHANNEL_ACCESS_TOKEN not set')
+    return json({ ok: true, replied: 0, reason: 'no_token' })
+  }
 
   let body: LineWebhookBody
   try {
@@ -36,13 +53,22 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: 'invalid json' }, 400)
   }
 
+  const events = body.events ?? []
+  console.info('[line-webhook] events', events.length, events.map((e) => e.type).join(','))
+
   let replied = 0
-  for (const event of body.events ?? []) {
+  let failed = 0
+  for (const event of events) {
     if (!event.replyToken) continue
-    if (event.type !== 'message' && event.type !== 'follow' && event.type !== 'postback') continue
-    if (await replyMenu(token, event.replyToken, appUrl)) replied += 1
+    if (event.type !== 'message' && event.type !== 'follow' && event.type !== 'postback') {
+      continue
+    }
+    const ok = await replyMenu(token, event.replyToken, appUrl)
+    if (ok) replied += 1
+    else failed += 1
   }
-  return json({ ok: true, replied })
+
+  return json({ ok: true, replied, failed, eventCount: events.length })
 })
 
 async function verifyLineSignature(body: string, signature: string, channelSecret: string) {
@@ -67,24 +93,24 @@ async function verifyLineSignature(body: string, signature: string, channelSecre
 }
 
 async function replyMenu(token: string, replyToken: string, appUrl: string) {
-  const items = [
-    { label: '上下班打卡', path: '/attendance' },
-    { label: '切換工地', path: '/sites' },
-    { label: '施工回報', path: '/sites' },
-    { label: '材料採購', path: '/purchases' },
-    { label: '我的出勤', path: '/attendance' },
-    { label: '工程系統', path: '/' },
+  const lines = [
+    '工程管家入口（僅回覆、不主動推播）',
+    '',
+    `上下班打卡：${appUrl}/attendance`,
+    `切換工地：${appUrl}/sites`,
+    `施工回報：${appUrl}/sites`,
+    `材料採購：${appUrl}/purchases`,
+    `我的出勤：${appUrl}/attendance`,
+    `工程系統：${appUrl}/`,
   ]
-  const messages = [{
-    type: 'text',
-    text: '工程管家入口（僅回覆、不主動推播）。請點選下方按鈕開啟系統：',
-    quickReply: {
-      items: items.map((item) => ({
-        type: 'action',
-        action: { type: 'uri', label: item.label.slice(0, 20), uri: `${appUrl}${item.path}` },
-      })),
+
+  const messages = [
+    {
+      type: 'text',
+      text: lines.join('\n').slice(0, 4000),
     },
-  }]
+  ]
+
   try {
     const res = await fetch('https://api.line.me/v2/bot/message/reply', {
       method: 'POST',
@@ -95,9 +121,11 @@ async function replyMenu(token: string, replyToken: string, appUrl: string) {
       body: JSON.stringify({ replyToken, messages }),
     })
     if (!res.ok) {
-      console.warn('[line-webhook] reply failed', res.status)
+      const errText = (await res.text()).slice(0, 300)
+      console.warn('[line-webhook] reply failed', res.status, errText)
       return false
     }
+    console.info('[line-webhook] reply ok')
     return true
   } catch (err) {
     console.warn('[line-webhook] reply threw', String(err).slice(0, 200))
