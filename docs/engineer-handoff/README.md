@@ -1,41 +1,41 @@
 # 工程交付說明（給工程師）
 
-來源對話：
+## 官方原檔（已匯入 part1）
+
+- ZIP：`original/electrical_project_package_part1_balanced_70aa.zip`
+- 解壓：`original/chatgpt-part1/`
+- 文字版：`original/chatgpt-part1/extracted-text/` 與 `package/from-chatgpt-part1/`
+
+**閱讀順序：** 先讀 `00_最終整合開發規格`，再 DOC-01～09。  
+若與早期文件衝突，以已確認政策與 DOC-08／09 為準；**不可假定已正式封版**。
+
+## 文件狀態（官方 README）
+
+- 規格規劃版，尚未授權開發
+- 不是完整可執行 SQL Migration、OpenAPI 3.1 或已通過測試的系統
+- **未經業主明確授權，不得修改 GitHub／Supabase／Vercel 或部署**
+
+> 註：本 repo 既有 MVP 示範碼是規劃落地骨架；正式開發仍需明確授權。
+
+## 已核准政策
+
+1. 一般採購最終應付金額 ≥ NT$3,000 須事前核准  
+2. 緊急採購單次 ≤ NT$5,000；每人每日 ≤ NT$10,000  
+3. 一般數量型材料採移動加權平均  
+4. 每次建立報價時選擇稅務模式  
+5. RPO 1 小時、RTO 4 小時（尚未實測）
+
+## 建議閱讀
+
+1. `final-integrated-spec.md`（官方 00 全文文字版）
+2. `doc08-findings.md`（官方 08，含 REV-01～12）
+3. `package/DOC-09_correction_contract.md`
+4. `feasibility.md`
+5. Word／PDF 原檔於 `original/chatgpt-part1/`
+
+## 來源對話
+
 - https://chatgpt.com/share/6af27b2e-31d8-83ee-9de3-c8287529caeb
 - https://chatgpt.com/share/6af28019-cfd0-83ec-bf49-738de06277ea
 - https://chatgpt.com/share/6af28a57-0b70-83ee-8496-f50778494099
-
-ChatGPT 端已宣告：**需求規劃結束，不再擴充規劃階段**。  
-原始 Word／PDF／ZIP 僅存在於 ChatGPT sandbox／Library；此 repo 以對話內容重建可追蹤的工程交付文件。
-
-Library 分享連結（需 ChatGPT 登入，Cloud Agent 目前無法直接下載）：  
-https://chatgpt.com/library/share/libfile_d90ffd0208408191be60ac1c4cb26eb3?account_id=personal  
-
-對話後續：ZIP 無法下載 → ChatGPT 提供英文檔名  
-`electrical_project_engineering_package.zip`／`electrical_project_combined_spec.pdf`  
-（仍為 sandbox，此環境同樣抓不到）。
-
-**本 repo 已提供可下載替代包：**  
-`docs/engineer-handoff/original/electrical_project_engineering_package.zip`  
-（由對話重建的 Markdown／SQL 交付包，非 ChatGPT 原始 Word／PDF）。
-
-## 建議閱讀順序
-
-1. `final-integrated-spec.md` — 最終整合開發規格（待授權版摘要）
-2. `document-index.md` — DOC-01～DOC-09 清單與用途
-3. `doc08-findings.md` — 交叉審查 12 項／5 項 P0 阻擋
-4. `integration-rules.md` — INT-01～INT-12 跨模組規則
-5. `feasibility.md` — 對照目前 GitHub 程式現況與建議開發順序
-6. `../product-decisions.md` — 已確認業務決策清單
-
-## 工程師回覆重點（對話建議）
-
-請先確認：
-
-- 技術可行性
-- 資料庫架構
-- 開發順序
-- 預估工期區間（技術面，非日曆承諾）
-
-**在專案負責人明確授權前，不應視為正式開工指令。**  
-本 repo 既有 MVP 僅為決策落地與可操作示範，非正式上線版。
+- https://chatgpt.com/share/6af29b35-ddec-83ec-b085-4b21cb56991a

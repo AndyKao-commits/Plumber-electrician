@@ -1,20 +1,41 @@
-# DOC-09 P0.12 Correction Contract (summary rebuild)
+# DOC-09 P0.12 規格修正補充契約（官方文字版）
 
-Convert DOC-08 findings into concrete rules:
-
-## P0
-1. Quote ↔ repair dependency: explicit FKs and create order (`repair_cases` before quotes that reference them)
-2. RLS with every migration batch
-3. Emergency purchase immutable quota reserve/release events
-4. Petty cash: request → approve → disburse → ledger model
-5. Backup/restore: plan validation + drill evidence (RPO1h/RTO4h)
-
-## P1
-Tax selection at quote creation time (not only publish), cost method details, permission/finance/test traceability updates.
-
-## Unchanged approved policies
-- Final payable threshold NT$3,000
-- Emergency single NT$5,000 / daily NT$10,000
-- Moving weighted average inventory cost
-- Tax mode chosen per quote
-- RPO 1h / RTO 4h
+```text
+DOC-09｜P0.12 規格修正補充契約
+水電工程管理系統｜版本 0.9.1｜2026-11-10｜文件增補，尚未正式封版
+適用 DOC-01～DOC-08。此文件為優先於舊版衝突敘述的修正提案；未覆寫原始文件，亦未執行開發、資料庫操作、部署或復原演練。
+REV-01｜報價與維修外鍵依賴｜P0
+先建立 customers/sites 與 repair_cases 的最小主檔，再建立 quotations 的 project_id/repair_case_id 外鍵；資料庫約束要求兩者恰有一個非空（XOR）。如允許無關聯模板，模板另表管理。工作票 FIN-001 依賴 REP-001 最小主檔，或將 REP-001 提前到報價前。
+REV-02｜每批 Migration 的 RLS｜P0
+每個新建租戶表必須同一批完成 RLS 啟用、預設拒絕、組織驗證及跨組織讀寫測試。Migration 011 僅做總複核和索引最佳化，不得作為首次啟用安全策略的批次。跨表參照用複合外鍵或交易內驗證保證同組織。
+REV-03｜建立報價即選稅務｜P1
+POST /quotations 必須提供 tax_mode，缺少回傳 422；tax_mode、tax_rate、tax_basis、rounding_policy 的適用值在發布前驗證並於發布時凍結。純空白模板不屬於 quotation。
+REV-04｜緊急採購額度事件｜P0
+以 organization_id + employee_id + Asia/Taipei 原始業務日期作額度鍵。建立不可變 emergency_limit_events（RESERVE、RELEASE、ADJUST），對每日額度行加鎖後檢查單次 ≤5000、當日有效占額 + 新增 ≤10000；取消需授權、留下原因和事件，原日沖回而非移轉至取消日。事後退款不得自動釋放原始採購占額；更改金額採差額事件與重審。
+REV-05｜零用金完整資料契約｜P0
+增設 petty_cash_accounts、petty_cash_top_up_requests、petty_cash_disbursements、petty_cash_ledger_entries、petty_cash_reconciliations、petty_cash_receipts。員工申請→Owner 授權核准→實際撥款→帳戶入帳，各為獨立狀態與事件；核准不等於撥款。核對差異不可直接改寫既有流水帳。
+REV-06｜移動加權平均例外｜P1
+成本池暫採 organization_id + material_id（待技術驗證），倉庫調撥不重算；一般採購入庫才更新平均成本。零庫存重新入庫採新批成本；供應商退貨按原入庫關聯成本處理，差異走成本調整事件。所有計算用 DECIMAL，精度與捨入政策列待決，不可用浮點數。
+REV-07｜自我核准與敏感權限｜P1
+在 Owner 決策前採安全預設：禁止申請人自行核准自己的採購；管理者不預設擁有財務、薪資、門禁密碼權限。AUTH-003、PUR-001 的驗收須涵蓋 deny 優先、權限撤銷及不可自我提權。
+REV-08｜測試清冊唯一來源｜P1
+DOC-05 目前可辨識 68 個一般測試 ID + 8 個 E2E 流程，共 76 條（以 DOC-08 抽取規則）。原先 75 的摘要不作為驗收依據。須建立 machine-readable test_manifest，校驗 ID 唯一、47 張工作票引用有效、每個 P0 規則至少一條正反向測試。
+REV-09｜個資及秘密管理｜P1
+建立資料分類、個資保留與刪除政策、附件權限撤銷、門禁秘密加密與讀取稽核。政策未核准前禁止大批量正式資料匯出；日常必要查看仍依授權控制。資料刪除須兼顧依法保留的交易稽核。
+REV-10｜RPO/RTO 可行性門檻｜P0
+RPO ≤1h、RTO ≤4h 是已核准目標而非已達成能力。DEV-007 先核對資料庫備份/PITR、物件儲存附件版本、金鑰與設定、供應商方案及成本；REL-003 在隔離環境實測資料庫＋附件一致性恢復，未達標禁止正式發布。
+REV-11｜財務不可變事件｜P1
+收款、分配、預收抵充、折讓、退款、供應商應付與信用額度各自建正式事件及可核對餘額。任何收款不得超額分配；預收抵充不是新現金；退款不得同時作為折讓重複減帳；供應商未開票承諾與應付不得重複計入信用占用。
+REV-12｜合法業務順序｜P1
+E2E-01 支援先報價後施工及先報修/檢查再報價兩種合法流程；不可強制「施工完成後才報價」。工程與獨立維修報價各需對應前置資料與獨立測試。
+待 Owner 決策與阻擋規則
+採購自我核准：暫定禁止，需 Owner 明確核准才可放寬。
+管理者敏感財務預設權限：暫定無，採細項授權。
+人工成本、收入認列、保固條款、月結日、稅額精度、個資保留／刪除與匯出核准：待決，不得推定已核准。
+備份方案費用與實測：待技術評估，RPO/RTO 目標不變。
+修正後驗收門檻
+P0 五項（REV-01、02、04、05、10）須在相應模組實作前完成可驗證的設計及測試映射。
+DOC-01～07 尚需逐份修訂、重編版本及再次交叉審查；本補充文件不等於七份文件已修正。
+完整 DDL、OpenAPI 3.1、RLS SQL、測試清冊仍未生成，不能宣稱可直接實作或通過驗收。
+仍遵守「先不要開發」：不得建立 GitHub Issues、提交程式、變更資料庫或部署。
+```

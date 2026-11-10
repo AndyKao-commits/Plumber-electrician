@@ -9,7 +9,14 @@
 暫定名稱：工程管家（水電工程行管理系統）
 
 **規劃狀態：已結束擴充。** 對話確認不再新增 P0.x 規劃階段；等待明確授權後才正式開發。  
-工程交付重建文件見 `docs/engineer-handoff/`。
+工程交付：官方 part1 已匯入 `docs/engineer-handoff/original/chatgpt-part1/`（Word 00～09）。
+
+官方補充要點：
+- 身分模型文件寫 Owner／Admin／Member（與細項授權）
+- 底部分頁規劃：首頁／工程／行程／待辦／更多
+- 報價必須 `project_id` XOR `repair_case_id`
+- 緊急額度採不可變 RESERVE／RELEASE／ADJUST 事件
+- DOC-08 結論：有條件通過規劃完整性，**未通過可直接開發封版**
 
 規格文件進度（對話宣告 DOC-01～09 + 最終整合版；sandbox 原檔不可從此環境下載）：
 

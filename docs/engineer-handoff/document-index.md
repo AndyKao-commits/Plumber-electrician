@@ -40,13 +40,11 @@ ChatGPT 宣告共 **10 份文件、20 個下載檔案**（每份 Word + PDF）�
   - `electrical_project_combined_spec.pdf`
 - 來源對話：https://chatgpt.com/share/6af29b35-ddec-83ec-b085-4b21cb56991a
 
-**狀態：** sandbox／library 原檔此環境皆無法取得。
+**狀態更新：** 負責人已上傳 `electrical_project_package_part1_balanced_70aa.zip`。  
+已解壓至 `docs/engineer-handoff/original/chatgpt-part1/`（Word 00～09 齊；PDF 目前 00～03）。
 
-**已提供替代包（可直接給工程師）：**  
-`docs/engineer-handoff/original/electrical_project_engineering_package.zip`  
-另有展開目錄：`docs/engineer-handoff/package/`
-
-若之後取得 ChatGPT 原始 Word／PDF，請放入 `original/` 並標註「已匯入原檔」。
+另保留早期 repo 重建包：`electrical_project_engineering_package.zip`。  
+若有 part2（其餘 PDF），請繼續上傳。
 
 ## 保存建議
 
