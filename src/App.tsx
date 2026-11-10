@@ -7,6 +7,7 @@ import { queryClient } from '@/lib/queryClient'
 import { AttendancePage } from '@/pages/AttendancePage'
 import { CustomersPage } from '@/pages/CustomersPage'
 import { HomePage } from '@/pages/HomePage'
+import { RepairsPage } from '@/pages/RepairsPage'
 import { InventoryPage } from '@/pages/InventoryPage'
 import { LineBindCallbackPage } from '@/pages/LineBindCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="/sites" element={<Protected><SitesPage /></Protected>} />
             <Route path="/sites/:siteId" element={<Protected><SiteDetailPage /></Protected>} />
             <Route path="/customers" element={<Protected><CustomersPage /></Protected>} />
+            <Route path="/repairs" element={<Protected><RepairsPage /></Protected>} />
             <Route path="/attendance" element={<Protected><AttendancePage /></Protected>} />
             <Route path="/purchases" element={<Protected><PurchasesPage /></Protected>} />
             <Route path="/quotes" element={<Protected><QuotesPage /></Protected>} />

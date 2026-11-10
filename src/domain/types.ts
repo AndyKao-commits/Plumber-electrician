@@ -113,13 +113,60 @@ export type QuoteWorkflowStatus =
   | 'rejected'
   | 'cancelled'
 
+/** REP-001 repair workflow status. */
+export type RepairCaseStatus =
+  | 'pending_schedule'
+  | 'scheduled'
+  | 'in_progress'
+  | 'pending_confirm'
+  | 'closed'
+  | 'paused'
+  | 'cancelled'
+
 export interface RepairCase {
   id: string
   organizationId: string
-  siteId?: string | null
-  customerName: string
+  caseNumber: string
+  /** Business-required (REP-01). */
+  problemDescription: string
+  /** Display alias; defaults to problemDescription. */
   title: string
+  status: RepairCaseStatus
+  siteId?: string | null
+  customerId?: string | null
+  /** Free-text name when no customer master linked. */
+  customerName?: string | null
   createdAt: string
+  updatedAt?: string
+  createdBy?: string | null
+}
+
+/** REP-001: dispatch / assignment history (immutable rows). */
+export interface RepairAssignment {
+  id: string
+  organizationId: string
+  repairCaseId: string
+  assigneeUserId: string
+  assigneeName: string
+  note?: string | null
+  assignedAt: string
+  createdBy: string
+}
+
+/**
+ * REP-001 / REP-03: visit history. Must NOT create attendance.
+ */
+export interface RepairVisit {
+  id: string
+  organizationId: string
+  repairCaseId: string
+  visitorUserId: string
+  visitorName: string
+  note?: string | null
+  visitedAt: string
+  createdBy: string
+  /** Always false — documented invariant. */
+  attendanceCreated: false
 }
 
 /** CRM-001: customer master — name is the only required field. */

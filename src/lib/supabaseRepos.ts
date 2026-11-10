@@ -56,6 +56,12 @@ import {
   assertCustomerName,
 } from '@/domain/crm'
 import {
+  assertProblemDescription,
+  nextRepairStatusAfterDispatch,
+  nextRepairStatusAfterVisit,
+  visitCreatesAttendance,
+} from '@/domain/repairs'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   canCreateChangeOrder,
@@ -107,7 +113,10 @@ import type {
   QuoteExportFormat,
   QuoteExportSnapshot,
   QuoteWorkflowStatus,
+  RepairAssignment,
   RepairCase,
+  RepairCaseStatus,
+  RepairVisit,
   SiteDefect,
   SiteProject,
   TaxMode,
@@ -422,6 +431,54 @@ function mapCustomerSiteLinkRow(
     customerId: String(row.customer_id),
     siteId: String(row.site_id),
     createdAt: String(row.created_at),
+  }
+}
+
+function mapRepairCaseRow(row: Record<string, unknown>): RepairCase {
+  const problem =
+    String(row.problem_description || row.title || '').trim() || '（未填問題）'
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    caseNumber: String(row.case_number || `RC-${String(row.id).slice(0, 8)}`),
+    problemDescription: problem,
+    title: String(row.title || problem),
+    status: (row.status as RepairCaseStatus) || 'pending_schedule',
+    siteId: (row.site_id as string | null) ?? null,
+    customerId: (row.customer_id as string | null) ?? null,
+    customerName: (row.customer_name as string | null) ?? null,
+    createdAt: String(row.created_at),
+    updatedAt: (row.updated_at as string | null) ?? String(row.created_at),
+    createdBy: (row.created_by as string | null) ?? null,
+  }
+}
+
+function mapRepairAssignmentRow(
+  row: Record<string, unknown>,
+): RepairAssignment {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    repairCaseId: String(row.repair_case_id),
+    assigneeUserId: String(row.assignee_user_id),
+    assigneeName: String(row.assignee_name),
+    note: (row.note as string | null) ?? null,
+    assignedAt: String(row.assigned_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapRepairVisitRow(row: Record<string, unknown>): RepairVisit {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    repairCaseId: String(row.repair_case_id),
+    visitorUserId: String(row.visitor_user_id),
+    visitorName: String(row.visitor_name),
+    note: (row.note as string | null) ?? null,
+    visitedAt: String(row.visited_at),
+    createdBy: String(row.created_by ?? ''),
+    attendanceCreated: false,
   }
 }
 
@@ -1110,17 +1167,14 @@ export const supabaseRepos = {
   async listRepairCases(): Promise<RepairCase[]> {
     const { data, error } = await sb()
       .from('repair_cases')
-      .select('id, organization_id, site_id, customer_name, title, created_at')
+      .select(
+        'id, organization_id, case_number, problem_description, title, status, site_id, customer_id, customer_name, created_at, updated_at, created_by',
+      )
       .order('created_at', { ascending: false })
     if (error) throw new AppError(toUserMessage(error, '無法載入維修案件'))
-    return (data ?? []).map((row) => ({
-      id: String(row.id),
-      organizationId: String(row.organization_id),
-      siteId: (row.site_id as string | null) ?? null,
-      customerName: String(row.customer_name),
-      title: String(row.title),
-      createdAt: String(row.created_at),
-    }))
+    return (data ?? []).map((row) =>
+      mapRepairCaseRow(row as Record<string, unknown>),
+    )
   },
 
   async listQuotations(): Promise<Quotation[]> {
@@ -3282,32 +3336,163 @@ export const supabaseRepos = {
 
   async createRepairCase(
     actor: AppUser,
-    input: { title: string; customerName: string; siteId?: string | null },
+    input: {
+      problemDescription: string
+      customerName?: string | null
+      customerId?: string | null
+      siteId?: string | null
+      /** @deprecated use problemDescription */
+      title?: string
+    },
   ): Promise<RepairCase> {
-    const title = input.title.trim()
-    const customerName = input.customerName.trim()
-    if (!title) throw new AppError('請填寫維修標題')
-    if (!customerName) throw new AppError('請填寫客戶名稱')
+    const problemDescription = assertProblemDescription(
+      input.problemDescription || input.title || '',
+    )
+    const caseNumber = `RC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
     const { data, error } = await sb()
       .from('repair_cases')
       .insert({
         organization_id: actor.organizationId,
-        title,
-        customer_name: customerName,
+        case_number: caseNumber,
+        problem_description: problemDescription,
+        title: problemDescription,
+        status: 'pending_schedule',
+        customer_name: input.customerName?.trim() || null,
+        customer_id: optionalUuid(input.customerId, '客戶'),
         site_id: optionalUuid(input.siteId, '工地'),
         created_by: actor.id,
+        updated_at: new Date().toISOString(),
       })
-      .select('id, organization_id, site_id, customer_name, title, created_at')
+      .select(
+        'id, organization_id, case_number, problem_description, title, status, site_id, customer_id, customer_name, created_at, updated_at, created_by',
+      )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法建立維修案件'))
-    return {
-      id: String(data.id),
-      organizationId: String(data.organization_id),
-      siteId: (data.site_id as string | null) ?? null,
-      customerName: String(data.customer_name),
-      title: String(data.title),
-      createdAt: String(data.created_at),
+    return mapRepairCaseRow(data as Record<string, unknown>)
+  },
+
+  async listRepairAssignments(
+    repairCaseId: string,
+  ): Promise<RepairAssignment[]> {
+    const rid = requireUuid(repairCaseId, '維修案件')
+    const { data, error } = await sb()
+      .from('repair_assignments')
+      .select(
+        'id, organization_id, repair_case_id, assignee_user_id, assignee_name, note, assigned_at, created_by',
+      )
+      .eq('repair_case_id', rid)
+      .order('assigned_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入派工'))
+    return (data ?? []).map((row) =>
+      mapRepairAssignmentRow(row as Record<string, unknown>),
+    )
+  },
+
+  async assignRepair(
+    actor: AppUser,
+    input: {
+      repairCaseId: string
+      assigneeUserId: string
+      assigneeName: string
+      note?: string | null
+    },
+  ): Promise<RepairAssignment> {
+    const rid = requireUuid(input.repairCaseId, '維修案件')
+    const cases = await this.listRepairCases()
+    const repair = cases.find((c) => c.id === rid)
+    if (!repair) throw new AppError('找不到維修案件')
+    const { data, error } = await sb()
+      .from('repair_assignments')
+      .insert({
+        repair_case_id: rid,
+        assignee_user_id: requireUuid(input.assigneeUserId, '指派人員'),
+        assignee_name: input.assigneeName.trim() || '未命名',
+        note: input.note?.trim() || null,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, repair_case_id, assignee_user_id, assignee_name, note, assigned_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法派工'))
+    const next = nextRepairStatusAfterDispatch(repair.status)
+    if (next !== repair.status) {
+      await sb()
+        .from('repair_cases')
+        .update({ status: next, updated_at: new Date().toISOString() })
+        .eq('id', rid)
     }
+    return mapRepairAssignmentRow(data as Record<string, unknown>)
+  },
+
+  async listRepairVisits(repairCaseId: string): Promise<RepairVisit[]> {
+    const rid = requireUuid(repairCaseId, '維修案件')
+    const { data, error } = await sb()
+      .from('repair_visits')
+      .select(
+        'id, organization_id, repair_case_id, visitor_user_id, visitor_name, note, visited_at, created_by, attendance_created',
+      )
+      .eq('repair_case_id', rid)
+      .order('visited_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入到場紀錄'))
+    return (data ?? []).map((row) =>
+      mapRepairVisitRow(row as Record<string, unknown>),
+    )
+  },
+
+  async recordRepairVisit(
+    actor: AppUser,
+    input: {
+      repairCaseId: string
+      note?: string | null
+      visitedAt?: string
+    },
+  ): Promise<RepairVisit> {
+    if (visitCreatesAttendance()) {
+      throw new AppError('內部錯誤：到場不得建立出勤')
+    }
+    const rid = requireUuid(input.repairCaseId, '維修案件')
+    const cases = await this.listRepairCases()
+    const repair = cases.find((c) => c.id === rid)
+    if (!repair) throw new AppError('找不到維修案件')
+    const { data, error } = await sb()
+      .from('repair_visits')
+      .insert({
+        repair_case_id: rid,
+        visitor_user_id: actor.id,
+        visitor_name: actor.name,
+        note: input.note?.trim() || null,
+        visited_at: input.visitedAt || new Date().toISOString(),
+        created_by: actor.id,
+        attendance_created: false,
+      })
+      .select(
+        'id, organization_id, repair_case_id, visitor_user_id, visitor_name, note, visited_at, created_by, attendance_created',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法記錄到場'))
+    const next = nextRepairStatusAfterVisit(repair.status)
+    if (next !== repair.status) {
+      await sb()
+        .from('repair_cases')
+        .update({ status: next, updated_at: new Date().toISOString() })
+        .eq('id', rid)
+    }
+    return mapRepairVisitRow(data as Record<string, unknown>)
+  },
+
+  async setRepairCaseStatus(
+    actor: AppUser,
+    repairCaseId: string,
+    status: RepairCaseStatus,
+  ): Promise<void> {
+    const rid = requireUuid(repairCaseId, '維修案件')
+    const { error } = await sb()
+      .from('repair_cases')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', rid)
+    if (error) throw new AppError(toUserMessage(error, '無法更新維修狀態'))
+    void actor
   },
 
   async listSiteDefects(siteId: string): Promise<SiteDefect[]> {
