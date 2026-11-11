@@ -71,6 +71,13 @@ import {
   assertRelatedCasesAreAssociationOnly,
 } from '@/domain/complaints'
 import {
+  assertNoNegativeStock,
+  assertUsageNotAlreadyPosted,
+  assertUsageQty,
+  computeUsageCost,
+} from '@/domain/materialUsage'
+import { roundMoney } from '@/domain/money'
+import {
   assertCanMarkChangeOrderAccept,
   assertChangeOrderEditable,
   canCreateChangeOrder,
@@ -108,6 +115,7 @@ import type {
   CustomerSiteLink,
   OperatingCostKind,
   MaterialStock,
+  MaterialUsage,
   PaymentAllocation,
   PaymentMethod,
   PurchaseMode,
@@ -555,6 +563,24 @@ function mapRelatedRepairCaseRow(
     toRepairCaseId: String(row.to_repair_case_id),
     note: (row.note as string | null) ?? null,
     createdAt: String(row.created_at),
+    createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapMaterialUsageRow(row: Record<string, unknown>): MaterialUsage {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    materialId: String(row.material_id),
+    materialName: String(row.material_name),
+    qty: Number(row.qty),
+    unitCost: Number(row.unit_cost),
+    totalCost: Number(row.total_cost),
+    repairCaseId: (row.repair_case_id as string | null) ?? null,
+    siteId: (row.site_id as string | null) ?? null,
+    note: (row.note as string | null) ?? null,
+    clientOperationId: String(row.client_operation_id),
+    postedAt: String(row.posted_at),
     createdBy: String(row.created_by ?? ''),
   }
 }
@@ -2894,6 +2920,119 @@ export const supabaseRepos = {
       unitCost: Number(row.unit_cost),
       updatedAt: String(row.updated_at),
     }))
+  },
+
+  async listMaterialUsages(repairCaseId?: string): Promise<MaterialUsage[]> {
+    let q = sb()
+      .from('material_usages')
+      .select(
+        'id, organization_id, material_id, material_name, qty, unit_cost, total_cost, repair_case_id, site_id, note, client_operation_id, posted_at, created_by',
+      )
+    if (repairCaseId) {
+      q = q.eq('repair_case_id', requireUuid(repairCaseId, '維修案件'))
+    }
+    const { data, error } = await q.order('posted_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入耗用'))
+    return (data ?? []).map((row) =>
+      mapMaterialUsageRow(row as Record<string, unknown>),
+    )
+  },
+
+  async postMaterialUsage(
+    actor: AppUser,
+    input: {
+      materialId: string
+      qty: number
+      repairCaseId?: string | null
+      siteId?: string | null
+      note?: string | null
+      clientOperationId: string
+    },
+  ): Promise<MaterialUsage> {
+    assertPermission(actor.role, PERMISSIONS.INVENTORY_ADJUST, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const qty = assertUsageQty(input.qty)
+    const materialId = requireUuid(input.materialId, '材料')
+    const existing = await this.listMaterialUsages()
+    assertUsageNotAlreadyPosted({
+      clientOperationId: input.clientOperationId,
+      existingOperationIds: existing.map((u) => u.clientOperationId),
+    })
+    const { data: material, error: loadError } = await sb()
+      .from('materials')
+      .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
+      .eq('id', materialId)
+      .maybeSingle()
+    if (loadError || !material) {
+      throw new AppError(toUserMessage(loadError, '找不到材料'))
+    }
+    assertSameOrganization(actor.organizationId, String(material.organization_id))
+    assertNoNegativeStock({
+      availableQty: Number(material.qty),
+      usageQty: qty,
+    })
+    const unitCost = Number(material.unit_cost)
+    const totalCost = computeUsageCost({ qty, unitCost })
+    const nextQty = roundMoney(Number(material.qty) - qty, 4)
+    const { error: updError } = await sb()
+      .from('materials')
+      .update({ qty: nextQty, updated_at: new Date().toISOString() })
+      .eq('id', materialId)
+    if (updError) throw new AppError(toUserMessage(updError, '無法扣減庫存'))
+    const { data, error } = await sb()
+      .from('material_usages')
+      .insert({
+        material_id: materialId,
+        material_name: String(material.name),
+        qty,
+        unit_cost: unitCost,
+        total_cost: totalCost,
+        repair_case_id: optionalUuid(input.repairCaseId, '維修案件'),
+        site_id: optionalUuid(input.siteId, '工地'),
+        note: input.note?.trim() || null,
+        client_operation_id: input.clientOperationId.trim(),
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, material_id, material_name, qty, unit_cost, total_cost, repair_case_id, site_id, note, client_operation_id, posted_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法過帳耗用'))
+    return mapMaterialUsageRow(data as Record<string, unknown>)
+  },
+
+  async createQuoteFromRepairUsages(
+    actor: AppUser,
+    input: {
+      repairCaseId: string
+      title?: string
+      taxMode?: TaxMode
+    },
+  ): Promise<Quotation> {
+    const rid = requireUuid(input.repairCaseId, '維修案件')
+    const cases = await this.listRepairCases()
+    const repair = cases.find((c) => c.id === rid)
+    if (!repair) throw new AppError('找不到維修案件')
+    const usages = await this.listMaterialUsages(rid)
+    if (usages.length === 0) throw new AppError('尚無耗用可轉報價')
+    const quote = await this.createQuotation(actor, {
+      title: input.title || `維修報價 · ${repair.problemDescription}`,
+      repairCaseId: rid,
+      projectId: null,
+      taxMode: input.taxMode || 'zero',
+      customerName: repair.customerName || '',
+    })
+    for (const u of usages) {
+      await this.addQuotationItem(actor, {
+        quotationId: quote.id,
+        kind: 'material',
+        description: `${u.materialName}（耗用）`,
+        qty: u.qty,
+        unitPrice: u.unitCost,
+      })
+    }
+    return this.getQuotation(quote.id)
   },
 
   async inboundMaterial(

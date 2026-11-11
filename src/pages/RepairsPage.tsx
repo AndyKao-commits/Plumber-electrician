@@ -5,14 +5,17 @@ import type {
   RepairCaseStatus,
   WarrantyAssessmentClassification,
 } from '@/domain/types'
+import { useInventory } from '@/hooks/useInventory'
 import { useRepairs, useRepairHistory } from '@/hooks/useRepairs'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
 import { formatTaipei } from '@/lib/time'
+import { Link } from 'react-router-dom'
 
 export function RepairsPage() {
   const { user } = useUser()
   const { sites } = useSites()
+  const { materials } = useInventory(user?.id)
   const {
     repairs,
     isLoading,
@@ -23,6 +26,8 @@ export function RepairsPage() {
     setStatus,
     createWarranty,
     assessWarranty,
+    postUsage,
+    quoteFromUsages,
     saving,
   } = useRepairs()
 
@@ -40,6 +45,9 @@ export function RepairsPage() {
     useState<WarrantyAssessmentClassification>('excluded')
   const [assessReason, setAssessReason] = useState('')
   const [assessWarId, setAssessWarId] = useState('')
+  const [usageMaterialId, setUsageMaterialId] = useState('')
+  const [usageQty, setUsageQty] = useState('1')
+  const [usageNote, setUsageNote] = useState('')
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -301,6 +309,120 @@ export function RepairsPage() {
                 </p>
               ))
             )}
+          </div>
+
+          <form
+            className="stack"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void (async () => {
+                try {
+                  await postUsage({
+                    materialId: usageMaterialId,
+                    qty: Number(usageQty) || 0,
+                    repairCaseId: selected.id,
+                    note: usageNote || null,
+                  })
+                  setUsageQty('1')
+                  setUsageNote('')
+                  setMessage('已過帳耗用（共用庫存，只扣一次）')
+                  await history.refetch()
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : '耗用失敗')
+                }
+              })()
+            }}
+          >
+            <strong>維修材料耗用（REP-002）</strong>
+            <p className="muted" style={{ margin: 0 }}>
+              共用庫存流水帳；禁止負庫存；免費／保固仍記成本。可轉維修報價（無需工程）。
+            </p>
+            <div className="grid-2">
+              <div className="field">
+                <label>材料</label>
+                <select
+                  value={usageMaterialId}
+                  onChange={(e) => setUsageMaterialId(e.target.value)}
+                  required
+                >
+                  <option value="">—</option>
+                  {materials.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}（庫存 {m.qty} · 成本 {m.unitCost}）
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>數量</label>
+                <input
+                  type="number"
+                  min="0.0001"
+                  step="any"
+                  value={usageQty}
+                  onChange={(e) => setUsageQty(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+            <div className="field">
+              <label>備註</label>
+              <input
+                value={usageNote}
+                onChange={(e) => setUsageNote(e.target.value)}
+              />
+            </div>
+            <div className="row" style={{ gap: 8 }}>
+              <button className="btn btn-ghost" type="submit" disabled={saving}>
+                過帳耗用
+              </button>
+              <button
+                className="btn btn-steel"
+                type="button"
+                disabled={saving || history.usages.length === 0}
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      const q = await quoteFromUsages({
+                        repairCaseId: selected.id,
+                      })
+                      setMessage(`已建立維修報價 ${q.quoteNumber}`)
+                    } catch (err) {
+                      setError(
+                        err instanceof Error ? err.message : '轉報價失敗',
+                      )
+                    }
+                  })()
+                }}
+              >
+                耗用轉報價
+              </button>
+            </div>
+          </form>
+
+          <div className="stack">
+            {history.usages.length === 0 ? (
+              <p className="muted" style={{ margin: 0 }}>
+                尚無耗用
+              </p>
+            ) : (
+              history.usages.map((u) => (
+                <p key={u.id} style={{ margin: 0 }}>
+                  {u.materialName} × {u.qty} · 成本 NT$
+                  {u.totalCost.toLocaleString()}
+                  <br />
+                  <span className="muted">
+                    {formatTaipei(u.postedAt, 'MM/dd HH:mm')} ·{' '}
+                    {u.clientOperationId}
+                  </span>
+                </p>
+              ))
+            )}
+            {history.usages.length > 0 ? (
+              <Link to="/quotes" className="btn btn-ghost">
+                前往報價列表
+              </Link>
+            ) : null}
           </div>
 
           <form

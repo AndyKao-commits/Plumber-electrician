@@ -86,6 +86,7 @@ import type {
   CustomerRefund,
   CustomerSiteLink,
   MaterialStock,
+  MaterialUsage,
   OperatingCostKind,
   PaymentAllocation,
   PaymentMethod,
@@ -124,6 +125,13 @@ import {
   assertWarrantyAssessmentRationale,
   isAutoFreeByWarrantyDates,
 } from '@/domain/warranty'
+import {
+  assertNoNegativeStock,
+  assertUsageNotAlreadyPosted,
+  assertUsageQty,
+  computeUsageCost,
+} from '@/domain/materialUsage'
+import { roundMoney } from '@/domain/money'
 import { formatTaipei } from '@/lib/time'
 
 const ORG_ID = 'org-demo'
@@ -163,6 +171,7 @@ const KEYS = {
   customerContacts: 'eg.customerContacts.v1',
   customerSiteLinks: 'eg.customerSiteLinks.v1',
   materials: 'eg.materials.v1',
+  materialUsages: 'eg.materialUsages.v1',
 } as const
 
 function read<T>(key: string, fallback: T): T {
@@ -207,6 +216,7 @@ const emptyCustomers: Customer[] = []
 const emptyCustomerContacts: CustomerContact[] = []
 const emptyCustomerSiteLinks: CustomerSiteLink[] = []
 const emptyMaterials: MaterialStock[] = []
+const emptyMaterialUsages: MaterialUsage[] = []
 
 function write<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value))
@@ -441,6 +451,7 @@ function seedIfNeeded() {
   write(KEYS.customerContacts, emptyCustomerContacts)
   write(KEYS.customerSiteLinks, emptyCustomerSiteLinks)
   write(KEYS.materials, seededMaterials)
+  write(KEYS.materialUsages, emptyMaterialUsages)
   write(KEYS.shortcuts, [
     'clock',
     'sites',
@@ -2423,6 +2434,103 @@ export const localDb = {
 
   getMaterials(): MaterialStock[] {
     return read(KEYS.materials, emptyMaterials)
+  },
+
+  listMaterialUsages(repairCaseId?: string): MaterialUsage[] {
+    const all = read(KEYS.materialUsages, emptyMaterialUsages)
+    const filtered = repairCaseId
+      ? all.filter((u) => u.repairCaseId === repairCaseId)
+      : all
+    return filtered.sort((a, b) => b.postedAt.localeCompare(a.postedAt))
+  },
+
+  postMaterialUsage(
+    actor: { id: string },
+    input: {
+      materialId: string
+      qty: number
+      repairCaseId?: string | null
+      siteId?: string | null
+      note?: string | null
+      clientOperationId: string
+    },
+  ): MaterialUsage {
+    const qty = assertUsageQty(input.qty)
+    const usages = read(KEYS.materialUsages, emptyMaterialUsages)
+    assertUsageNotAlreadyPosted({
+      clientOperationId: input.clientOperationId,
+      existingOperationIds: usages.map((u) => u.clientOperationId),
+    })
+    if (input.repairCaseId && !this.getRepairCase(input.repairCaseId)) {
+      throw new Error('找不到維修案件')
+    }
+    const materials = this.getMaterials()
+    const idx = materials.findIndex((m) => m.id === input.materialId)
+    if (idx < 0) throw new Error('找不到材料')
+    const material = materials[idx]
+    assertNoNegativeStock({ availableQty: material.qty, usageQty: qty })
+    const unitCost = material.unitCost
+    const totalCost = computeUsageCost({ qty, unitCost })
+    const now = new Date().toISOString()
+    materials[idx] = {
+      ...material,
+      qty: roundMoney(material.qty - qty, 4),
+      updatedAt: now,
+    }
+    write(KEYS.materials, materials)
+    const row: MaterialUsage = {
+      id: `mu-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      materialId: material.id,
+      materialName: material.name,
+      qty,
+      unitCost,
+      totalCost,
+      repairCaseId: input.repairCaseId || null,
+      siteId: input.siteId || null,
+      note: input.note?.trim() || null,
+      clientOperationId: input.clientOperationId.trim(),
+      postedAt: now,
+      createdBy: actor.id,
+    }
+    usages.unshift(row)
+    write(KEYS.materialUsages, usages)
+    return row
+  },
+
+  /**
+   * Create a repair-only quote and add material lines from usages (cost → sell at cost for draft).
+   * Does not require a project (XOR repair).
+   */
+  createQuoteFromRepairUsages(
+    actor: { id: string; role: string },
+    input: {
+      repairCaseId: string
+      title?: string
+      taxMode?: TaxMode
+    },
+  ): Quotation {
+    const repair = this.getRepairCase(input.repairCaseId)
+    if (!repair) throw new Error('找不到維修案件')
+    const usages = this.listMaterialUsages(repair.id)
+    if (usages.length === 0) throw new Error('尚無耗用可轉報價')
+    const quote = this.createQuotation({
+      createdBy: actor.id,
+      title: input.title || `維修報價 · ${repair.problemDescription}`,
+      repairCaseId: repair.id,
+      customerName: repair.customerName || '',
+      taxMode: input.taxMode || 'zero',
+    })
+    for (const u of usages) {
+      this.addQuotationItem({
+        quotationId: quote.id,
+        kind: 'material',
+        description: `${u.materialName}（耗用）`,
+        qty: u.qty,
+        unitPrice: u.unitCost,
+      })
+    }
+    return this.getQuotation(quote.id)!
   },
 
   inboundMaterial(input: {
