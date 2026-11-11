@@ -421,6 +421,20 @@ async function handlePostback(
     return selectCashSite(admin, profile, gate.draft, params.id || '')
   }
 
+  if (action === 'cash_misc') {
+    if (!gate.draft || gate.draft.flow_type !== 'purchase') {
+      return [textMsg('請先點「支出／收款」。')]
+    }
+    return selectCashMisc(admin, profile, gate.draft)
+  }
+
+  if (action === 'cash_loc_skip') {
+    if (!gate.draft || gate.draft.flow_type !== 'purchase') {
+      return [textMsg('請先點「支出／收款」。')]
+    }
+    return skipCashLocation(admin, profile, gate.draft)
+  }
+
   if (action === 'cash_receipt_skip') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
       return [textMsg('請先點「支出／收款」。')]
@@ -1389,7 +1403,7 @@ async function storeLineImage(
   lineToken: string,
   profile: Profile,
   messageId: string,
-  meta: { siteId: string; photoType: string; batchId: string },
+  meta: { siteId: string | null; photoType: string; batchId: string },
 ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   if (!admin) return { ok: false, error: '收圖失敗：伺服器尚未設定資料庫。' }
   if (!messageId) return { ok: false, error: '收圖失敗：缺少訊息編號。' }
@@ -1995,24 +2009,129 @@ async function promptCashSiteFor(
   draft: DraftRow,
 ): Promise<LineMessage[]> {
   const sites = await listSitesForProfile(admin, profile)
+  const miscBtn = {
+    label: '雜項（加油／餐飲等）',
+    data: 'a=cash_misc',
+    style: 'primary' as const,
+  }
   if (sites.length === 0) {
     return [
       flexMenu({
-        altText: '沒有可選工地',
+        altText: '選擇歸屬',
         eyebrow: '支出／收款',
         title: '沒有可選工地',
-        body: '老闆請到網站「工地」→ 點進工地 →「有權限工地成員」勾選你後儲存。',
-        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        body: '可改走雜項（加油、買飯、飲料、臨時支援），或請老闆在網站指派工地權限。',
+        buttons: [
+          miscBtn,
+          { label: '取消', data: 'a=cancel', style: 'secondary' },
+        ],
       }),
     ]
   }
   return siteCarousel({
-    altText: '選擇工地',
+    altText: '選擇工地或雜項',
     eyebrow: '支出／收款',
     sites: sites.slice(0, 9),
     actionPrefix: 'a=cash_site&id=',
-    extraButtons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+    extraButtons: [
+      miscBtn,
+      { label: '取消', data: 'a=cancel', style: 'secondary' },
+    ],
   })
+}
+
+async function selectCashMisc(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  void profile
+  const kind = String(draft.draft_payload?.kind || '')
+  const nextPayload = {
+    ...draft.draft_payload,
+    misc: true,
+    siteId: null,
+    siteName: '雜項（無工地）',
+    locationText: null,
+  }
+  if (kind === 'expense') {
+    await touchDraft(admin, draft.id, {
+      current_step: 'enter_item',
+      draft_payload: nextPayload,
+    })
+    return [
+      flexMenu({
+        altText: '請輸入雜項項目',
+        eyebrow: '支出回報',
+        title: '雜項：輸入項目',
+        body: '例如：加油／買飯／飲料／臨時支援\n直接以文字回覆',
+        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
+  }
+  await touchDraft(admin, draft.id, {
+    current_step: 'enter_location',
+    draft_payload: nextPayload,
+  })
+  return promptCashLocation(draft, nextPayload)
+}
+
+function promptCashLocation(
+  draft: DraftRow,
+  payload?: Record<string, unknown>,
+): LineMessage[] {
+  const p = payload || draft.draft_payload || {}
+  const kindLabel = p.kind === 'receipt' ? '收款回報' : '支出回報'
+  return [
+    flexMenu({
+      altText: '請輸入地點（可跳過）',
+      eyebrow: kindLabel,
+      title: '雜項：地點（可選）',
+      body: '可輸入地點文字（例如：中油忠孝站），或回覆「跳過」',
+      buttons: [
+        { label: '跳過', data: 'a=cash_loc_skip', style: 'primary' },
+        { label: '取消', data: 'a=cancel', style: 'secondary' },
+      ],
+    }),
+  ]
+}
+
+async function skipCashLocation(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  void profile
+  const payload = { ...(draft.draft_payload || {}), locationText: null }
+  const kind = String(payload.kind || '')
+  if (kind === 'expense') {
+    await touchDraft(admin, draft.id, {
+      current_step: 'enter_amount',
+      draft_payload: payload,
+    })
+    return [
+      flexMenu({
+        altText: '請輸入金額',
+        eyebrow: '支出回報',
+        title: '請輸入金額',
+        body: `項目：${payload.item || '—'}\n請以文字回覆數字（新台幣，例如 800）`,
+        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
+  }
+  await touchDraft(admin, draft.id, {
+    current_step: 'enter_amount',
+    draft_payload: payload,
+  })
+  return [
+    flexMenu({
+      altText: '請輸入收款金額',
+      eyebrow: '收款回報',
+      title: '請輸入金額',
+      body: '可選：先傳來源說明文字；或直接輸入數字金額（例如 5000）',
+      buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+    }),
+  ]
 }
 
 async function selectCashSite(
@@ -2032,8 +2151,10 @@ async function selectCashSite(
   const kind = String(draft.draft_payload?.kind || '')
   const nextPayload = {
     ...draft.draft_payload,
+    misc: false,
     siteId: site.id,
     siteName: site.name,
+    locationText: null,
   }
   if (kind === 'expense') {
     await touchDraft(admin, draft.id, {
@@ -2081,6 +2202,9 @@ async function handlePurchaseText(
   }
 
   if (step === 'select_site') {
+    if (/雜項|加油|買飯|飲料|臨時支援|無工地/.test(text)) {
+      return selectCashMisc(admin, profile, draft)
+    }
     const num = Number(text)
     if (Number.isInteger(num) && num >= 1) {
       const sites = await listSitesForProfile(admin, profile)
@@ -2103,9 +2227,20 @@ async function handlePurchaseText(
         }),
       ]
     }
+    const nextPayload = { ...payload, item }
+    if (payload.misc) {
+      await touchDraft(admin, draft.id, {
+        current_step: 'enter_location',
+        draft_payload: nextPayload,
+      })
+      return promptCashLocation(
+        { ...draft, current_step: 'enter_location', draft_payload: nextPayload },
+        nextPayload,
+      )
+    }
     await touchDraft(admin, draft.id, {
       current_step: 'enter_amount',
-      draft_payload: { ...payload, item },
+      draft_payload: nextPayload,
     })
     return [
       flexMenu({
@@ -2113,6 +2248,39 @@ async function handlePurchaseText(
         eyebrow: '支出回報',
         title: '請輸入金額',
         body: `項目：${item}\n請以文字回覆數字（新台幣，例如 800）`,
+        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
+  }
+
+  if (step === 'enter_location') {
+    if (/^(跳過|不用|無)$/.test(text.trim())) {
+      return skipCashLocation(admin, profile, draft)
+    }
+    const locationText = text.trim()
+    if (locationText.length < 1) return promptCashLocation(draft)
+    const nextPayload = { ...payload, locationText }
+    await touchDraft(admin, draft.id, {
+      current_step: 'enter_amount',
+      draft_payload: nextPayload,
+    })
+    if (payload.kind === 'expense') {
+      return [
+        flexMenu({
+          altText: '請輸入金額',
+          eyebrow: '支出回報',
+          title: '請輸入金額',
+          body: `項目：${payload.item || '—'}\n地點：${locationText}\n請以文字回覆數字（例如 800）`,
+          buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        }),
+      ]
+    }
+    return [
+      flexMenu({
+        altText: '請輸入收款金額',
+        eyebrow: '收款回報',
+        title: '請輸入金額',
+        body: `地點：${locationText}\n可選：先傳來源說明；或直接輸入數字（例如 5000）`,
         buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
@@ -2215,12 +2383,12 @@ async function handleCashReceiptImage(
       ...(await resumePurchase(admin!, profile, draft)),
     ]
   }
-  if (!payload.siteId) {
+  if (!payload.misc && !payload.siteId) {
     return [textMsg('缺少工地，請重新開始。')]
   }
   const batchId = String(payload.batchId || crypto.randomUUID())
   const result = await storeLineImage(admin, lineToken, profile, messageId, {
-    siteId: String(payload.siteId),
+    siteId: payload.siteId ? String(payload.siteId) : null,
     photoType: 'unclassified',
     batchId,
   })
@@ -2265,12 +2433,13 @@ async function promptCashConfirm(
     draft_payload: p,
   })
   const kindLabel = p.kind === 'receipt' ? '收款' : '支出'
+  const locLine = p.locationText ? `\n地點：${p.locationText}` : ''
   return [
     flexMenu({
       altText: `請確認${kindLabel}`,
       eyebrow: '支出／收款',
       title: `請確認${kindLabel}`,
-      body: `類型：${kindLabel}\n工地：${p.siteName || '—'}\n${
+      body: `類型：${kindLabel}\n歸屬：${p.siteName || '—'}${locLine}\n${
         p.kind === 'expense' ? `項目：${p.item || '—'}` : `來源：${p.sourceNote || '—'}`
       }\n金額：NT$${Number(p.amount || 0).toLocaleString()}\n收據：${
         Number(p.receiptCount ?? 0)
@@ -2297,11 +2466,14 @@ async function resumePurchase(
         altText: '請輸入支出項目',
         eyebrow: '支出回報',
         title: '請輸入支出項目',
-        body: '直接以文字回覆項目名稱',
+        body: draft.draft_payload?.misc
+          ? '例如：加油／買飯／飲料／臨時支援'
+          : '直接以文字回覆項目名稱',
         buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
+  if (step === 'enter_location') return promptCashLocation(draft)
   if (step === 'enter_amount') {
     return [
       flexMenu({
@@ -2359,13 +2531,17 @@ async function submitFieldCash(
 ): Promise<LineMessage[]> {
   const p = draft.draft_payload || {}
   const kind = String(p.kind || '')
-  const siteId = String(p.siteId || '')
-  const siteName = String(p.siteName || '')
+  const isMisc = Boolean(p.misc) || !p.siteId
+  const siteId = isMisc ? null : String(p.siteId || '')
+  const siteName = isMisc
+    ? '雜項（無工地）'
+    : String(p.siteName || '')
+  const locationText = p.locationText ? String(p.locationText).trim() || null : null
   const amount = Number(p.amount ?? NaN)
   if (kind !== 'expense' && kind !== 'receipt') {
     return [textMsg('類型缺失，請重新開始。')]
   }
-  if (!siteId || !siteName) return [textMsg('請先選擇工地。')]
+  if (!isMisc && (!siteId || !siteName)) return [textMsg('請先選擇工地或雜項。')]
   if (!Number.isFinite(amount) || amount <= 0) {
     return [textMsg('金額無效，請重新開始。')]
   }
@@ -2387,6 +2563,7 @@ async function submitFieldCash(
   }
 
   const expensesUri = `${appBaseUrl()}/expenses`
+  const placeLabel = locationText ? `${siteName}（${locationText}）` : siteName
 
   if (kind === 'expense') {
     const item = String(p.item || '').trim()
@@ -2399,6 +2576,7 @@ async function submitFieldCash(
         organization_id: profile.organization_id,
         site_id: siteId,
         site_name: siteName,
+        location_text: locationText,
         item,
         amount,
         note: null,
@@ -2431,7 +2609,7 @@ async function submitFieldCash(
           user_id: b.id,
           kind: 'todo',
           title: `支出待審核：${item}`,
-          detail: `NT$${amount.toLocaleString()} · ${siteName}（LINE）`,
+          detail: `NT$${amount.toLocaleString()} · ${placeLabel}（LINE）`,
           status: 'open',
           unread: true,
           href: '/expenses',
@@ -2444,7 +2622,7 @@ async function submitFieldCash(
         altText: needsReview ? '已送出支出（待審核）' : '已建立支出',
         eyebrow: '支出回報',
         title: needsReview ? '已送出（待審核）' : '已建立（小額免審）',
-        body: `「${data.item}」\n金額 NT$${Number(data.amount).toLocaleString()}\n狀態：${data.status}`,
+        body: `「${data.item}」\n金額 NT$${Number(data.amount).toLocaleString()}\n歸屬：${placeLabel}\n狀態：${data.status}`,
         buttons: [{ label: '查看收支', uri: expensesUri, style: 'primary' }],
       }),
     ]
@@ -2456,6 +2634,7 @@ async function submitFieldCash(
       organization_id: profile.organization_id,
       site_id: siteId,
       site_name: siteName,
+      location_text: locationText,
       amount,
       source_note: p.sourceNote ? String(p.sourceNote) : null,
       proof_photo_path: receiptPhotoPath,
@@ -2481,7 +2660,7 @@ async function submitFieldCash(
       user_id: b.id,
       kind: 'todo',
       title: `收款待確認：NT$${amount.toLocaleString()}`,
-      detail: `${siteName}（LINE）`,
+      detail: `${placeLabel}（LINE）`,
       status: 'open',
       unread: true,
       href: '/expenses',

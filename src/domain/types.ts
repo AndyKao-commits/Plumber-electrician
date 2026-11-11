@@ -66,8 +66,11 @@ export type CashReceiptStatus =
 export interface ExpenseReport {
   id: string
   organizationId: string
-  siteId: string
+  /** Null = misc (加油／餐飲等)，不掛案件 */
+  siteId: string | null
   siteName: string
+  /** Free-text place when misc / optional note for site spend */
+  locationText?: string | null
   item: string
   amount: number
   note?: string | null
@@ -85,8 +88,9 @@ export interface ExpenseReport {
 export interface CashReceiptReport {
   id: string
   organizationId: string
-  siteId: string
+  siteId: string | null
   siteName: string
+  locationText?: string | null
   amount: number
   sourceNote?: string | null
   proofPhotoPath?: string | null

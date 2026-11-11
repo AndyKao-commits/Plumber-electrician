@@ -185,6 +185,7 @@ import {
   assertExpenseItem,
   assertPositiveMoney,
   computeCaseFinance,
+  resolveFieldCashTarget,
 } from '@/domain/fieldFinance'
 import { buildAuditEntry, type AuditAction } from '@/domain/auditLog'
 import {
@@ -3833,15 +3834,29 @@ export const localDb = {
   createExpenseReport(
     actor: { id: string; name: string; role: AppUser['role'] },
     input: {
-      siteId: string
+      siteId?: string | null
       item: string
       amount: number
       note?: string | null
+      locationText?: string | null
       receiptPhotoPath?: string | null
+      misc?: boolean
     },
   ): ExpenseReport {
-    const site = this.getSites(actor).find((s) => s.id === input.siteId)
-    if (!site) throw new Error('找不到工地／案件')
+    let target = resolveFieldCashTarget({
+      siteId: input.siteId,
+      locationText: input.locationText,
+      misc: input.misc,
+    })
+    if (!target.isMisc) {
+      const site = this.getSites(actor).find((s) => s.id === target.siteId)
+      if (!site) throw new Error('找不到工地／案件')
+      target = {
+        ...target,
+        siteId: site.id,
+        siteName: site.name,
+      }
+    }
     const amount = assertPositiveMoney(input.amount, '支出金額')
     const settings = this.getOrgSpendSettings()
     const needsReview = requiresBossReview(
@@ -3852,8 +3867,9 @@ export const localDb = {
     const row: ExpenseReport = {
       id: `exp-${crypto.randomUUID()}`,
       organizationId: ORG_ID,
-      siteId: site.id,
-      siteName: site.name,
+      siteId: target.siteId,
+      siteName: target.siteName,
+      locationText: target.locationText,
       item: assertExpenseItem(input.item),
       amount,
       note: input.note?.trim() || null,
@@ -3943,19 +3959,34 @@ export const localDb = {
   createCashReceipt(
     actor: { id: string; name: string; role: AppUser['role'] },
     input: {
-      siteId: string
+      siteId?: string | null
       amount: number
       sourceNote?: string | null
+      locationText?: string | null
       proofPhotoPath?: string | null
+      misc?: boolean
     },
   ): CashReceiptReport {
-    const site = this.getSites(actor).find((s) => s.id === input.siteId)
-    if (!site) throw new Error('找不到工地／案件')
+    let target = resolveFieldCashTarget({
+      siteId: input.siteId,
+      locationText: input.locationText,
+      misc: input.misc,
+    })
+    if (!target.isMisc) {
+      const site = this.getSites(actor).find((s) => s.id === target.siteId)
+      if (!site) throw new Error('找不到工地／案件')
+      target = {
+        ...target,
+        siteId: site.id,
+        siteName: site.name,
+      }
+    }
     const row: CashReceiptReport = {
       id: `cr-${crypto.randomUUID()}`,
       organizationId: ORG_ID,
-      siteId: site.id,
-      siteName: site.name,
+      siteId: target.siteId,
+      siteName: target.siteName,
+      locationText: target.locationText,
       amount: assertPositiveMoney(input.amount, '收款金額'),
       sourceNote: input.sourceNote?.trim() || null,
       proofPhotoPath: input.proofPhotoPath?.trim() || null,

@@ -3253,8 +3253,9 @@ create trigger trg_set_org_suppliers
 create table if not exists public.expense_reports (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations (id),
-  site_id uuid not null references public.sites (id),
+  site_id uuid references public.sites (id),
   site_name text not null,
+  location_text text,
   item text not null,
   amount numeric(14,2) not null check (amount > 0),
   note text,
@@ -3273,8 +3274,9 @@ create table if not exists public.expense_reports (
 create table if not exists public.cash_receipt_reports (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations (id),
-  site_id uuid not null references public.sites (id),
+  site_id uuid references public.sites (id),
   site_name text not null,
+  location_text text,
   amount numeric(14,2) not null check (amount > 0),
   source_note text,
   proof_photo_path text,
@@ -3465,3 +3467,23 @@ alter table public.profiles
 alter table public.profiles
   add constraint profiles_account_status_check
   check (account_status in ('active', 'disabled'));
+
+-- ===== Misc field cash (from migrations/20261111_misc_field_cash.sql) =====
+-- Misc field cash (加油／餐飲／臨時支援): site optional + free-text location.
+
+alter table public.expense_reports
+  alter column site_id drop not null;
+
+alter table public.cash_receipt_reports
+  alter column site_id drop not null;
+
+alter table public.expense_reports
+  add column if not exists location_text text;
+
+alter table public.cash_receipt_reports
+  add column if not exists location_text text;
+
+comment on column public.expense_reports.location_text is
+  'Free-text place for misc spend (fuel/meals/etc.) when site_id is null.';
+comment on column public.cash_receipt_reports.location_text is
+  'Free-text place for misc receipt when site_id is null.';
