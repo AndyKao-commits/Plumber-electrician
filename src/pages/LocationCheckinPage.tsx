@@ -164,11 +164,7 @@ export function LocationCheckinPage() {
                 暫無法解析地址，已存座標：{result.latitude.toFixed(5)},{' '}
                 {result.longitude.toFixed(5)}
               </p>
-            ) : (
-              <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-                座標：{result.latitude.toFixed(5)}, {result.longitude.toFixed(5)}
-              </p>
-            )}
+            ) : null}
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <Link className="btn btn-steel" to="/">
                 回首頁
