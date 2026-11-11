@@ -738,8 +738,31 @@ function mapStockReservationRow(row: Record<string, unknown>): StockReservation 
   }
 }
 
-const PROFILE_SELECT =
-  'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, role_group_name, access_template, created_at'
+const PROFILE_SELECT_CORE =
+  'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, created_at'
+
+/** Includes role-group columns when migration is applied; falls back to core. */
+const PROFILE_SELECT = `${PROFILE_SELECT_CORE}, role_group_name, access_template`
+
+async function selectProfileRow(userId: string) {
+  const client = sb()
+  const full = await client
+    .from('profiles')
+    .select(PROFILE_SELECT)
+    .eq('id', userId)
+    .maybeSingle()
+  if (
+    full.error &&
+    /role_group_name|access_template|column/i.test(full.error.message)
+  ) {
+    return client
+      .from('profiles')
+      .select(PROFILE_SELECT_CORE)
+      .eq('id', userId)
+      .maybeSingle()
+  }
+  return full
+}
 
 function mapUser(row: {
   id: string
@@ -974,11 +997,7 @@ export const supabaseRepos = {
       return null
     }
 
-    const { data, error } = await client
-      .from('profiles')
-      .select(PROFILE_SELECT)
-      .eq('id', auth.user.id)
-      .maybeSingle()
+    const { data, error } = await selectProfileRow(auth.user.id)
     if (error) throw new AppError(toUserMessage(error, '無法讀取個人資料'))
     if (!data) return null
     return mapUser({ ...data, email: data.email ?? auth.user.email ?? null })
@@ -993,11 +1012,9 @@ export const supabaseRepos = {
     if (error) throw new AppError(toUserMessage(error, '登入失敗'))
     if (!data.user) throw new AppError('登入失敗')
 
-    const { data: profile, error: profileError } = await client
-      .from('profiles')
-      .select(PROFILE_SELECT)
-      .eq('id', data.user.id)
-      .maybeSingle()
+    const { data: profile, error: profileError } = await selectProfileRow(
+      data.user.id,
+    )
     if (profileError) throw new AppError(toUserMessage(profileError, '無法讀取個人資料'))
     if (!profile) throw new AppError('帳號已登入，但尚未建立 profiles 資料列')
     return mapUser({ ...profile, email: profile.email ?? data.user.email ?? null })
@@ -1177,12 +1194,20 @@ export const supabaseRepos = {
       if (actor.role !== 'boss') throw new AppError('僅老闆可停用帳號')
       payload.account_status = assertAccountStatus(input.accountStatus)
     }
-    const { data, error } = await sb()
+    let { data, error } = await sb()
       .from('profiles')
       .update(payload)
       .eq('id', tid)
       .select(PROFILE_SELECT)
       .single()
+    if (error && /role_group_name|access_template|column/i.test(error.message)) {
+      ;({ data, error } = await sb()
+        .from('profiles')
+        .update(payload)
+        .eq('id', tid)
+        .select(PROFILE_SELECT_CORE)
+        .single())
+    }
     if (error) throw new AppError(toUserMessage(error, '無法更新個人資料'))
     const mapped = mapUser(data)
     await this.appendAuditLog(actor, {
@@ -1196,11 +1221,22 @@ export const supabaseRepos = {
 
   async listOrgProfiles(actor: AppUser): Promise<AppUser[]> {
     if (actor.role !== 'boss') throw new AppError('僅老闆可查看完整名冊')
-    const { data, error } = await sb()
+    const full = await sb()
       .from('profiles')
       .select(PROFILE_SELECT)
       .eq('organization_id', actor.organizationId)
       .order('name')
+    let data = full.data
+    let error = full.error
+    if (error && /role_group_name|access_template|column/i.test(error.message)) {
+      const fallback = await sb()
+        .from('profiles')
+        .select(PROFILE_SELECT_CORE)
+        .eq('organization_id', actor.organizationId)
+        .order('name')
+      data = fallback.data
+      error = fallback.error
+    }
     if (error) throw new AppError(toUserMessage(error, '無法載入名冊'))
     return (data ?? []).map((row) => mapUser(row))
   },
