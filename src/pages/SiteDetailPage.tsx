@@ -1,4 +1,4 @@
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { SITE_STATUS_LABELS } from '@/domain/siteStatus'
 import type { DefectSeverity } from '@/domain/types'
@@ -18,17 +18,23 @@ import {
   generateSitePhotosPdfBlob,
   sitePhotosPdfFilename,
 } from '@/lib/sitePhotoExport'
+import {
+  SITE_REPORT_PHOTO_LIMIT,
+  generateSiteReportPdfBlob,
+  siteReportPdfFilename,
+} from '@/lib/siteReportExport'
 import { supabaseRepos } from '@/lib/supabaseRepos'
-import { taipeiDateString } from '@/lib/time'
-
 export function SiteDetailPage() {
   const { siteId } = useParams()
+  const navigate = useNavigate()
   const { data: site, isLoading, isError, error } = useSite(siteId)
   const {
     updateWarranty,
     isUpdatingWarranty,
     updateSiteStatus,
     isUpdatingStatus,
+    deleteSite,
+    isDeletingSite,
   } = useSites()
   const { user, directory } = useUser()
   const queryClient = useQueryClient()
@@ -40,9 +46,6 @@ export function SiteDetailPage() {
   const { reports } = useReports(siteId)
   const {
     logs,
-    ensureDraft,
-    isEnsuring,
-    ensureError,
     saveBody,
     isSaving,
     publish,
@@ -62,10 +65,8 @@ export function SiteDetailPage() {
   const [defectSeverity, setDefectSeverity] = useState<DefectSeverity>('normal')
   const [warrantyDraft, setWarrantyDraft] = useState('')
   const [logDrafts, setLogDrafts] = useState<Record<string, string>>({})
-  const todayLog = useMemo(
-    () => logs.find((l) => l.logDate === taipeiDateString()),
-    [logs],
-  )
+  const [exportingReport, setExportingReport] = useState(false)
+  const [reportPhotoIds, setReportPhotoIds] = useState<Record<string, boolean>>({})
 
   const quotesQuery = useQuery({
     queryKey: ['quotes', 'site', siteId],
@@ -83,6 +84,26 @@ export function SiteDetailPage() {
   const sitePhotos = useMemo(() => allSitePhotos.slice(0, 8), [allSitePhotos])
   const [exportingPdf, setExportingPdf] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const selectedReportPhotos = useMemo(
+    () => allSitePhotos.filter((p) => reportPhotoIds[p.id] && p.previewUrl),
+    [allSitePhotos, reportPhotoIds],
+  )
+  const selectedReportCount = selectedReportPhotos.length
+  function toggleReportPhoto(photoId: string) {
+    setReportPhotoIds((prev) => {
+      const next = { ...prev }
+      if (next[photoId]) {
+        delete next[photoId]
+        return next
+      }
+      if (Object.keys(next).length >= SITE_REPORT_PHOTO_LIMIT) {
+        window.alert(`施工報告最多選 ${SITE_REPORT_PHOTO_LIMIT} 張照片`)
+        return prev
+      }
+      next[photoId] = true
+      return next
+    })
+  }
 
   const membersQuery = useQuery({
     queryKey: ['site-members', siteId],
@@ -252,6 +273,27 @@ export function SiteDetailPage() {
             </div>
           </div>
         ) : null}
+        {isBoss ? (
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={isDeletingSite}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  '確定刪除整個案件？照片會一併刪除，且無法復原。',
+                )
+              ) {
+                return
+              }
+              void deleteSite(site.id)
+                .then(() => navigate('/sites'))
+                .catch((e) => window.alert((e as Error).message))
+            }}
+          >
+            {isDeletingSite ? '刪除中…' : '刪除整個案件'}
+          </button>
+        ) : null}
       </section>
 
       <section className="panel stack">
@@ -289,7 +331,125 @@ export function SiteDetailPage() {
           <Link className="btn btn-ghost" to={`/expenses`}>
             支出／收款
           </Link>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={exportingReport || !formal}
+            onClick={() => {
+              void (async () => {
+                if (!site || !siteId) return
+                setExportingReport(true)
+                try {
+                  const allQuotes = await supabaseRepos.listQuotations()
+                  const accepted = allQuotes.filter(
+                    (q) =>
+                      q.projectId === siteId && q.workflowStatus === 'accepted',
+                  )
+                  const acceptedQuotes = await Promise.all(
+                    accepted.map(async (quote) => ({
+                      quote,
+                      items: await supabaseRepos.listQuotationItems(quote.id),
+                    })),
+                  )
+                  const blob = await generateSiteReportPdfBlob({
+                    site,
+                    logs,
+                    reports,
+                    acceptedQuotes,
+                    photos: selectedReportPhotos.map((p) => ({
+                      previewUrl: p.previewUrl!,
+                      photoType: p.photoType,
+                      createdAt: p.createdAt,
+                      uploaderName: p.uploaderName,
+                    })),
+                  })
+                  downloadBlob(blob, siteReportPdfFilename(site.name))
+                } catch (e) {
+                  window.alert((e as Error).message)
+                } finally {
+                  setExportingReport(false)
+                }
+              })()
+            }}
+          >
+            {exportingReport ? '匯出報告中…' : '匯出施工報告'}
+          </button>
         </div>
+        {!formal ? (
+          <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+            施工報告匯出需正式模式（含日誌／回報／已接受報價／勾選照片）。
+          </p>
+        ) : null}
+      </section>
+
+      <section className="panel stack">
+        <strong>
+          施工報告照片（已選 {selectedReportCount}/{SITE_REPORT_PHOTO_LIMIT}）
+        </strong>
+        {allSitePhotos.length === 0 ? (
+          <p className="muted" style={{ margin: 0 }}>
+            尚無照片可納入報告
+          </p>
+        ) : (
+          <>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  const next: Record<string, boolean> = {}
+                  for (const p of allSitePhotos.slice(0, SITE_REPORT_PHOTO_LIMIT)) {
+                    next[p.id] = true
+                  }
+                  setReportPhotoIds(next)
+                }}
+              >
+                選最近 {Math.min(SITE_REPORT_PHOTO_LIMIT, allSitePhotos.length)} 張
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setReportPhotoIds({})}
+              >
+                清空選取
+              </button>
+            </div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              {allSitePhotos.slice(0, 80).map((photo) => (
+                <label
+                  key={photo.id}
+                  style={{
+                    position: 'relative',
+                    display: 'block',
+                    width: 88,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(reportPhotoIds[photo.id])}
+                    onChange={() => toggleReportPhoto(photo.id)}
+                    style={{ position: 'absolute', top: 6, left: 6, zIndex: 1 }}
+                  />
+                  <img
+                    src={photo.previewUrl!}
+                    alt=""
+                    style={{
+                      width: 88,
+                      height: 88,
+                      objectFit: 'cover',
+                      borderRadius: 8,
+                      display: 'block',
+                      outline: reportPhotoIds[photo.id]
+                        ? '2px solid var(--amber)'
+                        : 'none',
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          </>
+        )}
       </section>
 
       {isBoss && siteId ? (
@@ -340,27 +500,12 @@ export function SiteDetailPage() {
           <div className="row between">
             <strong>施工日誌</strong>
             <span className="muted" style={{ fontSize: '0.85rem' }}>
-              每日一則 · 彙整後發布
+              每日一則
             </span>
           </div>
-          <button
-            type="button"
-            className="btn btn-steel"
-            disabled={isEnsuring}
-            onClick={() => void ensureDraft()}
-          >
-            {isEnsuring
-              ? '彙整中…'
-              : todayLog
-                ? '重新彙整今日草稿'
-                : '彙整今日日誌草稿'}
-          </button>
-          {ensureError ? (
-            <p style={{ color: 'var(--danger)', margin: 0 }}>{ensureError.message}</p>
-          ) : null}
           {logs.length === 0 ? (
             <p className="muted" style={{ margin: 0 }}>
-              尚無日誌。可先有出勤／回報／照片／缺失後再彙整。
+              尚無日誌。
             </p>
           ) : (
             logs.slice(0, 7).map((log) => (

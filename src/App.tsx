@@ -20,6 +20,7 @@ import { PhotosPage } from '@/pages/PhotosPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { LocationCheckinPage } from '@/pages/LocationCheckinPage'
 import { MySalaryPage } from '@/pages/MySalaryPage'
+import { AccessPage } from '@/pages/AccessPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { SalaryAdminPage } from '@/pages/SalaryAdminPage'
 import { PurchasesPage } from '@/pages/PurchasesPage'
@@ -70,6 +71,7 @@ export default function App() {
             <Route path="/photos" element={<Protected><PhotosPage /></Protected>} />
             <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
             <Route path="/profile" element={<Protected><ProfilePage /></Protected>} />
+            <Route path="/access" element={<Protected><AccessPage /></Protected>} />
             <Route path="/my-salary" element={<Protected><MySalaryPage /></Protected>} />
             <Route path="/salary" element={<Protected><SalaryAdminPage /></Protected>} />
             <Route path="/location-checkin" element={<Protected><LocationCheckinPage /></Protected>} />

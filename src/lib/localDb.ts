@@ -293,6 +293,7 @@ const KEYS = {
   auditLogs: 'eg.auditLogs.v1',
   orgSpendSettings: 'eg.orgSpendSettings.v1',
   siteMembers: 'eg.siteMembers.v1',
+  roleGroups: 'eg.roleGroups.v1',
 } as const
 
 type SiteMemberRow = {
@@ -986,6 +987,70 @@ export const localDb = {
     }
     all[idx] = updated
     write(KEYS.sites, all)
+    return updated
+  },
+
+  deleteSite(
+    actor: { id: string; role: AppUser['role'] },
+    siteId: string,
+  ): void {
+    if (actor.role !== 'boss') throw new Error('僅老闆可刪除工地')
+    const sites = read(KEYS.sites, emptySites)
+    if (!sites.some((s) => s.id === siteId)) throw new Error('找不到工地')
+    write(
+      KEYS.sites,
+      sites.filter((s) => s.id !== siteId),
+    )
+    write(
+      KEYS.siteMembers,
+      read(KEYS.siteMembers, emptySiteMembers).filter((m) => m.siteId !== siteId),
+    )
+  },
+
+  listRoleGroups(): import('@/domain/roleGroups').RoleGroupDefinition[] {
+    return read(KEYS.roleGroups, [] as import('@/domain/roleGroups').RoleGroupDefinition[])
+  },
+
+  createRoleGroup(
+    input: Omit<import('@/domain/roleGroups').RoleGroupDefinition, 'id' | 'builtIn'>,
+  ): import('@/domain/roleGroups').RoleGroupDefinition {
+    const all = this.listRoleGroups()
+    const group = {
+      id: `rg-${crypto.randomUUID()}`,
+      name: input.name.trim(),
+      template: input.template,
+      financeAuthorized: Boolean(input.financeAuthorized),
+    }
+    if (!group.name) throw new Error('請輸入身分組名稱')
+    if (all.some((g) => g.name === group.name)) throw new Error('身分組名稱已存在')
+    all.push(group)
+    write(KEYS.roleGroups, all)
+    return group
+  },
+
+  setMemberAccess(
+    actor: { id: string; role: AppUser['role'] },
+    targetUserId: string,
+    input: {
+      roleGroupName: string
+      accessTemplate: 'owner' | 'admin' | 'member'
+      financeAuthorized: boolean
+    },
+  ): AppUser {
+    if (actor.role !== 'boss') throw new Error('僅老闆可設定權限')
+    if (input.accessTemplate === 'owner') throw new Error('不可將他人設為老闆身分')
+    const users = this.getUsers()
+    const idx = users.findIndex((u) => u.id === targetUserId)
+    if (idx < 0) throw new Error('找不到使用者')
+    if (users[idx].role === 'boss') throw new Error('不可變更老闆帳號的身分組')
+    const updated: AppUser = {
+      ...users[idx],
+      roleGroupName: input.roleGroupName,
+      accessTemplate: input.accessTemplate,
+      financeAuthorized: input.financeAuthorized,
+    }
+    users[idx] = updated
+    write(KEYS.users, users)
     return updated
   },
 

@@ -739,7 +739,7 @@ function mapStockReservationRow(row: Record<string, unknown>): StockReservation 
 }
 
 const PROFILE_SELECT =
-  'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, created_at'
+  'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, role_group_name, access_template, created_at'
 
 function mapUser(row: {
   id: string
@@ -757,8 +757,16 @@ function mapUser(row: {
   hired_at?: string | null
   account_status?: string | null
   profile_notes?: string | null
+  role_group_name?: string | null
+  access_template?: string | null
   created_at: string
 }): AppUser {
+  const accessTemplate =
+    row.access_template === 'owner' ||
+    row.access_template === 'admin' ||
+    row.access_template === 'member'
+      ? row.access_template
+      : null
   return {
     id: row.id,
     organizationId: row.organization_id,
@@ -776,6 +784,8 @@ function mapUser(row: {
     accountStatus:
       row.account_status === 'disabled' ? 'disabled' : 'active',
     notes: row.profile_notes ?? null,
+    roleGroupName: row.role_group_name ?? null,
+    accessTemplate,
     createdAt: row.created_at,
   }
 }
@@ -1314,6 +1324,135 @@ export const supabaseRepos = {
     const site = mapSite(data)
     assertSameOrganization(actor.organizationId, site.organizationId)
     return site
+  },
+
+  async deleteSite(actor: AppUser, siteId: string): Promise<void> {
+    if (actor.role !== 'boss') {
+      throw new AppError('僅老闆可刪除工地')
+    }
+    assertPermission(actor.role, PERMISSIONS.SITE_WRITE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const sid = requireUuid(siteId, '工地')
+    const current = await this.getSite(sid, actor)
+    if (!current) throw new AppError('找不到工地')
+
+    const photos = await this.listPhotoUploads(sid)
+    if (photos.length > 0) {
+      await this.deletePhotoUploads(photos.map((p) => p.id))
+    }
+
+    // Soft-delete linked quotes so FK can null project_id
+    const quotes = (await this.listQuotations()).filter(
+      (q) => q.projectId === sid && !q.deletedAt,
+    )
+    for (const q of quotes) {
+      await this.softDeleteQuotation(actor, q.id, '刪除工地案件')
+    }
+    if (quotes.length > 0) {
+      const { error: unlinkError } = await sb()
+        .from('quotations')
+        .update({ project_id: null })
+        .eq('project_id', sid)
+        .not('deleted_at', 'is', null)
+      if (unlinkError) {
+        throw new AppError(
+          toUserMessage(unlinkError, '無法解除報價與工地關聯，請先處理報價後再刪'),
+        )
+      }
+    }
+
+    await sb().from('site_members').delete().eq('site_id', sid)
+
+    const { error } = await sb().from('sites').delete().eq('id', sid)
+    if (error) {
+      throw new AppError(
+        toUserMessage(error, '無法刪除工地（可能仍有關聯資料）'),
+      )
+    }
+    await this.appendAuditLog(actor, {
+      action: 'site.delete',
+      targetType: 'site',
+      targetId: sid,
+      before: current,
+    })
+  },
+
+  async listRoleGroups(actor: AppUser) {
+    const { data, error } = await sb()
+      .from('org_role_groups')
+      .select('id, name, template, finance_authorized')
+      .eq('organization_id', actor.organizationId)
+      .order('name')
+    if (error) {
+      // Table may not be migrated yet — fall back to empty custom list
+      return []
+    }
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      template: row.template as 'owner' | 'admin' | 'member' | 'finance',
+      financeAuthorized: Boolean(row.finance_authorized),
+    }))
+  },
+
+  async createRoleGroup(
+    actor: AppUser,
+    input: {
+      name: string
+      template: 'owner' | 'admin' | 'member' | 'finance'
+      financeAuthorized: boolean
+    },
+  ) {
+    if (actor.role !== 'boss') throw new AppError('僅老闆可建立身分組')
+    const name = input.name.trim()
+    if (!name) throw new AppError('請輸入身分組名稱')
+    const { data, error } = await sb()
+      .from('org_role_groups')
+      .insert({
+        organization_id: actor.organizationId,
+        name,
+        template: input.template,
+        finance_authorized: Boolean(input.financeAuthorized),
+        created_by: actor.id,
+      })
+      .select('id, name, template, finance_authorized')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立身分組'))
+    return {
+      id: String(data.id),
+      name: String(data.name),
+      template: data.template as 'owner' | 'admin' | 'member' | 'finance',
+      financeAuthorized: Boolean(data.finance_authorized),
+    }
+  },
+
+  async setMemberAccess(
+    actor: AppUser,
+    targetUserId: string,
+    input: {
+      roleGroupName: string
+      accessTemplate: 'owner' | 'admin' | 'member'
+      financeAuthorized: boolean
+    },
+  ): Promise<AppUser> {
+    if (actor.role !== 'boss') throw new AppError('僅老闆可設定權限')
+    const tid = requireUuid(targetUserId, '使用者')
+    const { data, error } = await sb().rpc('boss_set_member_access', {
+      p_target_user_id: tid,
+      p_role_group_name: input.roleGroupName,
+      p_access_template: input.accessTemplate,
+      p_finance_authorized: input.financeAuthorized,
+    })
+    if (error) throw new AppError(toUserMessage(error, '無法設定權限'))
+    const mapped = mapUser(data as Parameters<typeof mapUser>[0])
+    await this.appendAuditLog(actor, {
+      action: 'permission.update',
+      targetType: 'profile',
+      targetId: tid,
+      after: mapped,
+    })
+    return mapped
   },
 
   async updateSiteStatus(

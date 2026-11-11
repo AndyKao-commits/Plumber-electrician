@@ -127,7 +127,7 @@ export const MORE_MENU = [
         id: 'team',
         label: '今日團隊',
         path: '/team',
-        description: '到班狀態與 LINE 綁定',
+        description: '到班狀態與位置',
       },
       {
         id: 'reports',
@@ -143,9 +143,16 @@ export const MORE_MENU = [
     items: [
       {
         id: 'profile',
-        label: '個人資料',
+        label: '個人中心',
         path: '/profile',
-        description: '暱稱、工種、到職資訊',
+        description: '個人資料、LINE 綁定',
+      },
+      {
+        id: 'access',
+        label: '權限／身分組',
+        path: '/access',
+        description: '設定成員權限與身分組名稱',
+        bossOnly: true,
       },
       {
         id: 'my-salary',

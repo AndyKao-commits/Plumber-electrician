@@ -101,6 +101,21 @@ export function useSites() {
     },
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: async (siteId: string) => {
+      if (!user) throw new Error('尚未登入')
+      try {
+        if (formal) await supabaseRepos.deleteSite(user, siteId)
+        else localDb.deleteSite(user, siteId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法刪除工地'))
+      }
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: siteKeys.all })
+    },
+  })
+
   return {
     sites: listQuery.data ?? [],
     isLoading: listQuery.isLoading,
@@ -113,6 +128,9 @@ export function useSites() {
     updateSiteStatus: statusMutation.mutateAsync,
     isUpdatingStatus: statusMutation.isPending,
     statusError: statusMutation.error,
+    deleteSite: deleteMutation.mutateAsync,
+    isDeletingSite: deleteMutation.isPending,
+    deleteSiteError: deleteMutation.error,
   }
 }
 

@@ -109,6 +109,10 @@ export interface AppUser {
   payType?: PayType
   lineUserId?: string | null
   financeAuthorized?: boolean
+  /** Boss-assigned display name for identity group */
+  roleGroupName?: string | null
+  /** Spec-role template used for permission checks (employees) */
+  accessTemplate?: 'owner' | 'admin' | 'member' | null
   createdAt: string
 }
 
