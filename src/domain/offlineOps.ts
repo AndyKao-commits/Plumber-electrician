@@ -16,6 +16,8 @@ export const ONLINE_REQUIRED_OPS = [
   'purchase_reject',
   'inventory_inbound',
   'inventory_adjust',
+  'inventory_transfer',
+  'inventory_reserve',
   'quote_publish',
   'quote_create',
 ] as const

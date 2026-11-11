@@ -614,7 +614,76 @@ export interface MaterialStock {
   unit: string
   qty: number
   unitCost: number
+  /** Active reservations against org pool (INV-002). */
+  reservedQty?: number
+  /** qty − reservedQty */
+  availableQty?: number
   updatedAt: string
+}
+
+export type StockLocationKind = 'warehouse' | 'site'
+export type StockMovementType =
+  | 'inbound'
+  | 'transfer'
+  | 'reserve'
+  | 'release'
+  | 'usage'
+  | 'adjust'
+  | 'reversal'
+export type StockReservationStatus = 'active' | 'released' | 'consumed'
+
+/** INV-002: warehouse or site stock location. */
+export interface StockLocation {
+  id: string
+  organizationId: string
+  kind: StockLocationKind
+  name: string
+  siteId?: string | null
+  isDefault?: boolean
+  createdAt: string
+}
+
+/** Per-location on-hand (org cost pool stays on MaterialStock). */
+export interface StockBalance {
+  id: string
+  organizationId: string
+  materialId: string
+  locationId: string
+  qty: number
+  updatedAt: string
+}
+
+/** Append-only posted stock movement (immutable). */
+export interface StockMovement {
+  id: string
+  organizationId: string
+  movementType: StockMovementType
+  materialId: string
+  materialName: string
+  qty: number
+  unitCost: number
+  fromLocationId?: string | null
+  toLocationId?: string | null
+  reservationId?: string | null
+  note?: string | null
+  clientOperationId: string
+  postedAt: string
+  createdBy: string
+  reversalOf?: string | null
+}
+
+export interface StockReservation {
+  id: string
+  organizationId: string
+  materialId: string
+  locationId?: string | null
+  qty: number
+  status: StockReservationStatus
+  note?: string | null
+  clientOperationId: string
+  createdAt: string
+  createdBy: string
+  releasedAt?: string | null
 }
 
 /**
