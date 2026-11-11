@@ -119,7 +119,8 @@ export function LocationCheckinPage() {
       <section className="panel stack">
         <strong>紀錄地點</strong>
         <p className="muted" style={{ margin: 0 }}>
-          由 LINE「分享目前位置」開啟：自動取得 GPS 並寫入足跡，不影響上下班。
+          由 LINE 開啟：自動取得 GPS 並寫入足跡，不影響上下班。網站顯示完成即可，LINE
+          不用再點完成。
         </p>
       </section>
 

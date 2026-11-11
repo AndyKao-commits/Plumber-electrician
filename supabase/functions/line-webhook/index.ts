@@ -432,19 +432,7 @@ async function handlePostback(
       gate.draft?.flow_type === 'location'
         ? gate.draft
         : await createDraft(admin, profile, 'location', 'await_location', {})
-    await touchDraft(admin, draft.id, { current_step: 'await_location' })
-    return [
-      flexMenu({
-        altText: '開啟網站紀錄 GPS',
-        eyebrow: '紀錄地點',
-        title: '分享目前位置',
-        body: '請開啟網站，會自動取得 GPS 並顯示「地點紀錄完成」。',
-        buttons: [
-          { label: '開啟網站定位', uri: locationWebUri(), style: 'primary' },
-          { label: '取消', data: 'a=cancel', style: 'secondary' },
-        ],
-      }),
-    ]
+    return handoffLocationToWeb(admin, draft)
   }
 
   if (action === 'loc_site') {
@@ -1814,15 +1802,35 @@ function locationWebUri(): string {
   return `${appBaseUrl()}/location-checkin`
 }
 
+/** Close LINE draft and send URI to website GPS page (no further LINE confirm). */
+async function handoffLocationToWeb(
+  admin: Sb,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  await finalizeDraft(admin, draft.id, 'completed')
+  return [
+    flexMenu({
+      altText: '請在網站完成定位',
+      eyebrow: '紀錄地點',
+      title: '請在網站完成定位',
+      body:
+        'LINE 流程已結束，不用再點完成。請點「開啟網站定位」，允許定位後網站會顯示「地點紀錄完成」。',
+      buttons: [
+        { label: '開啟網站定位', uri: locationWebUri(), style: 'primary' },
+      ],
+    }),
+  ]
+}
+
 async function promptLocationMethod(_draft: DraftRow): Promise<LineMessage[]> {
   return [
     flexMenu({
       altText: '要如何紀錄目前位置？',
       eyebrow: '紀錄地點',
       title: '要如何紀錄目前位置？',
-      body: '外面跑動時可隨手留下足跡；不會自動上下班，也不做背景定位。點「分享目前位置」會開啟網站自動寫入 GPS。',
+      body: '外面跑動時可隨手留下足跡；不會自動上下班。選「分享目前位置」後，到網站允許定位即可。',
       buttons: [
-        { label: '分享目前位置', uri: locationWebUri(), style: 'primary' },
+        { label: '分享目前位置', data: 'a=loc_share', style: 'primary' },
         { label: '選擇工地', data: 'a=loc_site', style: 'secondary' },
         { label: '取消', data: 'a=cancel', style: 'secondary' },
       ],
@@ -1837,19 +1845,7 @@ async function handleLocationText(
   text: string,
 ): Promise<LineMessage[]> {
   if (/分享|目前位置|定位/.test(text)) {
-    await touchDraft(admin, draft.id, { current_step: 'await_location' })
-    return [
-      flexMenu({
-        altText: '開啟網站紀錄 GPS',
-        eyebrow: '紀錄地點',
-        title: '分享目前位置',
-        body: '請開啟網站，會自動取得 GPS 並顯示「地點紀錄完成」。',
-        buttons: [
-          { label: '開啟網站定位', uri: locationWebUri(), style: 'primary' },
-          { label: '取消', data: 'a=cancel', style: 'secondary' },
-        ],
-      }),
-    ]
+    return handoffLocationToWeb(admin, draft)
   }
   if (/選擇工地|工地/.test(text)) {
     return promptLocationSites(admin, profile, draft)
@@ -1940,7 +1936,7 @@ async function promptLocationSites(
         title: '沒有可用工地',
         body: '請改用「分享目前位置」，或先到網站建立工地。',
         buttons: [
-          { label: '分享目前位置', uri: locationWebUri(), style: 'primary' },
+          { label: '分享目前位置', data: 'a=loc_share', style: 'primary' },
           { label: '取消', data: 'a=cancel', style: 'secondary' },
         ],
       }),
