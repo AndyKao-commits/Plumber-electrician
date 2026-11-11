@@ -69,7 +69,8 @@ const FLOW_LABELS: Record<FlowType, string> = {
   photo_upload: '上傳照片',
   todos: '待辦事項',
   attendance: '出勤打卡',
-  purchase: '採購申請',
+  /** V1.0：圖文選單「支出／收款」；複雜採購額度先不強調 */
+  purchase: '支出／收款',
 }
 
 const PURCHASE_PREAPPROVAL_NTD = 3000
@@ -1446,7 +1447,7 @@ function parseMenuIntent(text: string): FlowType | 'cancel' | 'resume' | null {
   if (/上傳照片|傳送照片|傳照片|施工照片/.test(t)) return 'photo_upload'
   if (/待辦事項|我的待辦|^待辦$/.test(t)) return 'todos'
   if (/出勤打卡|上下班|上班打卡|下班打卡|切換工地/.test(t)) return 'attendance'
-  if (/採購申請|材料採購|^採購$/.test(t)) return 'purchase'
+  if (/支出|收款|採購申請|材料採購|^採購$/.test(t)) return 'purchase'
   return null
 }
 

@@ -11,28 +11,30 @@ import { applyInboundMovingAverage } from './inventoryCost'
 /** Confirmed product rules from planning conversations. */
 export const PRODUCT = {
   name: '工程管家',
-  tagline: '水電工程行管理系統',
+  tagline: '水電現場＋老闆審核（V1.0）',
+  version: '1.0',
   sourceConversations: [
     'https://chatgpt.com/share/6af27b2e-31d8-83ee-9de3-c8287529caeb',
     'https://chatgpt.com/share/6af28019-cfd0-83ec-bf49-738de06277ea',
     'https://chatgpt.com/share/6af28a57-0b70-83ee-8496-f50778494099',
   ],
   planningClosed: true,
-  /** Owner said 繼續：本機示範可推進；正式封版／部署仍待明確授權 */
-  awaitingDevAuthorization: true,
+  /** V1.0：LINE 現場回報 → Supabase → 老闆網站審核／統計 */
+  awaitingDevAuthorization: false,
   doc09Aligned: true,
+  v1Simplified: true,
 } as const
 
 /**
- * Roles remain labels, but general job operations are equal for all members.
- * Sensitive finance / other people's payroll / personal privacy need extra auth.
+ * V1.0 only two roles: Owner (boss) and Employee.
+ * No multi-layer Admin / finance privilege matrix in primary UX.
  */
 export const ROLES: Record<
   UserRole,
   { label: string; defaultFinanceAuth: boolean }
 > = {
   boss: { label: '老闆', defaultFinanceAuth: true },
-  employee: { label: '員工', defaultFinanceAuth: false },
+  employee: { label: '員工／師傅', defaultFinanceAuth: false },
 }
 
 /** POL-001 + 一般採購門檻：最終應付金額（折扣後含稅運） */
@@ -51,12 +53,14 @@ export const DEFAULT_PURCHASE_RULES: PurchaseRuleSnapshot = {
 }
 
 export const FEATURE_FLAGS = {
-  offlineFirst: true,
+  /** V1.0：簡化現場流程；複雜 ERP 入口隱藏 */
+  v1Simplified: true,
+  offlineFirst: false,
   gpsOptionalOnClockIn: true,
   autoDeductBreak: false,
-  payrollMonthly: true,
+  payrollMonthly: false,
   simpleInventory: true,
-  hybridInventory: true,
+  hybridInventory: false,
   lineOfficialAccount: true,
   lineGroupConfirmBeforeArchive: true,
   /** 全面停用系統主動 LINE 推播 */
@@ -66,8 +70,10 @@ export const FEATURE_FLAGS = {
   overnightShiftsAllowed: true,
   emailPasswordLoginPrimary: true,
   lineAsEntryOnly: true,
-  movingAverageInventoryCost: true,
+  movingAverageInventoryCost: false,
   quoteTaxChosenPerDocument: true,
+  /** 隱藏：緊急額度／供應商信用／零用金／序號成本等 */
+  showAdvancedErp: false,
 } as const
 
 export const BACKUP_TARGETS = {
@@ -75,22 +81,16 @@ export const BACKUP_TARGETS = {
   rtoHours: 4,
 } as const
 
+/** V1.0 primary shortcuts — excess ERP entries removed from home. */
 export const HOME_SHORTCUTS = [
+  { id: 'sites', label: '工地／案件', path: '/sites' },
+  { id: 'cash', label: '支出／收款', path: '/expenses' },
   { id: 'clock', label: '出勤打卡', path: '/attendance' },
-  { id: 'sites', label: '工地列表', path: '/sites' },
-  { id: 'customers', label: '客戶主檔', path: '/customers' },
-  { id: 'repairs', label: '維修案件', path: '/repairs' },
-  { id: 'complaints', label: '客訴', path: '/complaints' },
-  { id: 'analytics', label: '營運統計', path: '/analytics' },
-  { id: 'purchase', label: '材料採購', path: '/purchases' },
+  { id: 'photos', label: '施工照片', path: '/photos' },
   { id: 'quotes', label: '報價', path: '/quotes' },
-  { id: 'inventory', label: '庫存成本', path: '/inventory' },
-  { id: 'petty', label: '零用金', path: '/petty-cash' },
-  { id: 'suppliers', label: '供應商', path: '/suppliers' },
   { id: 'todos', label: '待辦', path: '/todos' },
   { id: 'team', label: '今日團隊', path: '/team' },
-  { id: 'photos', label: '施工照片', path: '/photos' },
-  { id: 'reports', label: '施工回報', path: '/reports' },
+  { id: 'audit', label: '操作紀錄', path: '/audit' },
   { id: 'notices', label: '通知中心', path: '/notifications' },
 ] as const
 
