@@ -90,6 +90,8 @@ export function ProfilePage() {
 
   if (!user) return <div className="empty">請先登入</div>
 
+  const hiredLocked = Boolean(user.hiredAt) && !isBoss
+
   return (
     <div className="stack fade-up">
       <section className="panel stack">
@@ -97,7 +99,7 @@ export function ProfilePage() {
           <div>
             <strong>個人資料</strong>
             <p className="muted" style={{ margin: '4px 0 0' }}>
-              員工可自行修改姓名、暱稱、生日、工種、到職日與備註；老闆可停用帳號。
+              員工可修改姓名、暱稱、生日、工種與備註。到職日首次填寫後鎖定，僅老闆可再改。
             </p>
           </div>
           <span className="badge steel">{dataModeLabel()}</span>
@@ -139,7 +141,17 @@ export function ProfilePage() {
               type="date"
               value={hiredAt}
               onChange={(e) => setHiredAt(e.target.value)}
+              disabled={hiredLocked}
             />
+            {hiredLocked ? (
+              <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
+                已鎖定。若需更正請聯絡老闆。
+              </p>
+            ) : !isBoss ? (
+              <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
+                首次儲存後不可自行修改。
+              </p>
+            ) : null}
           </div>
         </div>
         <div className="field">

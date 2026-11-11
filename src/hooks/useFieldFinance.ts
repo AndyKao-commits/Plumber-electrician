@@ -46,6 +46,22 @@ export function useFieldFinance(userId: string | undefined) {
     },
   })
 
+  const advancesQuery = useQuery({
+    queryKey: [...fieldFinanceKeys.all, 'advances'],
+    enabled: Boolean(userId),
+    queryFn: async () => {
+      try {
+        if (formal) return await supabaseRepos.listEmployeeAdvances(user!)
+        if (user?.role === 'boss') {
+          return localDb.listEmployeeAdvances()
+        }
+        return localDb.listEmployeeAdvances({ employeeId: userId })
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入代墊'))
+      }
+    },
+  })
+
   const createExpense = useMutation({
     mutationFn: async (input: {
       siteId?: string | null
@@ -151,9 +167,59 @@ export function useFieldFinance(userId: string | undefined) {
     onSuccess: invalidate,
   })
 
+  const createAdvance = useMutation({
+    mutationFn: async (input: {
+      siteId?: string | null
+      item: string
+      amount: number
+      note?: string | null
+      locationText?: string | null
+      misc?: boolean
+      receiptFiles?: File[]
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      let receiptPhotoPath: string | null = null
+      if (formal && input.receiptFiles?.length) {
+        receiptPhotoPath = await supabaseRepos.uploadReceiptPhoto({
+          file: input.receiptFiles[0],
+          siteId: input.misc ? null : input.siteId,
+        })
+      } else if (!formal && input.receiptFiles?.length) {
+        receiptPhotoPath = `local-receipt:${input.receiptFiles[0].name}`
+      }
+      const payload = {
+        siteId: input.siteId,
+        item: input.item,
+        amount: input.amount,
+        note: input.note,
+        locationText: input.locationText,
+        misc: input.misc,
+        receiptPhotoPath,
+      }
+      return formal
+        ? supabaseRepos.createEmployeeAdvance(user, payload)
+        : localDb.createEmployeeAdvance(user, payload)
+    },
+    onSuccess: invalidate,
+  })
+
+  const settleAdvances = useMutation({
+    mutationFn: async (input: {
+      advanceIds: string[]
+      note?: string | null
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      return formal
+        ? supabaseRepos.batchSettleEmployeeAdvances(user, input)
+        : localDb.batchSettleEmployeeAdvances(user, input)
+    },
+    onSuccess: invalidate,
+  })
+
   return {
     expenses: expensesQuery.data ?? [],
     receipts: receiptsQuery.data ?? [],
+    advances: advancesQuery.data ?? [],
     createExpense: createExpense.mutateAsync,
     isCreatingExpense: createExpense.isPending,
     createExpenseError: createExpense.error,
@@ -162,5 +228,11 @@ export function useFieldFinance(userId: string | undefined) {
     isCreatingReceipt: createReceipt.isPending,
     createReceiptError: createReceipt.error,
     confirmReceipt: confirmReceipt.mutateAsync,
+    createAdvance: createAdvance.mutateAsync,
+    isCreatingAdvance: createAdvance.isPending,
+    createAdvanceError: createAdvance.error,
+    settleAdvances: settleAdvances.mutateAsync,
+    isSettlingAdvances: settleAdvances.isPending,
+    settleAdvancesError: settleAdvances.error,
   }
 }
