@@ -94,6 +94,8 @@ import type {
   PettyCashDisbursement,
   PettyCashLedgerEntry,
   PettyCashTopUpRequest,
+  Supplier,
+  SupplierExposure,
   StockBalance,
   StockLocation,
   StockMovement,
@@ -167,6 +169,12 @@ import {
   assertRequestDisbursable,
   assertTopUpAmount,
 } from '@/domain/pettyCash'
+import {
+  assertSupplierName,
+  assertWithinCreditLimit,
+  availableCredit,
+  sumSupplierExposure,
+} from '@/domain/suppliers'
 import { roundMoney } from '@/domain/money'
 import { formatTaipei } from '@/lib/time'
 
@@ -218,6 +226,7 @@ const KEYS = {
   pettyCashRequests: 'eg.pettyCashRequests.v1',
   pettyCashDisbursements: 'eg.pettyCashDisbursements.v1',
   pettyCashLedger: 'eg.pettyCashLedger.v1',
+  suppliers: 'eg.suppliers.v1',
 } as const
 
 function read<T>(key: string, fallback: T): T {
@@ -273,6 +282,7 @@ const emptyPettyCashAccounts: PettyCashAccount[] = []
 const emptyPettyCashRequests: PettyCashTopUpRequest[] = []
 const emptyPettyCashDisbursements: PettyCashDisbursement[] = []
 const emptyPettyCashLedger: PettyCashLedgerEntry[] = []
+const emptySuppliers: Supplier[] = []
 
 function write<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value))
@@ -479,6 +489,7 @@ function seedIfNeeded() {
       organizationId: ORG_ID,
       userId: 'user-worker',
       siteId: 'site-a',
+      supplierId: 'sup-seed-a',
       mode: 'normal',
       status: 'pending_approval',
       title: '止水材料（員工申請）',
@@ -490,6 +501,26 @@ function seedIfNeeded() {
       finalPayable: 3150,
       createdAt: now,
       businessDate: formatTaipei(now, 'yyyy-MM-dd'),
+    },
+    {
+      id: 'pur-seed-approved',
+      organizationId: ORG_ID,
+      userId: 'user-boss',
+      siteId: 'site-a',
+      supplierId: 'sup-seed-a',
+      mode: 'normal',
+      status: 'approved',
+      title: '電線批發（已核准未收貨）',
+      goodsAmount: 4000,
+      discount: 0,
+      tax: 0,
+      shipping: 0,
+      otherBuyerFees: 0,
+      finalPayable: 4000,
+      createdAt: now,
+      businessDate: formatTaipei(now, 'yyyy-MM-dd'),
+      approvedBy: 'user-boss',
+      approvedAt: now,
     },
   ]
 
@@ -646,6 +677,18 @@ function seedIfNeeded() {
   write(KEYS.pettyCashRequests, emptyPettyCashRequests)
   write(KEYS.pettyCashDisbursements, emptyPettyCashDisbursements)
   write(KEYS.pettyCashLedger, emptyPettyCashLedger)
+  write(KEYS.suppliers, [
+    {
+      id: 'sup-seed-a',
+      organizationId: ORG_ID,
+      name: '大正水電材料行',
+      creditLimit: 50000,
+      paymentTermsDays: 30,
+      notes: '月結示範供應商',
+      createdAt: now,
+      updatedAt: now,
+    },
+  ])
   write(KEYS.shortcuts, [
     'clock',
     'sites',
@@ -653,6 +696,7 @@ function seedIfNeeded() {
     'quotes',
     'inventory',
     'petty',
+    'suppliers',
     'todos',
     'team',
     'notices',
@@ -745,11 +789,94 @@ export const localDb = {
     return sumOccupiedQuota(this.emergencyEventsForDay(userId, businessDate))
   },
 
+  listSuppliers(): Supplier[] {
+    return read(KEYS.suppliers, emptySuppliers).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    )
+  },
+
+  createSupplier(input: {
+    name: string
+    creditLimit?: number | null
+    paymentTermsDays?: number
+    notes?: string | null
+  }): Supplier {
+    const now = new Date().toISOString()
+    const row: Supplier = {
+      id: `sup-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      name: assertSupplierName(input.name),
+      creditLimit:
+        input.creditLimit == null || Number(input.creditLimit) <= 0
+          ? null
+          : roundMoney(Number(input.creditLimit)),
+      paymentTermsDays: Math.max(0, Number(input.paymentTermsDays) || 30),
+      notes: input.notes?.trim() || null,
+      createdAt: now,
+      updatedAt: now,
+    }
+    const all = this.listSuppliers()
+    all.push(row)
+    write(KEYS.suppliers, all)
+    return row
+  },
+
+  getSupplierExposure(supplierId: string): SupplierExposure {
+    const purchases = this.getPurchases().filter(
+      (p) => p.supplierId === supplierId,
+    )
+    const sums = sumSupplierExposure(purchases)
+    const supplier = this.listSuppliers().find((s) => s.id === supplierId)
+    return {
+      supplierId,
+      ...sums,
+      availableCredit: availableCredit({
+        creditLimit: supplier?.creditLimit,
+        exposure: sums.exposure,
+      }),
+    }
+  },
+
+  linkPurchaseSupplier(input: {
+    purchaseId: string
+    supplierId: string
+  }): PurchaseRecord {
+    const purchase = this.getPurchases().find((p) => p.id === input.purchaseId)
+    if (!purchase) throw new Error('找不到採購')
+    const supplier = this.listSuppliers().find((s) => s.id === input.supplierId)
+    if (!supplier) throw new Error('找不到供應商')
+    const exposure = this.getSupplierExposure(supplier.id)
+    // If already linked to this supplier, don't re-add amount.
+    const nextAmount =
+      purchase.supplierId === supplier.id ? 0 : purchase.finalPayable
+    assertWithinCreditLimit({
+      creditLimit: supplier.creditLimit,
+      exposure: exposure.exposure,
+      nextAmount,
+    })
+    const updated = { ...purchase, supplierId: supplier.id }
+    this.savePurchase(updated)
+    return updated
+  },
+
+  markPurchasePaid(purchaseId: string): PurchaseRecord {
+    const purchase = this.getPurchases().find((p) => p.id === purchaseId)
+    if (!purchase) throw new Error('找不到採購')
+    if (!purchase.inboundAt) {
+      throw new Error('僅已收貨應付可標記付款')
+    }
+    if (purchase.paidAt) throw new Error('此採購已標記付款')
+    const updated = { ...purchase, paidAt: new Date().toISOString() }
+    this.savePurchase(updated)
+    return updated
+  },
+
   createPurchase(input: {
     userId: string
     title: string
     mode: PurchaseRecord['mode']
     siteId?: string
+    supplierId?: string | null
     goodsAmount: number
     discount?: number
     tax?: number
@@ -774,11 +901,23 @@ export const localDb = {
       })
     }
 
+    if (input.supplierId) {
+      const supplier = this.listSuppliers().find((s) => s.id === input.supplierId)
+      if (!supplier) throw new Error('找不到供應商')
+      const exposure = this.getSupplierExposure(supplier.id)
+      assertWithinCreditLimit({
+        creditLimit: supplier.creditLimit,
+        exposure: exposure.exposure,
+        nextAmount: finalPayable,
+      })
+    }
+
     const record: PurchaseRecord = {
       id: `pur-${crypto.randomUUID()}`,
       organizationId: ORG_ID,
       userId: input.userId,
       siteId: input.siteId ?? null,
+      supplierId: input.supplierId ?? null,
       mode: input.mode,
       status: needsApproval ? 'pending_approval' : 'purchased',
       title: input.title.trim(),

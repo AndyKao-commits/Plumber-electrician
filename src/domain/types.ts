@@ -77,6 +77,8 @@ export interface PurchaseRecord {
   organizationId: string
   userId: string
   siteId?: string | null
+  /** SUP-001 optional supplier link. */
+  supplierId?: string | null
   mode: PurchaseMode
   status: PurchaseStatus
   title: string
@@ -94,6 +96,29 @@ export interface PurchaseRecord {
   inboundMaterialId?: string | null
   inboundQty?: number | null
   inboundAt?: string | null
+  /** Supplier payment confirmation (AP cleared). */
+  paidAt?: string | null
+}
+
+/** SUP-001 supplier master. */
+export interface Supplier {
+  id: string
+  organizationId: string
+  name: string
+  /** null / ≤0 = no credit limit configured (do not invent). */
+  creditLimit: number | null
+  paymentTermsDays: number
+  notes?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SupplierExposure {
+  supplierId: string
+  unpaidPayable: number
+  openCommitment: number
+  exposure: number
+  availableCredit: number | null
 }
 
 export type TaxMode = 'inclusive' | 'exclusive' | 'zero'

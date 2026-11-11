@@ -86,6 +86,7 @@ export const HOME_SHORTCUTS = [
   { id: 'quotes', label: '報價', path: '/quotes' },
   { id: 'inventory', label: '庫存成本', path: '/inventory' },
   { id: 'petty', label: '零用金', path: '/petty-cash' },
+  { id: 'suppliers', label: '供應商', path: '/suppliers' },
   { id: 'todos', label: '待辦', path: '/todos' },
   { id: 'team', label: '今日團隊', path: '/team' },
   { id: 'photos', label: '施工照片', path: '/photos' },
