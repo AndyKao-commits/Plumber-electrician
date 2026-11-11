@@ -2001,7 +2001,7 @@ async function promptCashSiteFor(
         altText: '沒有可選工地',
         eyebrow: '支出／收款',
         title: '沒有可選工地',
-        body: '請請老闆先在網站指派你可進入的工地。',
+        body: '老闆請到網站「工地」→ 點進工地 →「有權限工地成員」勾選你後儲存。',
         buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
@@ -2331,11 +2331,25 @@ async function listSitesForProfile(
     .eq('user_id', profile.id)
     .eq('organization_id', profile.organization_id)
   if (error) {
-    console.warn('[line-webhook] site_members failed', error.message)
-    return []
+    // Table not applied yet / query failed → bootstrap open access
+    console.warn('[line-webhook] site_members failed; show all sites', error.message)
+    return all
   }
   const allowed = new Set((data ?? []).map((r) => String(r.site_id)))
-  return all.filter((s) => allowed.has(s.id))
+  if (allowed.size > 0) {
+    return all.filter((s) => allowed.has(s.id))
+  }
+  // No personal rows: if org never assigned anyone, keep open access
+  const { count, error: countError } = await admin
+    .from('site_members')
+    .select('site_id', { count: 'exact', head: true })
+    .eq('organization_id', profile.organization_id)
+  if (countError) {
+    console.warn('[line-webhook] site_members count failed', countError.message)
+    return all
+  }
+  if ((count ?? 0) === 0) return all
+  return []
 }
 
 async function submitFieldCash(
