@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
+import { selectOpenSites } from '@/domain/siteStatus'
 import { useAttendance } from '@/hooks/useAttendance'
 import { useFieldFinance } from '@/hooks/useFieldFinance'
 import { useNotices, noticeKeys } from '@/hooks/useNotices'
@@ -13,6 +14,7 @@ import { useEffect, useRef, useState } from 'react'
 export function HomePage() {
   const { user } = useUser()
   const { sites } = useSites()
+  const openSites = selectOpenSites(sites)
   const { todos, unreadCount } = useNotices(user?.id)
   const queryClient = useQueryClient()
   const warrantyChecked = useRef(false)
@@ -129,7 +131,7 @@ export function HomePage() {
             上班。選正在施工的工地：
           </p>
           <div className="stack">
-            {sites.slice(0, 4).map((site) => (
+            {openSites.slice(0, 4).map((site) => (
               <Link key={site.id} className="site-link" to={`/sites/${site.id}`}>
                 <h3>{site.name}</h3>
                 <p>

@@ -7,6 +7,7 @@ import {
   groupPhotosByType,
   type PhotoType,
 } from '@/domain/photoTypes'
+import { selectOpenSites } from '@/domain/siteStatus'
 import type { PhotoUpload } from '@/domain/types'
 import { useAttendance } from '@/hooks/useAttendance'
 import { usePhotos } from '@/hooks/usePhotos'
@@ -40,6 +41,7 @@ export function PhotosPage() {
     uploadError,
   } = usePhotos(scopedSiteId)
   const { sites } = useSites()
+  const openSites = useMemo(() => selectOpenSites(sites), [sites])
   const { openShift } = useAttendance(user?.id)
   const [siteDraft, setSiteDraft] = useState<Record<string, string>>({})
   const [typeDraft, setTypeDraft] = useState<Record<string, PhotoType>>({})
@@ -231,7 +233,7 @@ export function PhotosPage() {
               onChange={(e) => setUploadSiteId(e.target.value)}
             >
               <option value="">選擇工地…</option>
-              {sites.map((site) => (
+              {openSites.map((site) => (
                 <option key={site.id} value={site.id}>
                   {site.name}
                 </option>
@@ -328,7 +330,7 @@ export function PhotosPage() {
                   }
                 >
                   <option value="">選擇工地…</option>
-                  {sites.map((site) => (
+                  {openSites.map((site) => (
                     <option key={site.id} value={site.id}>
                       {site.name}
                     </option>

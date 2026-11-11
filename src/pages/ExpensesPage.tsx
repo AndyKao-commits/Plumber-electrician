@@ -15,11 +15,13 @@ import { useFieldFinance } from '@/hooks/useFieldFinance'
 import { useQuotes } from '@/hooks/useQuotes'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
+import { selectOpenSites } from '@/domain/siteStatus'
 import { formatTaipei } from '@/lib/time'
 
 export function ExpensesPage() {
   const { user } = useUser()
   const { sites } = useSites()
+  const openSites = useMemo(() => selectOpenSites(sites), [sites])
   const { quotes } = useQuotes(user?.id)
   const {
     expenses,
@@ -176,7 +178,7 @@ export function ExpensesPage() {
               onChange={(e) => setSiteId(e.target.value)}
             >
               <option value={MISC_SITE_VALUE}>{MISC_SITE_LABEL}</option>
-              {sites.map((s) => (
+              {openSites.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
                 </option>

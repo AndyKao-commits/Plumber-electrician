@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { selectOpenSites } from '@/domain/siteStatus'
 import { useAttendance } from '@/hooks/useAttendance'
 import { usePhotos } from '@/hooks/usePhotos'
 import { useReports } from '@/hooks/useReports'
@@ -10,6 +11,7 @@ export function ReportsPage() {
   const [params] = useSearchParams()
   const { user, isFormalMode } = useUser()
   const { sites } = useSites()
+  const openSites = useMemo(() => selectOpenSites(sites), [sites])
   const { openShift } = useAttendance(user?.id)
   const { photos } = usePhotos()
   const presetSite = params.get('siteId') || openShift?.siteId || ''
@@ -72,7 +74,7 @@ export function ReportsPage() {
               required
             >
               <option value="">選擇工地…</option>
-              {sites.map((site) => (
+              {openSites.map((site) => (
                 <option key={site.id} value={site.id}>
                   {site.name}
                 </option>

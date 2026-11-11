@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { ProjectKind, SiteProject } from '@/domain/types'
+import type { ProjectKind, ProjectStatus, SiteProject } from '@/domain/types'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
@@ -85,6 +85,22 @@ export function useSites() {
     },
   })
 
+  const statusMutation = useMutation({
+    mutationFn: async (input: { siteId: string; status: ProjectStatus }) => {
+      if (!user) throw new Error('尚未登入')
+      try {
+        return formal
+          ? await supabaseRepos.updateSiteStatus(user, input.siteId, input.status)
+          : localDb.updateSiteStatus(user, input.siteId, input.status)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法更新工地狀態'))
+      }
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: siteKeys.all })
+    },
+  })
+
   return {
     sites: listQuery.data ?? [],
     isLoading: listQuery.isLoading,
@@ -94,6 +110,9 @@ export function useSites() {
     createError: createMutation.error,
     updateWarranty: warrantyMutation.mutateAsync,
     isUpdatingWarranty: warrantyMutation.isPending,
+    updateSiteStatus: statusMutation.mutateAsync,
+    isUpdatingStatus: statusMutation.isPending,
+    statusError: statusMutation.error,
   }
 }
 

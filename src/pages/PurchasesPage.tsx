@@ -1,10 +1,11 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { hasPermission, PERMISSIONS } from '@/domain/permissions'
 import {
   DEFAULT_PURCHASE_RULES,
   calcFinalPayable,
   requiresPreApproval,
 } from '@/domain/rules'
+import { selectOpenSites } from '@/domain/siteStatus'
 import { useInventory } from '@/hooks/useInventory'
 import { usePurchases } from '@/hooks/usePurchases'
 import { useSites } from '@/hooks/useSites'
@@ -15,6 +16,7 @@ import { formatTaipei } from '@/lib/time'
 export function PurchasesPage() {
   const { user } = useUser()
   const { sites } = useSites()
+  const openSites = useMemo(() => selectOpenSites(sites), [sites])
   const {
     purchases,
     pendingApprovals,
@@ -186,7 +188,7 @@ export function PurchasesPage() {
                 onChange={(e) => setSiteId(e.target.value)}
               >
                 <option value="">未指定</option>
-                {sites.map((site) => (
+                {openSites.map((site) => (
                   <option key={site.id} value={site.id}>
                     {site.name}
                   </option>

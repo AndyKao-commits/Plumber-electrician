@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { selectOpenSites } from '@/domain/siteStatus'
 import { useNotices, noticeKeys } from '@/hooks/useNotices'
 import { useSites } from '@/hooks/useSites'
 import { useTeam } from '@/hooks/useTeam'
@@ -16,6 +17,7 @@ export function TodosPage() {
   const { user } = useUser()
   const { todos, complete } = useNotices(user?.id)
   const { sites } = useSites()
+  const openSites = useMemo(() => selectOpenSites(sites), [sites])
   const { members } = useTeam()
   const queryClient = useQueryClient()
   const formal = isFormalMode()
@@ -155,7 +157,7 @@ export function TodosPage() {
                 onChange={(e) => setSiteId(e.target.value)}
               >
                 <option value="">不指定</option>
-                {sites.map((site) => (
+                {openSites.map((site) => (
                   <option key={site.id} value={site.id}>
                     {site.name}
                   </option>

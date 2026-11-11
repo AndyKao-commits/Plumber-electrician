@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { formatDistanceStrict } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
@@ -7,6 +7,7 @@ import {
   formatWorkDuration,
   summarizeAttendanceDay,
 } from '@/domain/attendanceTimeline'
+import { selectOpenSites } from '@/domain/siteStatus'
 import { useAttendance } from '@/hooks/useAttendance'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
@@ -38,6 +39,7 @@ const STATUS_LABEL: Record<string, string> = {
 export function AttendancePage() {
   const { user } = useUser()
   const { sites } = useSites()
+  const openSites = useMemo(() => selectOpenSites(sites), [sites])
   const {
     openShift,
     history,
@@ -165,7 +167,7 @@ export function AttendancePage() {
                 }}
               >
                 <option value="">選擇工地</option>
-                {sites.map((site) => (
+                {openSites.map((site) => (
                   <option key={site.id} value={site.id}>
                     {site.name}
                   </option>
@@ -322,7 +324,7 @@ export function AttendancePage() {
               onChange={(e) => setProposedSiteId(e.target.value)}
             >
               <option value="">不指定</option>
-              {sites.map((site) => (
+              {openSites.map((site) => (
                 <option key={site.id} value={site.id}>
                   {site.name}
                 </option>

@@ -1,7 +1,10 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import { SITE_STATUS_LABELS, isOpenSiteStatus } from '@/domain/siteStatus'
 import type { ProjectKind } from '@/domain/types'
 import { useSites } from '@/hooks/useSites'
+
+type ListTab = 'open' | 'closed'
 
 export function SitesPage() {
   const { sites, createSite, isCreating, isLoading } = useSites()
@@ -10,6 +13,17 @@ export function SitesPage() {
   const [address, setAddress] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [showForm, setShowForm] = useState(false)
+  const [tab, setTab] = useState<ListTab>('open')
+
+  const openSites = useMemo(
+    () => sites.filter((s) => isOpenSiteStatus(s.status)),
+    [sites],
+  )
+  const closedSites = useMemo(
+    () => sites.filter((s) => s.status === 'closed'),
+    [sites],
+  )
+  const visible = tab === 'open' ? openSites : closedSites
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -20,6 +34,7 @@ export function SitesPage() {
     setCustomerName('')
     setKind('formal')
     setShowForm(false)
+    setTab('open')
   }
 
   return (
@@ -35,6 +50,23 @@ export function SitesPage() {
             onClick={() => setShowForm((v) => !v)}
           >
             {showForm ? '取消' : '新增'}
+          </button>
+        </div>
+
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className={`btn ${tab === 'open' ? 'btn-steel' : 'btn-ghost'}`}
+            onClick={() => setTab('open')}
+          >
+            進行中（{openSites.length}）
+          </button>
+          <button
+            type="button"
+            className={`btn ${tab === 'closed' ? 'btn-steel' : 'btn-ghost'}`}
+            onClick={() => setTab('closed')}
+          >
+            已結案（{closedSites.length}）
           </button>
         </div>
 
@@ -82,30 +114,25 @@ export function SitesPage() {
             <button className="btn btn-steel btn-block" type="submit" disabled={isCreating}>
               {isCreating ? '建立中…' : '建立工地'}
             </button>
-            <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-              建立後可在詳情指派師傅、彙整日誌與上傳照片。
-            </p>
           </form>
         ) : null}
       </section>
 
       <section className="stack">
         {isLoading ? <div className="empty">載入工地…</div> : null}
-        {!isLoading && sites.length === 0 ? (
-          <div className="panel empty">尚無工地，先新增第一個案件。</div>
+        {!isLoading && visible.length === 0 ? (
+          <div className="panel empty">
+            {tab === 'open' ? '尚無進行中工地。' : '尚無已結案工地。'}
+          </div>
         ) : null}
-        {sites.map((site) => (
+        {visible.map((site) => (
           <Link key={site.id} className="site-link" to={`/sites/${site.id}`}>
             <div className="row between" style={{ marginBottom: 8 }}>
               <span className="badge steel">
                 {site.kind === 'formal' ? '正式工程' : '臨時維修'}
               </span>
-              <span className="badge ok">
-                {site.status === 'active'
-                  ? '進行中'
-                  : site.status === 'pending_close'
-                    ? '待結案'
-                    : site.status}
+              <span className={`badge ${site.status === 'closed' ? '' : 'ok'}`}>
+                {SITE_STATUS_LABELS[site.status]}
               </span>
             </div>
             <h3>{site.name}</h3>
