@@ -1,17 +1,18 @@
 :root {
-  --bg: #eef1f4;
-  --bg-elevated: #f7f8fa;
-  --ink: #14212b;
-  --ink-muted: #5b6b76;
-  --steel: #1b3a4b;
-  --steel-deep: #102833;
-  --amber: #e8a317;
-  --amber-soft: #f6de9a;
-  --line: rgba(20, 33, 43, 0.12);
-  --danger: #b42318;
-  --ok: #1f7a4d;
-  --shadow: 0 18px 40px rgba(16, 40, 51, 0.12);
-  --radius: 18px;
+  --bg: #e8edf2;
+  --bg-elevated: #ffffff;
+  --ink: #0f1a22;
+  --ink-muted: #4a5c6a;
+  --steel: #0f3d55;
+  --steel-deep: #082636;
+  --amber: #f5a623;
+  --amber-hot: #ffb84d;
+  --amber-soft: #ffe3a8;
+  --line: rgba(15, 26, 34, 0.16);
+  --danger: #c62828;
+  --ok: #1b7a45;
+  --shadow: 0 14px 32px rgba(8, 38, 54, 0.14);
+  --radius: 16px;
   --font-sans: 'Noto Sans TC', 'Barlow', system-ui, sans-serif;
   --font-display: 'Barlow', 'Noto Sans TC', system-ui, sans-serif;
   color: var(--ink);
@@ -36,9 +37,9 @@ body {
   margin: 0;
   min-width: 320px;
   background:
-    radial-gradient(1200px 600px at 10% -10%, rgba(232, 163, 23, 0.18), transparent 55%),
-    radial-gradient(900px 500px at 100% 0%, rgba(27, 58, 75, 0.16), transparent 50%),
-    linear-gradient(180deg, #f4f6f8 0%, var(--bg) 40%, #e5e9ee 100%);
+    radial-gradient(1100px 520px at 8% -12%, rgba(245, 166, 35, 0.22), transparent 55%),
+    radial-gradient(900px 480px at 100% 0%, rgba(15, 61, 85, 0.18), transparent 52%),
+    linear-gradient(180deg, #f2f5f8 0%, var(--bg) 42%, #dce4eb 100%);
 }
 
 a {
@@ -91,7 +92,7 @@ button {
 }
 
 .panel {
-  background: color-mix(in srgb, var(--bg-elevated) 92%, white);
+  background: color-mix(in srgb, var(--bg-elevated) 96%, white);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -102,7 +103,7 @@ button {
   position: relative;
   overflow: hidden;
   background:
-    linear-gradient(145deg, rgba(27, 58, 75, 0.96), rgba(16, 40, 51, 0.92)),
+    linear-gradient(145deg, rgba(15, 61, 85, 0.98), rgba(8, 38, 54, 0.94)),
     repeating-linear-gradient(
       -45deg,
       rgba(255, 255, 255, 0.03) 0 8px,
@@ -117,7 +118,7 @@ button {
   position: absolute;
   inset: auto -20% -40% 40%;
   height: 180px;
-  background: radial-gradient(circle, rgba(232, 163, 23, 0.35), transparent 70%);
+  background: radial-gradient(circle, rgba(245, 166, 35, 0.4), transparent 70%);
   pointer-events: none;
 }
 
@@ -134,7 +135,6 @@ button {
   color: rgba(244, 247, 250, 0.72);
 }
 
-/* Status block inside dark hero: light surface + dark ink (avoid white-on-white). */
 .hero-status {
   display: flex;
   flex-direction: column;
@@ -192,15 +192,25 @@ button {
 
 .btn {
   appearance: none;
-  border: 1px solid transparent;
+  border: 2px solid transparent;
   border-radius: 14px;
-  padding: 14px 16px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  min-height: 48px;
+  padding: 14px 18px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  box-shadow: 0 8px 18px rgba(8, 38, 54, 0.12);
   transition:
     transform 160ms ease,
     background 160ms ease,
-    border-color 160ms ease;
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.btn-secondary {
+  background: #fff;
+  border-color: color-mix(in srgb, var(--steel) 35%, var(--line));
+  color: var(--steel);
+  box-shadow: none;
 }
 
 .btn:active {
@@ -210,28 +220,36 @@ button {
 .btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .btn-primary {
-  background: var(--amber);
+  background: linear-gradient(180deg, var(--amber-hot), var(--amber));
   color: var(--steel-deep);
+  border-color: color-mix(in srgb, var(--amber) 55%, #8a5a00);
+  box-shadow: 0 10px 22px rgba(245, 166, 35, 0.38);
 }
 
 .btn-steel {
-  background: var(--steel);
+  background: linear-gradient(180deg, #184f6c, var(--steel));
   color: #fff;
+  border-color: color-mix(in srgb, var(--steel) 70%, black);
+  box-shadow: 0 10px 22px rgba(15, 61, 85, 0.32);
 }
 
 .btn-ghost {
-  background: transparent;
-  border-color: var(--line);
-  color: var(--ink);
+  background: #fff;
+  border-color: color-mix(in srgb, var(--steel) 28%, var(--line));
+  color: var(--steel);
+  box-shadow: none;
 }
 
 .btn-danger {
-  background: color-mix(in srgb, var(--danger) 12%, white);
+  background: color-mix(in srgb, var(--danger) 14%, white);
   color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 25%, white);
+  border-color: color-mix(in srgb, var(--danger) 45%, white);
+  box-shadow: none;
+  font-weight: 800;
 }
 
 .btn-block {
@@ -250,15 +268,15 @@ button {
 }
 
 .clock-btn.in {
-  background: linear-gradient(135deg, #f0b429, #e08b00);
+  background: linear-gradient(135deg, #ffc145, #f5a623);
   color: var(--steel-deep);
-  box-shadow: 0 16px 30px rgba(232, 163, 23, 0.35);
+  box-shadow: 0 16px 30px rgba(245, 166, 35, 0.42);
 }
 
 .clock-btn.out {
-  background: linear-gradient(135deg, #2f5b70, #1b3a4b);
+  background: linear-gradient(135deg, #2a6a87, #0f3d55);
   color: #fff;
-  box-shadow: 0 16px 30px rgba(27, 58, 75, 0.35);
+  box-shadow: 0 16px 30px rgba(15, 61, 85, 0.4);
 }
 
 .field {
@@ -270,14 +288,14 @@ button {
 .field label {
   font-size: 0.85rem;
   color: var(--ink-muted);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .field input,
 .field select,
 .field textarea {
   width: 100%;
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--line);
   background: #fff;
   border-radius: 12px;
   padding: 12px 14px;
@@ -291,18 +309,18 @@ button {
   border-radius: 999px;
   padding: 4px 10px;
   font-size: 0.75rem;
-  font-weight: 700;
+  font-weight: 800;
   background: var(--amber-soft);
   color: var(--steel-deep);
 }
 
 .badge.steel {
-  background: color-mix(in srgb, var(--steel) 14%, white);
+  background: color-mix(in srgb, var(--steel) 16%, white);
   color: var(--steel);
 }
 
 .badge.ok {
-  background: color-mix(in srgb, var(--ok) 16%, white);
+  background: color-mix(in srgb, var(--ok) 18%, white);
   color: var(--ok);
 }
 
@@ -310,7 +328,7 @@ button {
   display: block;
   padding: 14px;
   border-radius: 14px;
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--line);
   background: #fff;
   transition:
     border-color 160ms ease,
@@ -318,7 +336,7 @@ button {
 }
 
 .site-link:hover {
-  border-color: color-mix(in srgb, var(--steel) 35%, var(--line));
+  border-color: color-mix(in srgb, var(--amber) 55%, var(--line));
   transform: translateY(-1px);
 }
 
@@ -345,19 +363,21 @@ button {
   min-height: 72px;
   padding: 12px 8px;
   text-align: center;
-  font-weight: 700;
+  font-weight: 800;
   border-radius: 16px;
   background: #fff;
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--line);
   color: var(--steel);
   transition:
     transform 160ms ease,
-    border-color 160ms ease;
+    border-color 160ms ease,
+    background 160ms ease;
 }
 
 .shortcut-tile:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--amber) 45%, var(--line));
+  border-color: var(--amber);
+  background: color-mix(in srgb, var(--amber-soft) 55%, white);
 }
 
 .bottom-nav {
@@ -371,8 +391,8 @@ button {
   gap: 6px;
   padding: 8px;
   border-radius: 18px;
-  background: rgba(247, 248, 250, 0.92);
-  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1.5px solid var(--line);
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow);
 }
@@ -382,7 +402,7 @@ button {
   padding: 10px 4px;
   border-radius: 12px;
   font-size: 0.82rem;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--ink-muted);
 }
 
@@ -418,7 +438,7 @@ button {
 .account-option {
   width: 100%;
   text-align: left;
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--line);
   background: #fff;
   border-radius: 14px;
   padding: 14px;
@@ -463,18 +483,18 @@ button {
   height: 8px;
   border-radius: 50%;
   background: var(--ok);
-  box-shadow: 0 0 0 0 rgba(31, 122, 77, 0.5);
+  box-shadow: 0 0 0 0 rgba(27, 122, 69, 0.5);
   animation: pulse 1.6s infinite;
 }
 
 @keyframes pulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(31, 122, 77, 0.45);
+    box-shadow: 0 0 0 0 rgba(27, 122, 69, 0.45);
   }
   70% {
-    box-shadow: 0 0 0 10px rgba(31, 122, 77, 0);
+    box-shadow: 0 0 0 10px rgba(27, 122, 69, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(31, 122, 77, 0);
+    box-shadow: 0 0 0 0 rgba(27, 122, 69, 0);
   }
 }

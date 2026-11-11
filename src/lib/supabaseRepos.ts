@@ -30,10 +30,19 @@ import {
 } from '@/domain/orgSpendSettings'
 import { assertPhotoType } from '@/domain/photoTypes'
 import { assertCanAccessSite, filterSitesByAccess } from '@/domain/siteAccess'
+import { assertFeature } from '@/domain/featureAccess'
 import {
   assertSiteStatus,
   assertSiteStatusTransition,
 } from '@/domain/siteStatus'
+import {
+  buildSiteDeleteImpact,
+  deletedSiteFinanceLabel,
+} from '@/domain/siteDeleteImpact'
+import {
+  templateToAccessFields,
+  withNormalizedFeatures,
+} from '@/domain/roleGroups'
 import {
   assertAccountStatus,
   normalizeProfileFields,
@@ -738,8 +747,31 @@ function mapStockReservationRow(row: Record<string, unknown>): StockReservation 
   }
 }
 
-const PROFILE_SELECT =
+const PROFILE_SELECT_CORE =
   'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, created_at'
+
+/** Includes role-group columns when migration is applied; falls back to core. */
+const PROFILE_SELECT = `${PROFILE_SELECT_CORE}, role_group_name, role_group_id, access_template, features, permission_overrides`
+
+async function selectProfileRow(userId: string) {
+  const client = sb()
+  const full = await client
+    .from('profiles')
+    .select(PROFILE_SELECT)
+    .eq('id', userId)
+    .maybeSingle()
+  if (
+    full.error &&
+    /role_group_name|access_template|column/i.test(full.error.message)
+  ) {
+    return client
+      .from('profiles')
+      .select(PROFILE_SELECT_CORE)
+      .eq('id', userId)
+      .maybeSingle()
+  }
+  return full
+}
 
 function mapUser(row: {
   id: string
@@ -757,8 +789,19 @@ function mapUser(row: {
   hired_at?: string | null
   account_status?: string | null
   profile_notes?: string | null
+  role_group_name?: string | null
+  role_group_id?: string | null
+  access_template?: string | null
+  features?: Record<string, boolean> | null
+  permission_overrides?: Record<string, boolean> | null
   created_at: string
 }): AppUser {
+  const accessTemplate =
+    row.access_template === 'owner' ||
+    row.access_template === 'admin' ||
+    row.access_template === 'member'
+      ? row.access_template
+      : null
   return {
     id: row.id,
     organizationId: row.organization_id,
@@ -776,6 +819,11 @@ function mapUser(row: {
     accountStatus:
       row.account_status === 'disabled' ? 'disabled' : 'active',
     notes: row.profile_notes ?? null,
+    roleGroupName: row.role_group_name ?? null,
+    roleGroupId: row.role_group_id ?? null,
+    accessTemplate,
+    features: row.features ?? null,
+    permissionOverrides: row.permission_overrides ?? null,
     createdAt: row.created_at,
   }
 }
@@ -964,11 +1012,7 @@ export const supabaseRepos = {
       return null
     }
 
-    const { data, error } = await client
-      .from('profiles')
-      .select(PROFILE_SELECT)
-      .eq('id', auth.user.id)
-      .maybeSingle()
+    const { data, error } = await selectProfileRow(auth.user.id)
     if (error) throw new AppError(toUserMessage(error, '無法讀取個人資料'))
     if (!data) return null
     return mapUser({ ...data, email: data.email ?? auth.user.email ?? null })
@@ -983,11 +1027,9 @@ export const supabaseRepos = {
     if (error) throw new AppError(toUserMessage(error, '登入失敗'))
     if (!data.user) throw new AppError('登入失敗')
 
-    const { data: profile, error: profileError } = await client
-      .from('profiles')
-      .select(PROFILE_SELECT)
-      .eq('id', data.user.id)
-      .maybeSingle()
+    const { data: profile, error: profileError } = await selectProfileRow(
+      data.user.id,
+    )
     if (profileError) throw new AppError(toUserMessage(profileError, '無法讀取個人資料'))
     if (!profile) throw new AppError('帳號已登入，但尚未建立 profiles 資料列')
     return mapUser({ ...profile, email: profile.email ?? data.user.email ?? null })
@@ -1167,14 +1209,28 @@ export const supabaseRepos = {
       if (actor.role !== 'boss') throw new AppError('僅老闆可停用帳號')
       payload.account_status = assertAccountStatus(input.accountStatus)
     }
-    const { data, error } = await sb()
+    const updated = await sb()
       .from('profiles')
       .update(payload)
       .eq('id', tid)
       .select(PROFILE_SELECT)
       .single()
-    if (error) throw new AppError(toUserMessage(error, '無法更新個人資料'))
-    const mapped = mapUser(data)
+    let row = updated.data
+    let updError = updated.error
+    if (updError && /role_group_name|access_template|column/i.test(updError.message)) {
+      const fallback = await sb()
+        .from('profiles')
+        .update(payload)
+        .eq('id', tid)
+        .select(PROFILE_SELECT_CORE)
+        .single()
+      row = fallback.data as typeof row
+      updError = fallback.error
+    }
+    if (updError || !row) {
+      throw new AppError(toUserMessage(updError, '無法更新個人資料'))
+    }
+    const mapped = mapUser(row)
     await this.appendAuditLog(actor, {
       action: 'permission.update',
       targetType: 'profile',
@@ -1186,13 +1242,27 @@ export const supabaseRepos = {
 
   async listOrgProfiles(actor: AppUser): Promise<AppUser[]> {
     if (actor.role !== 'boss') throw new AppError('僅老闆可查看完整名冊')
-    const { data, error } = await sb()
+    const full = await sb()
       .from('profiles')
       .select(PROFILE_SELECT)
       .eq('organization_id', actor.organizationId)
       .order('name')
-    if (error) throw new AppError(toUserMessage(error, '無法載入名冊'))
-    return (data ?? []).map((row) => mapUser(row))
+    if (
+      full.error &&
+      /role_group_name|access_template|column/i.test(full.error.message)
+    ) {
+      const fallback = await sb()
+        .from('profiles')
+        .select(PROFILE_SELECT_CORE)
+        .eq('organization_id', actor.organizationId)
+        .order('name')
+      if (fallback.error) {
+        throw new AppError(toUserMessage(fallback.error, '無法載入名冊'))
+      }
+      return (fallback.data ?? []).map((row) => mapUser(row))
+    }
+    if (full.error) throw new AppError(toUserMessage(full.error, '無法載入名冊'))
+    return (full.data ?? []).map((row) => mapUser(row))
   },
 
   async listSites(actor?: AppUser): Promise<SiteProject[]> {
@@ -1314,6 +1384,243 @@ export const supabaseRepos = {
     const site = mapSite(data)
     assertSameOrganization(actor.organizationId, site.organizationId)
     return site
+  },
+
+  async getSiteDeleteImpact(actor: AppUser, siteId: string) {
+    const sid = requireUuid(siteId, '工地')
+    const current = await this.getSite(sid, actor)
+    if (!current) throw new AppError('找不到工地')
+    const photos = await this.listPhotoUploads(sid)
+    const expenses = (await this.listExpenseReports(actor)).filter(
+      (e) => e.siteId === sid,
+    )
+    const receipts = (await this.listCashReceipts(actor)).filter(
+      (r) => r.siteId === sid,
+    )
+    const quotes = (await this.listQuotations()).filter(
+      (q) => q.projectId === sid && !q.deletedAt,
+    )
+    const { data: attRows } = await sb()
+      .from('attendance')
+      .select('id')
+      .eq('site_id', sid)
+    const { data: defectRows } = await sb()
+      .from('defects')
+      .select('id')
+      .eq('site_id', sid)
+    return buildSiteDeleteImpact({
+      siteId: sid,
+      siteName: current.name,
+      photoCount: photos.length,
+      pendingExpenseCount: expenses.filter((e) => e.status === 'pending_review')
+        .length,
+      confirmedExpenseCount: expenses.filter((e) => e.status === 'confirmed')
+        .length,
+      pendingReceiptCount: receipts.filter((r) => r.status === 'pending_confirm')
+        .length,
+      confirmedReceiptCount: receipts.filter((r) => r.status === 'confirmed')
+        .length,
+      attendanceCount: (attRows ?? []).length,
+      quoteCount: quotes.length,
+      defectCount: (defectRows ?? []).length,
+    })
+  },
+
+  async deleteSite(actor: AppUser, siteId: string): Promise<void> {
+    assertFeature(actor, 'site_delete')
+    const sid = requireUuid(siteId, '工地')
+    const impact = await this.getSiteDeleteImpact(actor, sid)
+    if (impact.blocked) {
+      throw new AppError(impact.blockReason || '不可刪除案件')
+    }
+    const current = await this.getSite(sid, actor)
+    if (!current) throw new AppError('找不到工地')
+
+    // Photos first — if this fails, site remains intact for retry.
+    const photos = await this.listPhotoUploads(sid)
+    if (photos.length > 0) {
+      await this.deletePhotoUploads(photos.map((p) => p.id))
+    }
+
+    const label = deletedSiteFinanceLabel(current.name)
+    await sb()
+      .from('expense_reports')
+      .update({ site_id: null, site_name: label })
+      .eq('site_id', sid)
+    await sb()
+      .from('cash_receipt_reports')
+      .update({ site_id: null, site_name: label })
+      .eq('site_id', sid)
+
+    const quotes = (await this.listQuotations()).filter(
+      (q) => q.projectId === sid && !q.deletedAt,
+    )
+    for (const q of quotes) {
+      await this.softDeleteQuotation(actor, q.id, '刪除工地案件')
+    }
+    if (quotes.length > 0) {
+      const { error: unlinkError } = await sb()
+        .from('quotations')
+        .update({ project_id: null })
+        .eq('project_id', sid)
+        .not('deleted_at', 'is', null)
+      if (unlinkError) {
+        throw new AppError(
+          toUserMessage(unlinkError, '無法解除報價與工地關聯，請先處理報價後再刪'),
+        )
+      }
+    }
+
+    await sb().from('site_members').delete().eq('site_id', sid)
+
+    const { error } = await sb().from('sites').delete().eq('id', sid)
+    if (error) {
+      throw new AppError(
+        toUserMessage(
+          error,
+          '照片可能已刪除，但案件刪除失敗。請重試或改用結案封存。',
+        ),
+      )
+    }
+    await this.appendAuditLog(actor, {
+      action: 'site.delete',
+      targetType: 'site',
+      targetId: sid,
+      before: current,
+    })
+  },
+
+  async listRoleGroups(actor: AppUser) {
+    const { data, error } = await sb()
+      .from('org_role_groups')
+      .select('id, name, template, finance_authorized, permissions')
+      .eq('organization_id', actor.organizationId)
+      .order('name')
+    if (error) {
+      return []
+    }
+    return (data ?? []).map((row) =>
+      withNormalizedFeatures({
+        id: String(row.id),
+        name: String(row.name),
+        template: row.template as 'owner' | 'admin' | 'member' | 'finance',
+        financeAuthorized: Boolean(row.finance_authorized),
+        features: (row.permissions as Record<string, boolean> | null) ?? null,
+      }),
+    )
+  },
+
+  async createRoleGroup(
+    actor: AppUser,
+    input: {
+      name: string
+      template: 'owner' | 'admin' | 'member' | 'finance'
+      financeAuthorized: boolean
+      features?: import('@/domain/featureAccess').FeatureMap
+    },
+  ) {
+    assertFeature(actor, 'account')
+    const name = input.name.trim()
+    if (!name) throw new AppError('請輸入身分組名稱')
+    const features =
+      input.features ?? templateToAccessFields(input.template).features
+    const { data, error } = await sb()
+      .from('org_role_groups')
+      .insert({
+        organization_id: actor.organizationId,
+        name,
+        template: input.template,
+        finance_authorized: Boolean(input.financeAuthorized),
+        permissions: features,
+        created_by: actor.id,
+      })
+      .select('id, name, template, finance_authorized, permissions')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立身分組'))
+    return withNormalizedFeatures({
+      id: String(data.id),
+      name: String(data.name),
+      template: data.template as 'owner' | 'admin' | 'member' | 'finance',
+      financeAuthorized: Boolean(data.finance_authorized),
+      features: (data.permissions as Record<string, boolean> | null) ?? features,
+    })
+  },
+
+  async updateRoleGroupFeatures(
+    actor: AppUser,
+    groupId: string,
+    features: import('@/domain/featureAccess').FeatureMap,
+  ) {
+    assertFeature(actor, 'account')
+    const { data, error } = await sb()
+      .from('org_role_groups')
+      .update({ permissions: features })
+      .eq('id', requireUuid(groupId, '身分組'))
+      .eq('organization_id', actor.organizationId)
+      .select('id, name, template, finance_authorized, permissions')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新身分組權限'))
+    return withNormalizedFeatures({
+      id: String(data.id),
+      name: String(data.name),
+      template: data.template as 'owner' | 'admin' | 'member' | 'finance',
+      financeAuthorized: Boolean(data.finance_authorized),
+      features: (data.permissions as Record<string, boolean> | null) ?? features,
+    })
+  },
+
+  async setMemberAccess(
+    actor: AppUser,
+    targetUserId: string,
+    input: {
+      roleGroupId?: string | null
+      roleGroupName: string
+      accessTemplate: 'owner' | 'admin' | 'member'
+      financeAuthorized: boolean
+      features?: import('@/domain/featureAccess').FeatureMap | null
+      permissionOverrides?: Partial<
+        import('@/domain/featureAccess').FeatureMap
+      > | null
+    },
+  ): Promise<AppUser> {
+    assertFeature(actor, 'account')
+    const tid = requireUuid(targetUserId, '使用者')
+    const { data, error } = await sb().rpc('boss_set_member_access', {
+      p_target_user_id: tid,
+      p_role_group_name: input.roleGroupName,
+      p_access_template: input.accessTemplate,
+      p_finance_authorized: input.financeAuthorized,
+      p_role_group_id: input.roleGroupId ?? null,
+      p_features: input.features ?? null,
+      p_permission_overrides: input.permissionOverrides ?? null,
+    })
+    if (error) {
+      // Older RPC without override args
+      const legacy = await sb().rpc('boss_set_member_access', {
+        p_target_user_id: tid,
+        p_role_group_name: input.roleGroupName,
+        p_access_template: input.accessTemplate,
+        p_finance_authorized: input.financeAuthorized,
+      })
+      if (legacy.error) {
+        throw new AppError(toUserMessage(legacy.error, '無法設定權限'))
+      }
+      const mapped = mapUser(legacy.data as Parameters<typeof mapUser>[0])
+      return {
+        ...mapped,
+        features: input.features ?? mapped.features,
+        permissionOverrides:
+          input.permissionOverrides ?? mapped.permissionOverrides,
+      }
+    }
+    const mapped = mapUser(data as Parameters<typeof mapUser>[0])
+    await this.appendAuditLog(actor, {
+      action: 'permission.update',
+      targetType: 'profile',
+      targetId: tid,
+      after: mapped,
+    })
+    return mapped
   },
 
   async updateSiteStatus(

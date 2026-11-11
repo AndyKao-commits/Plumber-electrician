@@ -37,7 +37,7 @@ export function LineBindCallbackPage() {
 
         if (code) {
           if (!consumeLineBindState(state)) {
-            throw new Error('授權狀態不符，請回今日團隊重新按「用 LINE 綁定」')
+            throw new Error('授權狀態不符，請回個人中心重新按「用 LINE 綁定」')
           }
 
           const anonKey =
@@ -88,7 +88,7 @@ export function LineBindCallbackPage() {
         sessionStorage.removeItem(PENDING_LINE_USER_ID_KEY)
         if (cancelled) return
         setStatus('綁定成功！')
-        navigate('/team', { replace: true })
+        navigate('/profile', { replace: true })
       } catch (err) {
         sessionStorage.removeItem(PENDING_LINE_USER_ID_KEY)
         if (cancelled) return
@@ -109,8 +109,8 @@ export function LineBindCallbackPage() {
       <p className="muted" style={{ margin: 0 }}>{status}</p>
       {error ? <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p> : null}
       {error ? (
-        <Link to="/team" className="btn btn-steel" style={{ display: 'inline-block', textAlign: 'center' }}>
-          回今日團隊
+        <Link to="/profile" className="btn btn-steel" style={{ display: 'inline-block', textAlign: 'center' }}>
+          回個人中心
         </Link>
       ) : null}
     </div>

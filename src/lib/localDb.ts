@@ -1,9 +1,15 @@
 import { assertCanApprovePurchase } from '@/domain/approvals'
 import { assertCanApproveAttendanceCorrection } from '@/domain/permissions'
+import { assertFeature } from '@/domain/featureAccess'
 import {
   assertSiteStatus,
   assertSiteStatusTransition,
 } from '@/domain/siteStatus'
+import {
+  buildSiteDeleteImpact,
+  deletedSiteFinanceLabel,
+} from '@/domain/siteDeleteImpact'
+import { withNormalizedFeatures } from '@/domain/roleGroups'
 import {
   assertEmergencyReserveAllowed,
   sumOccupiedQuota,
@@ -293,6 +299,7 @@ const KEYS = {
   auditLogs: 'eg.auditLogs.v1',
   orgSpendSettings: 'eg.orgSpendSettings.v1',
   siteMembers: 'eg.siteMembers.v1',
+  roleGroups: 'eg.roleGroups.v1',
 } as const
 
 type SiteMemberRow = {
@@ -986,6 +993,144 @@ export const localDb = {
     }
     all[idx] = updated
     write(KEYS.sites, all)
+    return updated
+  },
+
+  getSiteDeleteImpact(siteId: string) {
+    const site = this.getSite(siteId)
+    if (!site) throw new Error('找不到工地')
+    const expenses = this.listExpenseReports().filter((e) => e.siteId === siteId)
+    const receipts = this.listCashReceipts().filter((r) => r.siteId === siteId)
+    const attendance = this.getAttendance().filter((a) => a.siteId === siteId)
+    const quotes = this.getQuotations().filter((q) => q.projectId === siteId)
+    return buildSiteDeleteImpact({
+      siteId,
+      siteName: site.name,
+      photoCount: 0,
+      pendingExpenseCount: expenses.filter((e) => e.status === 'pending_review')
+        .length,
+      confirmedExpenseCount: expenses.filter((e) => e.status === 'confirmed')
+        .length,
+      pendingReceiptCount: receipts.filter((r) => r.status === 'pending_confirm')
+        .length,
+      confirmedReceiptCount: receipts.filter((r) => r.status === 'confirmed')
+        .length,
+      attendanceCount: attendance.length,
+      quoteCount: quotes.length,
+      defectCount: 0,
+    })
+  },
+
+  deleteSite(
+    actor: AppUser,
+    siteId: string,
+  ): void {
+    assertFeature(actor, 'site_delete')
+    const impact = this.getSiteDeleteImpact(siteId)
+    if (impact.blocked) throw new Error(impact.blockReason || '不可刪除')
+    const sites = read(KEYS.sites, emptySites)
+    if (!sites.some((s) => s.id === siteId)) throw new Error('找不到工地')
+
+    const label = deletedSiteFinanceLabel(impact.siteName)
+    const expenses = this.listExpenseReports().map((e) =>
+      e.siteId === siteId
+        ? { ...e, siteId: null, siteName: label }
+        : e,
+    )
+    write(KEYS.expenseReports, expenses)
+    const receipts = this.listCashReceipts().map((r) =>
+      r.siteId === siteId
+        ? { ...r, siteId: null, siteName: label }
+        : r,
+    )
+    write(KEYS.cashReceipts, receipts)
+    const attendance = this.getAttendance().map((a) =>
+      a.siteId === siteId ? { ...a, siteId: undefined } : a,
+    )
+    write(KEYS.attendance, attendance)
+
+    write(
+      KEYS.sites,
+      sites.filter((s) => s.id !== siteId),
+    )
+    write(
+      KEYS.siteMembers,
+      read(KEYS.siteMembers, emptySiteMembers).filter((m) => m.siteId !== siteId),
+    )
+  },
+
+  listRoleGroups(): import('@/domain/roleGroups').RoleGroupDefinition[] {
+    return read(
+      KEYS.roleGroups,
+      [] as import('@/domain/roleGroups').RoleGroupDefinition[],
+    ).map((g) => withNormalizedFeatures(g))
+  },
+
+  createRoleGroup(
+    input: Omit<import('@/domain/roleGroups').RoleGroupDefinition, 'id' | 'builtIn'>,
+  ): import('@/domain/roleGroups').RoleGroupDefinition {
+    const all = this.listRoleGroups()
+    const group = withNormalizedFeatures({
+      id: `rg-${crypto.randomUUID()}`,
+      name: input.name.trim(),
+      template: input.template,
+      financeAuthorized: Boolean(input.financeAuthorized),
+      features: input.features,
+    })
+    if (!group.name) throw new Error('請輸入身分組名稱')
+    if (all.some((g) => g.name === group.name)) throw new Error('身分組名稱已存在')
+    all.push(group)
+    write(KEYS.roleGroups, all)
+    return group
+  },
+
+  updateRoleGroupFeatures(
+    groupId: string,
+    features: import('@/domain/featureAccess').FeatureMap,
+  ): import('@/domain/roleGroups').RoleGroupDefinition {
+    const all = this.listRoleGroups()
+    const idx = all.findIndex((g) => g.id === groupId)
+    if (idx < 0) throw new Error('找不到身分組')
+    if (all[idx].builtIn && all[idx].template === 'owner') {
+      throw new Error('不可修改老闆身分組')
+    }
+    const next = { ...all[idx], features: { ...features } }
+    all[idx] = next
+    write(KEYS.roleGroups, all)
+    return next
+  },
+
+  setMemberAccess(
+    actor: AppUser,
+    targetUserId: string,
+    input: {
+      roleGroupId?: string | null
+      roleGroupName: string
+      accessTemplate: 'owner' | 'admin' | 'member'
+      financeAuthorized: boolean
+      features?: import('@/domain/featureAccess').FeatureMap | null
+      permissionOverrides?: Partial<
+        import('@/domain/featureAccess').FeatureMap
+      > | null
+    },
+  ): AppUser {
+    assertFeature(actor, 'account')
+    if (input.accessTemplate === 'owner') throw new Error('不可將他人設為老闆身分')
+    const users = this.getUsers()
+    const idx = users.findIndex((u) => u.id === targetUserId)
+    if (idx < 0) throw new Error('找不到使用者')
+    if (users[idx].role === 'boss') throw new Error('不可變更老闆帳號的身分組')
+    const updated: AppUser = {
+      ...users[idx],
+      roleGroupId: input.roleGroupId ?? null,
+      roleGroupName: input.roleGroupName,
+      accessTemplate: input.accessTemplate,
+      financeAuthorized: input.financeAuthorized,
+      features: input.features ?? null,
+      permissionOverrides: input.permissionOverrides ?? null,
+    }
+    users[idx] = updated
+    write(KEYS.users, users)
     return updated
   },
 

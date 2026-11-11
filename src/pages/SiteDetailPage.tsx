@@ -1,7 +1,10 @@
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { hasFeature } from '@/domain/featureAccess'
 import { SITE_STATUS_LABELS } from '@/domain/siteStatus'
 import type { DefectSeverity } from '@/domain/types'
+import { EXPENSE_STATUS_LABELS, RECEIPT_STATUS_LABELS } from '@/domain/fieldFinance'
+import { useFieldFinance } from '@/hooks/useFieldFinance'
 import { useAttendance } from '@/hooks/useAttendance'
 import { useDailyLogs } from '@/hooks/useDailyLogs'
 import { useDefects } from '@/hooks/useDefects'
@@ -25,17 +28,22 @@ import {
 } from '@/lib/siteReportExport'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { taipeiDateString } from '@/lib/time'
-
 export function SiteDetailPage() {
   const { siteId } = useParams()
+  const navigate = useNavigate()
   const { data: site, isLoading, isError, error } = useSite(siteId)
   const {
     updateWarranty,
     isUpdatingWarranty,
     updateSiteStatus,
     isUpdatingStatus,
+    deleteSite,
+    isDeletingSite,
+    getSiteDeleteImpact,
   } = useSites()
   const { user, directory } = useUser()
+  const { expenses, receipts } = useFieldFinance(user?.id)
+  const canDeleteSite = hasFeature(user, 'site_delete')
   const queryClient = useQueryClient()
   const { openShift, assignSite, isAssigningSite } = useAttendance(user?.id)
   const formal = isFormalMode()
@@ -45,9 +53,6 @@ export function SiteDetailPage() {
   const { reports } = useReports(siteId)
   const {
     logs,
-    ensureDraft,
-    isEnsuring,
-    ensureError,
     saveBody,
     isSaving,
     publish,
@@ -67,10 +72,10 @@ export function SiteDetailPage() {
   const [defectSeverity, setDefectSeverity] = useState<DefectSeverity>('normal')
   const [warrantyDraft, setWarrantyDraft] = useState('')
   const [logDrafts, setLogDrafts] = useState<Record<string, string>>({})
-  const todayLog = useMemo(
-    () => logs.find((l) => l.logDate === taipeiDateString()),
-    [logs],
-  )
+  const [exportingReport, setExportingReport] = useState(false)
+  const [reportPhotoIds, setReportPhotoIds] = useState<Record<string, boolean>>({})
+  const [reportFrom, setReportFrom] = useState('')
+  const [reportTo, setReportTo] = useState('')
 
   const quotesQuery = useQuery({
     queryKey: ['quotes', 'site', siteId],
@@ -88,13 +93,37 @@ export function SiteDetailPage() {
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [photos, siteId],
   )
+  const relatedExpenses = useMemo(
+    () => expenses.filter((e) => e.siteId === siteId),
+    [expenses, siteId],
+  )
+  const relatedReceipts = useMemo(
+    () => receipts.filter((r) => r.siteId === siteId),
+    [receipts, siteId],
+  )
+  const expensePending = relatedExpenses
+    .filter((e) => e.status === 'pending_review')
+    .reduce((s, e) => s + Number(e.amount || 0), 0)
+  const expenseConfirmed = relatedExpenses
+    .filter((e) => e.status === 'confirmed')
+    .reduce((s, e) => s + Number(e.amount || 0), 0)
+  const receiptPending = relatedReceipts
+    .filter((r) => r.status === 'pending_confirm')
+    .reduce((s, r) => s + Number(r.amount || 0), 0)
+  const receiptConfirmed = relatedReceipts
+    .filter((r) => r.status === 'confirmed')
+    .reduce((s, r) => s + Number(r.amount || 0), 0)
+
+  useEffect(() => {
+    if (!site) return
+    if (!reportFrom) {
+      setReportFrom((site.createdAt || '').slice(0, 10) || taipeiDateString())
+    }
+    if (!reportTo) setReportTo(taipeiDateString())
+  }, [site, reportFrom, reportTo])
   const sitePhotos = useMemo(() => allSitePhotos.slice(0, 8), [allSitePhotos])
   const [exportingPdf, setExportingPdf] = useState(false)
-  const [exportingReport, setExportingReport] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [reportPhotoIds, setReportPhotoIds] = useState<Record<string, boolean>>(
-    {},
-  )
   const [photoSelectReady, setPhotoSelectReady] = useState(false)
 
   useEffect(() => {
@@ -108,7 +137,10 @@ export function SiteDetailPage() {
   }, [allSitePhotos, photoSelectReady])
 
   const selectedReportPhotos = useMemo(
-    () => allSitePhotos.filter((p) => reportPhotoIds[p.id]).slice(0, SITE_REPORT_PHOTO_LIMIT),
+    () =>
+      allSitePhotos
+        .filter((p) => reportPhotoIds[p.id] && p.previewUrl)
+        .slice(0, SITE_REPORT_PHOTO_LIMIT),
     [allSitePhotos, reportPhotoIds],
   )
   const selectedReportCount = selectedReportPhotos.length
@@ -294,6 +326,40 @@ export function SiteDetailPage() {
             </div>
           </div>
         ) : null}
+        {canDeleteSite ? (
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={isDeletingSite}
+            onClick={() => {
+              void (async () => {
+                try {
+                  const impact = await getSiteDeleteImpact(site.id)
+                  if (impact.blocked) {
+                    window.alert(
+                      `${impact.blockReason || '不可刪除'}\n\n可改按「結案」封存案件。`,
+                    )
+                    return
+                  }
+                  const lines = [
+                    `將刪除案件「${impact.siteName}」`,
+                    '',
+                    ...impact.handlingLines,
+                    '',
+                    '此操作無法復原。確定繼續？',
+                  ]
+                  if (!window.confirm(lines.join('\n'))) return
+                  await deleteSite(site.id)
+                  navigate('/sites')
+                } catch (e) {
+                  window.alert((e as Error).message)
+                }
+              })()
+            }}
+          >
+            {isDeletingSite ? '刪除中…' : '刪除整個案件'}
+          </button>
+        ) : null}
       </section>
 
       <section className="panel stack">
@@ -333,7 +399,7 @@ export function SiteDetailPage() {
           </Link>
           <button
             type="button"
-            className="btn btn-steel"
+            className="btn btn-primary"
             disabled={exportingReport || !formal}
             onClick={() => {
               void (async () => {
@@ -355,6 +421,7 @@ export function SiteDetailPage() {
                     site,
                     logs,
                     reports,
+                    defects,
                     acceptedQuotes,
                     photos: selectedReportPhotos.map((p) => ({
                       previewUrl: p.previewUrl!,
@@ -362,6 +429,8 @@ export function SiteDetailPage() {
                       createdAt: p.createdAt,
                       uploaderName: p.uploaderName,
                     })),
+                    rangeStart: reportFrom || (site.createdAt || '').slice(0, 10),
+                    rangeEnd: reportTo || taipeiDateString(),
                   })
                   downloadBlob(blob, siteReportPdfFilename(site.name))
                 } catch (e) {
@@ -375,6 +444,142 @@ export function SiteDetailPage() {
             {exportingReport ? '匯出報告中…' : '匯出施工報告'}
           </button>
         </div>
+        {formal ? (
+          <div className="grid-2">
+            <div className="field">
+              <label htmlFor="report-from">報告起始日</label>
+              <input
+                id="report-from"
+                type="date"
+                value={reportFrom}
+                onChange={(e) => setReportFrom(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="report-to">報告結束日</label>
+              <input
+                id="report-to"
+                type="date"
+                value={reportTo}
+                onChange={(e) => setReportTo(e.target.value)}
+              />
+            </div>
+          </div>
+        ) : (
+          <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+            施工報告匯出需正式模式（含日誌／回報／缺失／照片）。若無資料不會產生空白 PDF。
+          </p>
+        )}
+      </section>
+
+      <section className="panel stack">
+        <div className="row between">
+          <strong>相關支出／收款</strong>
+          <Link className="btn btn-ghost" to="/expenses">
+            到收支管理
+          </Link>
+        </div>
+        <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
+          顯示財務資料中標記此工地的紀錄（非複本）。待審支出 NT$
+          {expensePending.toLocaleString()} · 已確認 NT$
+          {expenseConfirmed.toLocaleString()}；待確認收款 NT$
+          {receiptPending.toLocaleString()} · 已確認 NT$
+          {receiptConfirmed.toLocaleString()}
+        </p>
+        {relatedExpenses.length === 0 && relatedReceipts.length === 0 ? (
+          <p className="muted" style={{ margin: 0 }}>尚無標記此工地的收支</p>
+        ) : (
+          <>
+            {relatedExpenses.slice(0, 8).map((e) => (
+              <div key={e.id} className="site-link">
+                <strong style={{ margin: 0 }}>{e.item}</strong>
+                <p className="muted" style={{ margin: 0 }}>
+                  支出 · NT${Number(e.amount).toLocaleString()} ·{' '}
+                  {EXPENSE_STATUS_LABELS[e.status]}
+                </p>
+              </div>
+            ))}
+            {relatedReceipts.slice(0, 8).map((r) => (
+              <div key={r.id} className="site-link">
+                <strong style={{ margin: 0 }}>{r.sourceNote || '收款'}</strong>
+                <p className="muted" style={{ margin: 0 }}>
+                  收款 · NT${Number(r.amount).toLocaleString()} ·{' '}
+                  {RECEIPT_STATUS_LABELS[r.status]}
+                </p>
+              </div>
+            ))}
+          </>
+        )}
+      </section>
+
+      <section className="panel stack">
+        <strong>
+          施工報告照片（已選 {selectedReportCount}/{SITE_REPORT_PHOTO_LIMIT}）
+        </strong>
+        {allSitePhotos.length === 0 ? (
+          <p className="muted" style={{ margin: 0 }}>
+            尚無照片可納入報告
+          </p>
+        ) : (
+          <>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  const next: Record<string, boolean> = {}
+                  for (const p of allSitePhotos.slice(0, SITE_REPORT_PHOTO_LIMIT)) {
+                    next[p.id] = true
+                  }
+                  setReportPhotoIds(next)
+                }}
+              >
+                選最近 {Math.min(SITE_REPORT_PHOTO_LIMIT, allSitePhotos.length)} 張
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setReportPhotoIds({})}
+              >
+                清空選取
+              </button>
+            </div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              {allSitePhotos.slice(0, 80).map((photo) => (
+                <label
+                  key={photo.id}
+                  style={{
+                    position: 'relative',
+                    display: 'block',
+                    width: 88,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(reportPhotoIds[photo.id])}
+                    onChange={() => toggleReportPhoto(photo.id)}
+                    style={{ position: 'absolute', top: 6, left: 6, zIndex: 1 }}
+                  />
+                  <img
+                    src={photo.previewUrl!}
+                    alt=""
+                    style={{
+                      width: 88,
+                      height: 88,
+                      objectFit: 'cover',
+                      borderRadius: 8,
+                      display: 'block',
+                      outline: reportPhotoIds[photo.id]
+                        ? '2px solid var(--amber)'
+                        : 'none',
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          </>
+        )}
       </section>
 
       <section className="panel stack">
@@ -495,27 +700,12 @@ export function SiteDetailPage() {
           <div className="row between">
             <strong>施工日誌</strong>
             <span className="muted" style={{ fontSize: '0.85rem' }}>
-              每日一則 · 彙整後發布
+              每日一則
             </span>
           </div>
-          <button
-            type="button"
-            className="btn btn-steel"
-            disabled={isEnsuring}
-            onClick={() => void ensureDraft()}
-          >
-            {isEnsuring
-              ? '彙整中…'
-              : todayLog
-                ? '重新彙整今日草稿'
-                : '彙整今日日誌草稿'}
-          </button>
-          {ensureError ? (
-            <p style={{ color: 'var(--danger)', margin: 0 }}>{ensureError.message}</p>
-          ) : null}
           {logs.length === 0 ? (
             <p className="muted" style={{ margin: 0 }}>
-              尚無日誌。可先有出勤／回報／照片／缺失後再彙整。
+              尚無日誌。
             </p>
           ) : (
             logs.slice(0, 7).map((log) => (

@@ -1,14 +1,26 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useUser, userKeys } from '@/hooks/useUser'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
+import { isLineLoginConfigured, startLineBindLogin } from '@/lib/lineLogin'
 import { localDb } from '@/lib/localDb'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 
 export function ProfilePage() {
-  const { user } = useUser()
-  const formal = isFormalMode()
+  const {
+    user,
+    isFormalMode: formalFromHook,
+    bindLineUserId,
+    isBindingLine,
+    bindLineError,
+    createLineBindCode,
+    isCreatingLineBindCode,
+    createLineBindCodeError,
+    refetch,
+  } = useUser()
+  const formal = isFormalMode() || formalFromHook
   const queryClient = useQueryClient()
   const isBoss = user?.role === 'boss'
 
@@ -19,6 +31,14 @@ export function ProfilePage() {
   const [hiredAt, setHiredAt] = useState('')
   const [notes, setNotes] = useState('')
   const [saved, setSaved] = useState(false)
+  const [lineDraft, setLineDraft] = useState<string | null>(null)
+  const [bindCode, setBindCode] = useState<string | null>(null)
+  const [bindExpiresAt, setBindExpiresAt] = useState<string | null>(null)
+  const [showFallback, setShowFallback] = useState(false)
+  const [lineLoginError, setLineLoginError] = useState<string | null>(null)
+  const [lineFlash, setLineFlash] = useState<string | null>(null)
+  const lineUserId = lineDraft ?? user?.lineUserId ?? ''
+  const lineLoginReady = isLineLoginConfigured()
 
   const directoryQuery = useQuery({
     queryKey: [...userKeys.directory(), 'formal'],
@@ -87,6 +107,37 @@ export function ProfilePage() {
     await saveMutation.mutateAsync()
   }
 
+  async function onBindLine(event: FormEvent) {
+    event.preventDefault()
+    setLineFlash(null)
+    try {
+      const next = await bindLineUserId(lineUserId.trim() || null)
+      setLineDraft(next.lineUserId ?? '')
+      setLineFlash(next.lineUserId ? 'LINE 綁定已儲存' : '已解除 LINE 綁定')
+      await refetch()
+    } catch (err) {
+      setLineFlash(null)
+      setLineLoginError(err instanceof Error ? err.message : '綁定失敗')
+    }
+  }
+
+  async function onCreateBindCode() {
+    setLineFlash(null)
+    const result = await createLineBindCode()
+    setBindCode(result.code)
+    setBindExpiresAt(result.expiresAt)
+    setLineFlash('綁定碼已產生，請在 LINE 傳送')
+  }
+
+  function onLineLoginBind() {
+    setLineLoginError(null)
+    try {
+      startLineBindLogin()
+    } catch (err) {
+      setLineLoginError(err instanceof Error ? err.message : '無法啟動 LINE 綁定')
+    }
+  }
+
   if (!user) return <div className="empty">請先登入</div>
 
   const hiredLocked = Boolean(user.hiredAt) && !isBoss
@@ -94,10 +145,156 @@ export function ProfilePage() {
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <strong>個人資料</strong>
+        <strong>個人中心</strong>
+        {user.roleGroupName ? (
+          <p className="muted" style={{ margin: 0 }}>
+            身分組：{user.roleGroupName}
+          </p>
+        ) : null}
       </section>
 
+      {formal ? (
+        <section className="panel stack">
+          <strong>個人 LINE 綁定</strong>
+          {lineFlash ? (
+            <p style={{ color: 'var(--ok)', margin: 0 }}>{lineFlash}</p>
+          ) : null}
+          {user.lineUserId ? (
+            <div className="site-link stack">
+              <strong style={{ margin: 0 }}>已綁定</strong>
+              <p className="muted" style={{ margin: 0, wordBreak: 'break-all' }}>
+                {user.lineUserId}
+              </p>
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={isBindingLine}
+                onClick={() => {
+                  setLineDraft('')
+                  setBindCode(null)
+                  setLineFlash(null)
+                  void bindLineUserId(null)
+                    .then(() => {
+                      setLineDraft(null)
+                      setLineFlash('已解除 LINE 綁定')
+                      return refetch()
+                    })
+                    .catch((err) =>
+                      setLineLoginError(
+                        err instanceof Error ? err.message : '解除失敗',
+                      ),
+                    )
+                }}
+              >
+                {isBindingLine ? '處理中…' : '解除綁定'}
+              </button>
+            </div>
+          ) : (
+            <div className="stack">
+              <button
+                className="btn btn-primary"
+                type="button"
+                disabled={!lineLoginReady}
+                onClick={onLineLoginBind}
+              >
+                用 LINE 綁定
+              </button>
+              {!lineLoginReady ? (
+                <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
+                  尚未設定 LINE Login，可先用下方備援綁定碼。
+                </p>
+              ) : null}
+              {lineLoginError ? (
+                <p style={{ color: 'var(--danger)', margin: 0 }}>{lineLoginError}</p>
+              ) : null}
+
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={() => setShowFallback((v) => !v)}
+                style={{ alignSelf: 'flex-start' }}
+              >
+                {showFallback ? '收合備援綁定碼' : '備援：用綁定碼'}
+              </button>
+
+              {showFallback ? (
+                <div className="stack">
+                  <ol className="muted" style={{ margin: 0, paddingLeft: '1.2rem' }}>
+                    <li>按「產生綁定碼」</li>
+                    <li>對官方帳號傳送：綁定 代碼</li>
+                    <li>收到成功後按「重新整理」</li>
+                  </ol>
+                  <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      className="btn btn-steel"
+                      type="button"
+                      disabled={isCreatingLineBindCode}
+                      onClick={() => void onCreateBindCode()}
+                    >
+                      {isCreatingLineBindCode ? '產生中…' : '產生綁定碼'}
+                    </button>
+                    <button
+                      className="btn btn-ghost"
+                      type="button"
+                      onClick={() => void refetch()}
+                    >
+                      重新整理
+                    </button>
+                  </div>
+                  {createLineBindCodeError ? (
+                    <p style={{ color: 'var(--danger)', margin: 0 }}>
+                      {createLineBindCodeError.message}
+                    </p>
+                  ) : null}
+                  {bindCode ? (
+                    <div className="site-link stack">
+                      <p className="muted" style={{ margin: 0 }}>
+                        請在 LINE 傳送：
+                      </p>
+                      <strong style={{ fontSize: '1.4rem', letterSpacing: '0.12em' }}>
+                        綁定 {bindCode}
+                      </strong>
+                      {bindExpiresAt ? (
+                        <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+                          有效至{' '}
+                          {new Date(bindExpiresAt).toLocaleString('zh-TW', {
+                            timeZone: 'Asia/Taipei',
+                          })}
+                          （台北時間）
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <form className="stack" onSubmit={(e) => void onBindLine(e)}>
+                    <div className="field">
+                      <label htmlFor="line-user-id">或手動貼上 LINE User ID</label>
+                      <input
+                        id="line-user-id"
+                        value={lineUserId}
+                        onChange={(e) => setLineDraft(e.target.value)}
+                        placeholder="Uxxxxxxxx…"
+                        autoComplete="off"
+                      />
+                    </div>
+                    {bindLineError ? (
+                      <p style={{ color: 'var(--danger)', margin: 0 }}>
+                        {bindLineError.message}
+                      </p>
+                    ) : null}
+                    <button className="btn btn-ghost" type="submit" disabled={isBindingLine}>
+                      {isBindingLine ? '儲存中…' : '儲存綁定'}
+                    </button>
+                  </form>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </section>
+      ) : null}
+
       <form className="panel stack" onSubmit={(e) => void onSubmit(e)}>
+        <strong>個人資料</strong>
         <div className="field">
           <label htmlFor="pf-name">姓名</label>
           <input
@@ -166,7 +363,7 @@ export function ProfilePage() {
           帳號狀態：{user.accountStatus === 'disabled' ? '停用' : '啟用'}
         </p>
         <button
-          className="btn btn-steel"
+          className="btn btn-primary"
           type="submit"
           disabled={saveMutation.isPending}
         >
@@ -182,7 +379,12 @@ export function ProfilePage() {
 
       {isBoss ? (
         <section className="panel stack">
-          <strong>團隊帳號（停用）</strong>
+          <div className="row between">
+            <strong>團隊帳號</strong>
+            <Link className="btn btn-steel" to="/access">
+              權限設定
+            </Link>
+          </div>
           {(directoryQuery.data ?? [])
             .filter((m) => m.id !== user.id)
             .map((m) => (
@@ -190,7 +392,7 @@ export function ProfilePage() {
                 <div>
                   <strong style={{ margin: 0 }}>{m.name}</strong>
                   <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-                    {m.jobTitle || '未填工種'} ·{' '}
+                    {m.roleGroupName || m.jobTitle || '未填工種'} ·{' '}
                     {m.accountStatus === 'disabled' ? '停用' : '啟用'}
                   </p>
                 </div>
