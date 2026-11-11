@@ -1601,6 +1601,11 @@ export const supabaseRepos = {
           '後端尚未安裝權限設定函式。請在 Supabase 執行 migration：20261111_boss_set_member_access_apply.sql 後再試。',
         )
       }
+      if (/privileged profile fields/i.test(msg)) {
+        throw new AppError(
+          '權限欄位受保護，無法直接修改。請確認已套用最新資料庫更新後再試。',
+        )
+      }
       throw new AppError(toUserMessage(error, '無法設定權限'))
     }
     if (!data) throw new AppError('無法設定權限')

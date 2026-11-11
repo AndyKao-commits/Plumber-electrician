@@ -78,6 +78,11 @@ alter table public.profiles
 create or replace function public.protect_profile_privileged_columns()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
+  -- Local (transaction-scoped) bypass set by boss_set_member_access only.
+  if current_setting('app.allow_privileged_profile_update', true) = 'on' then
+    return new;
+  end if;
+
   if new.id is distinct from old.id
      or new.organization_id is distinct from old.organization_id
      or new.role is distinct from old.role
@@ -138,6 +143,9 @@ begin
   if v_row.role::text in ('boss', 'owner') then
     raise exception '不可變更老闆帳號的身分組';
   end if;
+
+  -- Transaction-local: lets protect_profile_privileged_columns allow this update.
+  perform set_config('app.allow_privileged_profile_update', 'on', true);
 
   update public.profiles
   set

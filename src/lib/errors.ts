@@ -29,6 +29,9 @@ export function toUserMessage(error: unknown, fallback = '操作失敗，請稍�
   if (/signup.*disabled|Signups not allowed/i.test(msg)) {
     return '目前未開放自行註冊，請聯絡管理員'
   }
+  if (/privileged profile fields/i.test(msg)) {
+    return '權限欄位受保護，無法直接修改。請確認已套用最新資料庫更新後再試。'
+  }
   if (/permission denied|row-level security|RLS|42501/i.test(msg) || code === '42501') {
     return '權限不足，無法存取此資料'
   }
