@@ -607,6 +607,8 @@ export interface CaseOperatingCost {
   createdBy: string
 }
 
+export type MaterialTrackingMode = 'quantity' | 'serial'
+
 export interface MaterialStock {
   id: string
   organizationId: string
@@ -614,11 +616,39 @@ export interface MaterialStock {
   unit: string
   qty: number
   unitCost: number
+  /** INV-001: org-unique SKU */
+  sku?: string
+  trackingMode?: MaterialTrackingMode
+  baseUnitCode?: string
   /** Active reservations against org pool (INV-002). */
   reservedQty?: number
   /** qty − reservedQty */
   availableQty?: number
   updatedAt: string
+}
+
+/** INV-001: alternate units with factor to base. */
+export interface MaterialUnit {
+  id: string
+  organizationId: string
+  materialId: string
+  code: string
+  label: string
+  factorToBase: number
+  isBase: boolean
+}
+
+/** INV-001: org-unique serial for serial-tracked materials. */
+export interface MaterialSerial {
+  id: string
+  organizationId: string
+  materialId: string
+  serialNumber: string
+  status: 'in_stock' | 'issued' | 'scrapped'
+  unitCost: number
+  locationId?: string | null
+  createdAt: string
+  createdBy: string
 }
 
 export type StockLocationKind = 'warehouse' | 'site'

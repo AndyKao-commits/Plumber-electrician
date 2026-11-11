@@ -82,6 +82,12 @@ import {
   assertReservationRelease,
   assertTransferDoesNotAffectCost,
 } from '@/domain/stockLedger'
+import {
+  assertSerialUniqueInOrg,
+  assertSkuUniqueInOrg,
+  assertUnitFactor,
+  convertMaterialQty,
+} from '@/domain/materialMaster'
 import { roundMoney } from '@/domain/money'
 import {
   assertCanMarkChangeOrderAccept,
@@ -120,7 +126,9 @@ import type {
   CustomerRefund,
   CustomerSiteLink,
   OperatingCostKind,
+  MaterialSerial,
   MaterialStock,
+  MaterialUnit,
   MaterialUsage,
   StockBalance,
   StockLocation,
@@ -2977,7 +2985,9 @@ export const supabaseRepos = {
     }
     const { data, error } = await sb()
       .from('materials')
-      .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
+      .select(
+        'id, organization_id, name, unit, qty, unit_cost, sku, tracking_mode, base_unit_code, updated_at',
+      )
       .order('name', { ascending: true })
     if (error) throw new AppError(toUserMessage(error, '無法載入庫存'))
     const { data: reservations } = await sb()
@@ -3002,10 +3012,191 @@ export const supabaseRepos = {
         unit: String(row.unit),
         qty,
         unitCost: Number(row.unit_cost),
+        sku: row.sku ? String(row.sku) : undefined,
+        trackingMode: (row.tracking_mode as MaterialStock['trackingMode']) || 'quantity',
+        baseUnitCode: row.base_unit_code
+          ? String(row.base_unit_code)
+          : String(row.unit),
         reservedQty,
         availableQty: roundMoney(qty - reservedQty, 4),
         updatedAt: String(row.updated_at),
       }
+    })
+  },
+
+  async listMaterialUnits(materialId?: string): Promise<MaterialUnit[]> {
+    let q = sb()
+      .from('material_units')
+      .select(
+        'id, organization_id, material_id, code, label, factor_to_base, is_base',
+      )
+    if (materialId) q = q.eq('material_id', requireUuid(materialId, '材料'))
+    const { data, error } = await q.order('is_base', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入單位'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      materialId: String(row.material_id),
+      code: String(row.code),
+      label: String(row.label),
+      factorToBase: Number(row.factor_to_base),
+      isBase: Boolean(row.is_base),
+    }))
+  },
+
+  async listMaterialSerials(materialId?: string): Promise<MaterialSerial[]> {
+    let q = sb()
+      .from('material_serials')
+      .select(
+        'id, organization_id, material_id, serial_number, status, unit_cost, location_id, created_at, created_by',
+      )
+    if (materialId) q = q.eq('material_id', requireUuid(materialId, '材料'))
+    const { data, error } = await q.order('serial_number', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入序號'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      materialId: String(row.material_id),
+      serialNumber: String(row.serial_number),
+      status: row.status as MaterialSerial['status'],
+      unitCost: Number(row.unit_cost),
+      locationId: (row.location_id as string | null) ?? null,
+      createdAt: String(row.created_at),
+      createdBy: String(row.created_by ?? ''),
+    }))
+  },
+
+  async addMaterialUnit(
+    actor: AppUser,
+    input: {
+      materialId: string
+      code: string
+      label: string
+      factorToBase: number
+    },
+  ): Promise<MaterialUnit> {
+    assertPermission(actor.role, PERMISSIONS.INVENTORY_ADJUST, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const materialId = requireUuid(input.materialId, '材料')
+    const code = input.code.trim()
+    if (!code) throw new AppError('單位代碼必填')
+    const factor = assertUnitFactor(input.factorToBase)
+    const { data, error } = await sb()
+      .from('material_units')
+      .insert({
+        material_id: materialId,
+        code,
+        label: input.label.trim() || code,
+        factor_to_base: factor,
+        is_base: false,
+      })
+      .select(
+        'id, organization_id, material_id, code, label, factor_to_base, is_base',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法新增單位'))
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      materialId: String(data.material_id),
+      code: String(data.code),
+      label: String(data.label),
+      factorToBase: Number(data.factor_to_base),
+      isBase: Boolean(data.is_base),
+    }
+  },
+
+  async registerMaterialSerial(
+    actor: AppUser,
+    input: {
+      materialId: string
+      serialNumber: string
+      unitCost: number
+      locationId?: string | null
+    },
+  ): Promise<MaterialSerial> {
+    assertPermission(actor.role, PERMISSIONS.INVENTORY_INBOUND, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const materials = await this.listMaterials(actor)
+    const mat = materials.find((m) => m.id === input.materialId)
+    if (!mat) throw new AppError('找不到材料')
+    if ((mat.trackingMode || 'quantity') !== 'serial') {
+      throw new AppError('僅序號追蹤材料可登錄序號')
+    }
+    const existing = await this.listMaterialSerials()
+    const serial = assertSerialUniqueInOrg({
+      serial: input.serialNumber,
+      existingSerials: existing.map((s) => s.serialNumber),
+    })
+    const locationId =
+      input.locationId || (await this.ensureDefaultWarehouse(actor))
+    const unitCost = roundMoney(Number(input.unitCost) || 0, 4)
+    const { data, error } = await sb()
+      .from('material_serials')
+      .insert({
+        material_id: requireUuid(mat.id, '材料'),
+        serial_number: serial,
+        status: 'in_stock',
+        unit_cost: unitCost,
+        location_id: requireUuid(locationId, '庫位'),
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, material_id, serial_number, status, unit_cost, location_id, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登錄序號'))
+    await this.upsertStockBalanceDelta({
+      materialId: mat.id,
+      locationId,
+      delta: 1,
+    })
+    const { error: updError } = await sb()
+      .from('materials')
+      .update({
+        qty: roundMoney(mat.qty + 1, 4),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', mat.id)
+    if (updError) throw new AppError(toUserMessage(updError, '無法更新庫存'))
+    await this.appendStockMovement(actor, {
+      movementType: 'inbound',
+      materialId: mat.id,
+      materialName: mat.name,
+      qty: 1,
+      unitCost,
+      toLocationId: locationId,
+      note: `序號 ${serial}`,
+      clientOperationId: `serial-in-${String(data.id)}`,
+    })
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      materialId: String(data.material_id),
+      serialNumber: String(data.serial_number),
+      status: data.status as MaterialSerial['status'],
+      unitCost: Number(data.unit_cost),
+      locationId: (data.location_id as string | null) ?? null,
+      createdAt: String(data.created_at),
+      createdBy: String(data.created_by ?? ''),
+    }
+  },
+
+  convertMaterialQty(
+    units: MaterialUnit[],
+    qty: number,
+    fromCode: string,
+    toCode: string,
+  ): number {
+    const from = units.find((u) => u.code === fromCode)
+    const to = units.find((u) => u.code === toCode)
+    if (!from || !to) throw new AppError('找不到單位設定')
+    return convertMaterialQty({
+      qty,
+      fromFactorToBase: from.factorToBase,
+      toFactorToBase: to.factorToBase,
     })
   },
 
@@ -3904,7 +4095,12 @@ export const supabaseRepos = {
 
   async createMaterial(
     actor: AppUser,
-    input: { name: string; unit: string },
+    input: {
+      name: string
+      unit: string
+      sku?: string
+      trackingMode?: MaterialStock['trackingMode']
+    },
   ): Promise<MaterialStock> {
     assertPermission(actor.role, PERMISSIONS.INVENTORY_INBOUND, {
       financeAuthorized: actor.financeAuthorized,
@@ -3912,6 +4108,12 @@ export const supabaseRepos = {
     const name = input.name.trim()
     const unit = input.unit.trim() || '式'
     if (!name) throw new AppError('請填寫材料名稱')
+    const existing = await this.listMaterials(actor)
+    const sku = assertSkuUniqueInOrg({
+      sku: input.sku || name.slice(0, 12),
+      existingSkus: existing.map((m) => m.sku || '').filter(Boolean),
+    })
+    const trackingMode = input.trackingMode || 'quantity'
     const { data, error } = await sb()
       .from('materials')
       .insert({
@@ -3920,10 +4122,22 @@ export const supabaseRepos = {
         unit,
         qty: 0,
         unit_cost: 0,
+        sku,
+        tracking_mode: trackingMode,
+        base_unit_code: unit,
       })
-      .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
+      .select(
+        'id, organization_id, name, unit, qty, unit_cost, sku, tracking_mode, base_unit_code, updated_at',
+      )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法建立材料'))
+    await sb().from('material_units').insert({
+      material_id: data.id,
+      code: unit,
+      label: unit,
+      factor_to_base: 1,
+      is_base: true,
+    })
     return {
       id: String(data.id),
       organizationId: String(data.organization_id),
@@ -3931,6 +4145,14 @@ export const supabaseRepos = {
       unit: String(data.unit),
       qty: Number(data.qty),
       unitCost: Number(data.unit_cost),
+      sku: data.sku ? String(data.sku) : sku,
+      trackingMode:
+        (data.tracking_mode as MaterialStock['trackingMode']) || trackingMode,
+      baseUnitCode: data.base_unit_code
+        ? String(data.base_unit_code)
+        : unit,
+      reservedQty: 0,
+      availableQty: 0,
       updatedAt: String(data.updated_at),
     }
   },
