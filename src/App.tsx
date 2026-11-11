@@ -18,6 +18,7 @@ import { MorePage } from '@/pages/MorePage'
 import { NotificationsPage } from '@/pages/NotificationsPage'
 import { PhotosPage } from '@/pages/PhotosPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { LocationCheckinPage } from '@/pages/LocationCheckinPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { PurchasesPage } from '@/pages/PurchasesPage'
 import { ReportsPage } from '@/pages/ReportsPage'
@@ -67,6 +68,7 @@ export default function App() {
             <Route path="/photos" element={<Protected><PhotosPage /></Protected>} />
             <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
             <Route path="/profile" element={<Protected><ProfilePage /></Protected>} />
+            <Route path="/location-checkin" element={<Protected><LocationCheckinPage /></Protected>} />
             <Route path="/reports" element={<Protected><ReportsPage /></Protected>} />
             <Route path="/audit" element={<Protected><AuditPage /></Protected>} />
             {/* Advanced ERP: kept for code, hidden in V1.0 navigation */}

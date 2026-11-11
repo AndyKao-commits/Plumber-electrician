@@ -2,9 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   assertAccountStatus,
   normalizeProfileFields,
+  normalizeProfileName,
 } from './profileFields'
 
 describe('profile fields', () => {
+  it('normalizes name', () => {
+    expect(normalizeProfileName(' 阿澤師傅 ')).toBe('阿澤師傅')
+    expect(() => normalizeProfileName('')).toThrow(/姓名/)
+  })
+
   it('normalizes optional dates and trims', () => {
     expect(
       normalizeProfileFields({

@@ -944,7 +944,11 @@ export interface TeamPresence {
   clockOutAt?: string | null
 }
 
-export type LocationCheckinSource = 'manual' | 'line_location' | 'line_site'
+export type LocationCheckinSource =
+  | 'manual'
+  | 'line_location'
+  | 'line_site'
+  | 'web_gps'
 
 export interface LocationCheckin {
   id: string

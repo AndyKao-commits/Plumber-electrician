@@ -3676,7 +3676,7 @@ create table if not exists public.location_checkins (
   user_id uuid not null references public.profiles (id) on delete cascade,
   recorded_at timestamptz not null default now(),
   source text not null default 'manual'
-    check (source in ('manual', 'line_location', 'line_site')),
+    check (source in ('manual', 'line_location', 'line_site', 'web_gps')),
   site_id uuid references public.sites (id) on delete set null,
   label text,
   address text,
@@ -3749,4 +3749,31 @@ create trigger trg_set_org_location_checkins
 
 comment on table public.location_checkins is
   '到點打卡／足跡：使用者主動紀錄時間與位置；不影響薪資與上下班狀態';
+
+-- Profile column grants + web_gps source (20261111_profile_grants_web_gps.sql)
+
+revoke update on table public.profiles from authenticated, anon;
+grant update (
+  name,
+  email,
+  phone,
+  line_user_id,
+  nickname,
+  birth_date,
+  job_title,
+  hired_at,
+  account_status,
+  profile_notes
+) on table public.profiles to authenticated;
+
+alter table public.location_checkins
+  drop constraint if exists location_checkins_source_check;
+
+alter table public.location_checkins
+  add constraint location_checkins_source_check
+  check (source in ('manual', 'line_location', 'line_site', 'web_gps'));
+
+-- Keep create-table source list in sync for fresh installs
+alter table public.location_checkins
+  alter column source set default 'manual';
 

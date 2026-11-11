@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useLocation } from 'react-router-dom'
 import { PRODUCT, ROLES } from '@/domain/rules'
 import { useUser } from '@/hooks/useUser'
 import { isSupabaseConfigured, supabaseUrl } from '@/lib/supabase'
@@ -28,12 +28,22 @@ export function LoginPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [organizationName, setOrganizationName] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
+  const location = useLocation()
+  const redirectTo =
+    typeof (location.state as { from?: unknown } | null)?.from === 'string'
+      ? String((location.state as { from: string }).from)
+      : '/'
 
   if (!isLoading && user) {
     const pendingLineBind =
       typeof sessionStorage !== 'undefined' &&
       Boolean(sessionStorage.getItem('line_bind_pending_user_id'))
-    return <Navigate to={pendingLineBind ? '/line-bind-callback' : '/'} replace />
+    return (
+      <Navigate
+        to={pendingLineBind ? '/line-bind-callback' : redirectTo || '/'}
+        replace
+      />
+    )
   }
 
   async function onPasswordLogin(event: FormEvent) {

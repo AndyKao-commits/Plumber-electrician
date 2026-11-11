@@ -13,6 +13,7 @@ export function ProfilePage() {
   const queryClient = useQueryClient()
   const isBoss = user?.role === 'boss'
 
+  const [name, setName] = useState('')
   const [nickname, setNickname] = useState('')
   const [birthDate, setBirthDate] = useState('')
   const [jobTitle, setJobTitle] = useState('')
@@ -32,6 +33,7 @@ export function ProfilePage() {
 
   useEffect(() => {
     if (!user) return
+    setName(user.name ?? '')
     setNickname(user.nickname ?? '')
     setBirthDate(user.birthDate ?? '')
     setJobTitle(user.jobTitle ?? '')
@@ -43,6 +45,7 @@ export function ProfilePage() {
     mutationFn: async () => {
       if (!user) throw new Error('尚未登入')
       const input = {
+        name,
         nickname,
         birthDate: birthDate || null,
         jobTitle,
@@ -104,7 +107,12 @@ export function ProfilePage() {
       <form className="panel stack" onSubmit={(e) => void onSubmit(e)}>
         <div className="field">
           <label htmlFor="pf-name">姓名</label>
-          <input id="pf-name" value={user.name} disabled />
+          <input
+            id="pf-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
         </div>
         <div className="field">
           <label htmlFor="pf-nick">暱稱</label>

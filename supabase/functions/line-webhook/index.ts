@@ -435,11 +435,14 @@ async function handlePostback(
     await touchDraft(admin, draft.id, { current_step: 'await_location' })
     return [
       flexMenu({
-        altText: '請分享目前位置',
+        altText: '開啟網站紀錄 GPS',
         eyebrow: '紀錄地點',
         title: '分享目前位置',
-        body: '請用 LINE「分享位置」傳給我（不做背景定位）。',
-        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        body: '請開啟網站，會自動取得 GPS 並顯示「地點紀錄完成」。',
+        buttons: [
+          { label: '開啟網站定位', uri: locationWebUri(), style: 'primary' },
+          { label: '取消', data: 'a=cancel', style: 'secondary' },
+        ],
       }),
     ]
   }
@@ -1807,15 +1810,19 @@ async function handleBind(
 
 // ----- Location footprints (到點打卡／足跡) -----
 
+function locationWebUri(): string {
+  return `${appBaseUrl()}/location-checkin`
+}
+
 async function promptLocationMethod(_draft: DraftRow): Promise<LineMessage[]> {
   return [
     flexMenu({
       altText: '要如何紀錄目前位置？',
       eyebrow: '紀錄地點',
       title: '要如何紀錄目前位置？',
-      body: '外面跑動時可隨手留下足跡；不會自動上下班，也不做背景定位。',
+      body: '外面跑動時可隨手留下足跡；不會自動上下班，也不做背景定位。點「分享目前位置」會開啟網站自動寫入 GPS。',
       buttons: [
-        { label: '分享目前位置', data: 'a=loc_share', style: 'primary' },
+        { label: '分享目前位置', uri: locationWebUri(), style: 'primary' },
         { label: '選擇工地', data: 'a=loc_site', style: 'secondary' },
         { label: '取消', data: 'a=cancel', style: 'secondary' },
       ],
@@ -1833,11 +1840,14 @@ async function handleLocationText(
     await touchDraft(admin, draft.id, { current_step: 'await_location' })
     return [
       flexMenu({
-        altText: '請分享目前位置',
+        altText: '開啟網站紀錄 GPS',
         eyebrow: '紀錄地點',
         title: '分享目前位置',
-        body: '請用 LINE「分享位置」傳給我。',
-        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        body: '請開啟網站，會自動取得 GPS 並顯示「地點紀錄完成」。',
+        buttons: [
+          { label: '開啟網站定位', uri: locationWebUri(), style: 'primary' },
+          { label: '取消', data: 'a=cancel', style: 'secondary' },
+        ],
       }),
     ]
   }
@@ -1930,7 +1940,7 @@ async function promptLocationSites(
         title: '沒有可用工地',
         body: '請改用「分享目前位置」，或先到網站建立工地。',
         buttons: [
-          { label: '分享目前位置', data: 'a=loc_share', style: 'primary' },
+          { label: '分享目前位置', uri: locationWebUri(), style: 'primary' },
           { label: '取消', data: 'a=cancel', style: 'secondary' },
         ],
       }),

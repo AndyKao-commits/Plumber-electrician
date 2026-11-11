@@ -33,6 +33,7 @@ import { assertCanAccessSite, filterSitesByAccess } from '@/domain/siteAccess'
 import {
   assertAccountStatus,
   normalizeProfileFields,
+  normalizeProfileName,
 } from '@/domain/profileFields'
 import {
   assertBillingDocumentEditable,
@@ -1021,6 +1022,7 @@ export const supabaseRepos = {
     actor: AppUser,
     targetUserId: string,
     input: {
+      name?: string | null
       nickname?: string | null
       birthDate?: string | null
       jobTitle?: string | null
@@ -1041,6 +1043,9 @@ export const supabaseRepos = {
       job_title: fields.jobTitle,
       hired_at: fields.hiredAt,
       profile_notes: fields.notes,
+    }
+    if (input.name != null) {
+      payload.name = normalizeProfileName(input.name)
     }
     if (input.accountStatus != null) {
       if (actor.role !== 'boss') throw new AppError('僅老闆可停用帳號')
@@ -4488,16 +4493,18 @@ export const supabaseRepos = {
       latitude?: number | null
       longitude?: number | null
       note?: string | null
+      source?: LocationCheckin['source']
     },
   ): Promise<LocationCheckin> {
     const open = await this.getOpenAttendance(actor.id)
+    const source = input.source ?? 'manual'
     const { data, error } = await sb()
       .from('location_checkins')
       .insert({
         organization_id: actor.organizationId,
         user_id: actor.id,
         recorded_at: new Date().toISOString(),
-        source: 'manual',
+        source,
         site_id: input.siteId || null,
         label: input.label?.trim() || null,
         address: input.address?.trim() || null,

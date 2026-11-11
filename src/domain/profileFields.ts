@@ -9,6 +9,13 @@ export function assertAccountStatus(
   throw new Error('帳號狀態僅能為啟用或停用')
 }
 
+export function normalizeProfileName(value: string | null | undefined): string {
+  const name = value?.trim() || ''
+  if (!name) throw new Error('姓名不可空白')
+  if (name.length > 40) throw new Error('姓名過長（最多 40 字）')
+  return name
+}
+
 export function normalizeProfileFields(input: {
   nickname?: string | null
   birthDate?: string | null
