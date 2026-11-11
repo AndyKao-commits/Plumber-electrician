@@ -1,20 +1,40 @@
 import { Link } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { FEATURE_FLAGS, HOME_SHORTCUTS, PRODUCT } from '@/domain/rules'
 import { computeCaseFinance } from '@/domain/fieldFinance'
 import { useAttendance } from '@/hooks/useAttendance'
 import { useFieldFinance } from '@/hooks/useFieldFinance'
-import { useNotices } from '@/hooks/useNotices'
+import { useNotices, noticeKeys } from '@/hooks/useNotices'
 import { useQuotes } from '@/hooks/useQuotes'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
+import { isFormalMode } from '@/lib/dataMode'
 import { formatTaipei } from '@/lib/time'
 import { localDb } from '@/lib/localDb'
-import { useMemo } from 'react'
+import { supabaseRepos } from '@/lib/supabaseRepos'
+import { useEffect, useMemo, useRef } from 'react'
 
 export function HomePage() {
   const { user } = useUser()
   const { sites } = useSites()
   const { todos, unreadCount } = useNotices(user?.id)
+  const queryClient = useQueryClient()
+  const warrantyChecked = useRef(false)
+
+  useEffect(() => {
+    if (!user || !isFormalMode() || warrantyChecked.current) return
+    warrantyChecked.current = true
+    void supabaseRepos
+      .ensureWarrantyNotices(user, 30)
+      .then((n) => {
+        if (n > 0) {
+          void queryClient.invalidateQueries({ queryKey: noticeKeys.list(user.id) })
+        }
+      })
+      .catch(() => {
+        /* non-blocking */
+      })
+  }, [queryClient, user])
   const { quotes } = useQuotes(user?.id)
   const { expenses, receipts } = useFieldFinance(user?.id)
   const {

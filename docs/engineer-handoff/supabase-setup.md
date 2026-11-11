@@ -136,6 +136,12 @@ SQL：`20261110_line_bind_code_fix_random.sql`
 4. 僅「客戶已接受」計入有效合約；Admin／老闆可匯出與標記接受
 5. LINE 傳「報價」可查看案件與匯出連結（不在 LINE 編輯）
 
+## 4e. 施工日誌與保固提醒
+
+1. SQL：`supabase/migrations/20261110_daily_logs_and_warranty.sql`
+2. 工地詳情：彙整當日出勤／回報／照片／缺失 → 草稿 → 發布（版本不可改）
+3. 保固日可編輯；首頁載入時對 30 天內到期工地建立站內待辦
+
 ## 5. 驗證
 
 - Production：登入頁顯示「Supabase 正式模式」
