@@ -1,8 +1,6 @@
 import { useAnalytics } from '@/hooks/useAnalytics'
-import { useUser } from '@/hooks/useUser'
 
 export function AnalyticsPage() {
-  const { user } = useUser()
   const { stats, isLoading, error, exportCsv } = useAnalytics()
 
   function onExport() {
@@ -27,11 +25,7 @@ export function AnalyticsPage() {
       <section className="panel stack">
         <div className="row between">
           <div>
-            <strong>營運統計（ANA-001）</strong>
-            <p className="muted" style={{ margin: '4px 0 0' }}>
-              只統計已確認／已開立事件；成本依權限遮罩；不認列收入。
-              {user ? `（${user.role}）` : ''}
-            </p>
+            <strong>營運統計</strong>
           </div>
           <button
             type="button"
@@ -67,8 +61,6 @@ export function AnalyticsPage() {
             <br />
             客訴：待處理 {stats.openComplaints} · 已升級{' '}
             {stats.escalatedComplaints}
-            <br />
-            <span className="muted">認列收入：政策未決（不顯示）</span>
           </p>
         ) : null}
       </section>

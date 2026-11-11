@@ -1,8 +1,7 @@
 import { Link } from 'react-router-dom'
-import { MORE_MENU, PRODUCT } from '@/domain/rules'
+import { MORE_MENU } from '@/domain/rules'
 import { useNotices } from '@/hooks/useNotices'
 import { useUser } from '@/hooks/useUser'
-import { dataModeLabel } from '@/lib/dataMode'
 
 export function MorePage() {
   const { user } = useUser()
@@ -25,16 +24,13 @@ export function MorePage() {
           <div>
             <strong>更多</strong>
             <p className="muted" style={{ margin: '4px 0 0' }}>
-              {PRODUCT.name} · {dataModeLabel()}
+              待辦 {todos.length} 件
             </p>
           </div>
           <Link to="/notifications" className="badge steel">
             通知 {unreadCount}
           </Link>
         </div>
-        <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-          待辦 {todos.length} 件 · 主要現場操作請用下方導覽。
-        </p>
       </section>
 
       {groups.map((group) => (

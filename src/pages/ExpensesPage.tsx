@@ -113,10 +113,7 @@ export function ExpensesPage() {
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <strong>支出／收款／代墊（V1.0）</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          員工回報支出／收款 → 老闆審核。代墊可先登記，老闆批量核銷後轉成已確認支出。
-        </p>
+        <strong>支出／收款／代墊</strong>
       </section>
 
       <section className="panel stack">
@@ -284,9 +281,6 @@ export function ExpensesPage() {
             })
           }}
         >
-          <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-            工地／雜項與上方「回報支出」共用；雜項收款同樣可填地點。
-          </p>
           {isMisc ? (
             <div className="field">
               <label htmlFor="rc-loc">地點（自行輸入）</label>
@@ -346,9 +340,6 @@ export function ExpensesPage() {
 
       <section className="panel stack">
         <strong>登記代墊</strong>
-        <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-          先自己墊付的材料／雜支，登記後等老闆核銷。工地選項與上方支出共用。
-        </p>
         <form
           className="stack"
           onSubmit={(e) => {

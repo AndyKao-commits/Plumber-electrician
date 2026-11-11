@@ -144,7 +144,7 @@ export function PaymentsPanel({
     try {
       await createCustomerAdvance({ amount: Number(advAmount) || 0 })
       setAdvAmount('')
-      onSuccess('已登錄預收款（獨立帳；≠ 請款）')
+      onSuccess('已登錄預收款')
     } catch (err) {
       onError(err instanceof Error ? err.message : '預收失敗')
     }
@@ -167,10 +167,7 @@ export function PaymentsPanel({
 
   return (
     <section className="panel stack">
-      <strong>收款／預收抵充（FIN-004）</strong>
-      <p className="muted" style={{ margin: 0 }}>
-        收款＝實際現金；分配清償請款；預收抵充不重複記現金。皆≠會計收入。
-      </p>
+      <strong>收款／預收抵充</strong>
       {quote.workflowStatus === 'accepted' ? (
         <p style={{ margin: 0 }}>
           已開立請款 NT${summary.billed.toLocaleString()}

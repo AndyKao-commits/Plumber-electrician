@@ -10,7 +10,6 @@ import { useAttendance } from '@/hooks/useAttendance'
 import { usePhotos } from '@/hooks/usePhotos'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
-import { dataModeLabel } from '@/lib/dataMode'
 
 export function PhotosPage() {
   const [params] = useSearchParams()
@@ -90,17 +89,9 @@ export function PhotosPage() {
     <div className="stack fade-up">
       <section className="panel stack">
         <div className="row between">
-          <div>
-            <strong>
-              {scopedSite ? `${scopedSite.name} · 工地照片` : '施工照片'}
-            </strong>
-            <p className="muted" style={{ margin: '4px 0 0' }}>
-              {scopedSite
-                ? '僅顯示此工地已歸檔照片；上傳也會直接歸入本工地。'
-                : '上傳時請選擇工地與分類；LINE 未指定工地的照片會進待處理。'}
-            </p>
-          </div>
-          <span className="badge steel">{dataModeLabel()}</span>
+          <strong>
+            {scopedSite ? `${scopedSite.name} · 工地照片` : '施工照片'}
+          </strong>
         </div>
         {scopedSite ? (
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>

@@ -119,10 +119,7 @@ export function RepairsPage() {
       <section className="panel stack">
         <div className="row between">
           <div>
-            <strong>維修案件（REP-001）</strong>
-            <p className="muted" style={{ margin: '4px 0 0' }}>
-              只需問題描述可建立；派工／到場歷史完整保留；到場≠出勤。
-            </p>
+            <strong>維修案件</strong>
           </div>
           <button
             type="button"
@@ -333,10 +330,7 @@ export function RepairsPage() {
               })()
             }}
           >
-            <strong>維修材料耗用（REP-002）</strong>
-            <p className="muted" style={{ margin: 0 }}>
-              共用庫存流水帳；禁止負庫存；免費／保固仍記成本。可轉維修報價（無需工程）。
-            </p>
+            <strong>維修材料耗用</strong>
             <div className="grid-2">
               <div className="field">
                 <label>材料</label>
@@ -447,7 +441,7 @@ export function RepairsPage() {
               })()
             }}
           >
-            <strong>保固主檔（WAR-001）</strong>
+            <strong>保固主檔</strong>
             <div className="field">
               <label>標題</label>
               <input

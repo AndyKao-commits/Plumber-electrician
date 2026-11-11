@@ -47,9 +47,6 @@ export function MySalaryPage() {
         <div className="row between">
           <div>
             <strong>我的薪資與出勤</strong>
-            <p className="muted" style={{ margin: '4px 0 0' }}>
-              僅顯示自己的資料；待確認不會混入已確認累積。
-            </p>
           </div>
           <Link className="btn btn-ghost" to="/profile">
             個人資料

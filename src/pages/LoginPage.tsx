@@ -6,7 +6,7 @@ import {
 } from '@/components/RequireAuth'
 import { PRODUCT, ROLES } from '@/domain/rules'
 import { useUser } from '@/hooks/useUser'
-import { isSupabaseConfigured, supabaseUrl } from '@/lib/supabase'
+import { isSupabaseConfigured } from '@/lib/supabase'
 
 type AuthTab = 'login' | 'signup'
 
@@ -86,32 +86,22 @@ export function LoginPage() {
     <div className="login-page">
       <div className="login-card stack fade-up">
         <section className="panel hero-panel stack">
-          <div className="badge">水電工程行</div>
           <h1>{PRODUCT.name}</h1>
-          <p className="lead">
-            一鍵打卡、工地紀錄、採購與系統內通知。全員工程權限相同，敏感財務另保護。
-          </p>
         </section>
 
         <section className="panel stack">
-          <div className="row between">
-            <strong>
-              {isDemoMode
-                ? '選擇身分開始'
-                : tab === 'login'
-                  ? 'Email／密碼登入'
-                  : '建立帳號'}
-            </strong>
-            <span className="badge steel">
-              {isDemoMode ? '本機示範模式' : 'Supabase 正式模式'}
-            </span>
-          </div>
-          <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-            專案：{supabaseUrl?.replace(/^https:\/\//, '')}
+          <strong>
             {isDemoMode
-              ? ' · 尚未設定 anon key，暫用本機示範帳號（正式資料不會寫入）'
-              : ' · 已連線；資料僅存於 Supabase'}
-          </p>
+              ? '選擇身分開始'
+              : tab === 'login'
+                ? 'Email／密碼登入'
+                : '建立帳號'}
+          </strong>
+          {isDemoMode ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
+              本機示範（未連線正式資料庫）
+            </p>
+          ) : null}
 
           {!isDemoMode && isSupabaseConfigured ? (
             <>

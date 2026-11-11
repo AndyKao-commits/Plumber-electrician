@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { FEATURE_FLAGS, PRODUCT } from '@/domain/rules'
 import { useAttendance } from '@/hooks/useAttendance'
 import { useFieldFinance } from '@/hooks/useFieldFinance'
 import { useNotices, noticeKeys } from '@/hooks/useNotices'
@@ -70,8 +69,7 @@ export function HomePage() {
       <section className="panel hero-panel stack">
         <div className="row between">
           <div>
-            <div className="badge">V1.0</div>
-            <p className="muted" style={{ margin: '10px 0 0', fontSize: '0.9rem' }}>
+            <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
               目前時間
             </p>
             <h2 style={{ margin: '4px 0', fontSize: '2.4rem', letterSpacing: '0.02em' }}>
@@ -99,9 +97,7 @@ export function HomePage() {
                 目前工地：{currentSiteName ?? '尚未指定'}
               </p>
             </>
-          ) : (
-            <p className="muted">{PRODUCT.tagline}</p>
-          )}
+          ) : null}
         </div>
 
         {openShift ? (
@@ -123,12 +119,6 @@ export function HomePage() {
             {isClockingIn ? '上班打卡中…' : '一鍵上班'}
           </button>
         )}
-
-        <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-          {FEATURE_FLAGS.lineProactivePush
-            ? 'LINE 推播啟用中'
-            : '不主動推播 LINE。現場用選單，審核在網站。'}
-        </p>
       </section>
 
       {openShift && !openShift.siteId ? (

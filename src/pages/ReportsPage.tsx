@@ -5,7 +5,6 @@ import { usePhotos } from '@/hooks/usePhotos'
 import { useReports } from '@/hooks/useReports'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
-import { dataModeLabel } from '@/lib/dataMode'
 
 export function ReportsPage() {
   const [params] = useSearchParams()
@@ -59,15 +58,7 @@ export function ReportsPage() {
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <div className="row between">
-          <div>
-            <strong>施工回報</strong>
-            <p className="muted" style={{ margin: '4px 0 0' }}>
-              文字或照片擇一即可；可先在 LINE／施工照片上傳，再於此歸檔。
-            </p>
-          </div>
-          <span className="badge steel">{dataModeLabel()}</span>
-        </div>
+        <strong>施工回報</strong>
       </section>
 
       <section className="panel stack">

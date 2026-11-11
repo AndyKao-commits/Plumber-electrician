@@ -33,10 +33,7 @@ export function AuditPage() {
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <strong>操作紀錄（V1.0）</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          支出／收款審核、待辦指派、案件與 LINE 綁定等重要操作留痕。
-        </p>
+        <strong>操作紀錄</strong>
       </section>
       <section className="panel stack">
         {logs.length === 0 ? <div className="empty">尚無紀錄</div> : null}

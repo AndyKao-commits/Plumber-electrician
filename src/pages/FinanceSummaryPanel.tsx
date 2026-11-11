@@ -97,7 +97,7 @@ export function FinanceSummaryPanel({
       setDescription('')
       setAmount('')
       setWarrantyFree(false)
-      onSuccess('已登錄已確認營運成本（≠ 會計收入／≠ 薪資認列）')
+      onSuccess('已登錄營運成本')
     } catch (err) {
       onError(err instanceof Error ? err.message : '登錄成本失敗')
     }
@@ -105,10 +105,7 @@ export function FinanceSummaryPanel({
 
   return (
     <section className="panel stack">
-      <strong>工程／維修財務摘要（FIN-006）</strong>
-      <p className="muted" style={{ margin: 0 }}>
-        帳款、現金、成本分開。請款／收款不是認列收入；合約差額不可冒充已實現毛利。
-      </p>
+      <strong>工程／維修財務摘要</strong>
 
       <p style={{ margin: 0 }}>
         有效合約 NT${summary.contract.toLocaleString()}
@@ -116,8 +113,6 @@ export function FinanceSummaryPanel({
         淨應收（請款−折讓）NT${summary.netReceivable.toLocaleString()}
         <br />
         淨現金（收款−退款）NT${summary.netCash.toLocaleString()}
-        <br />
-        認列收入：政策未決（不顯示／不推估）
       </p>
 
       {canSeeCost ? (
@@ -125,9 +120,8 @@ export function FinanceSummaryPanel({
           已確認營運成本 NT$
           {(summary.confirmedCost ?? 0).toLocaleString()}
           <br />
-          示意差額（合約−成本）NT$
+          差額（合約−成本）NT$
           {(summary.indicativeMarginVsContract ?? 0).toLocaleString()}
-          <span className="muted">（非已實現利潤）</span>
           {summary.warrantyFreeCase ? (
             <>
               <br />
@@ -137,7 +131,7 @@ export function FinanceSummaryPanel({
         </p>
       ) : (
         <p className="muted" style={{ margin: 0 }}>
-          成本／毛利需 finance.cost.read（Admin 預設不可見）
+          無權限查看成本
         </p>
       )}
 

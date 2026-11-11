@@ -124,10 +124,7 @@ export function RefundsPanel({
 
   return (
     <section className="panel stack">
-      <strong>折讓／退款與餘額核對（FIN-005）</strong>
-      <p className="muted" style={{ margin: 0 }}>
-        折讓≠退款；退款保留原收款。合約差額不可冒充已實現毛利。
-      </p>
+      <strong>折讓／退款與餘額核對</strong>
       {quote.workflowStatus === 'accepted' ? (
         <p style={{ margin: 0 }}>
           合約 NT${bal.contract.toLocaleString()}

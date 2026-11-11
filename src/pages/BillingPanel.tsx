@@ -97,7 +97,7 @@ export function BillingPanel({
     }
     try {
       await createBillingDocument({ milestoneId: selectedMilestoneId })
-      onSuccess('已建立請款單草稿（≠ 收款、≠ 發票）')
+      onSuccess('已建立請款單草稿')
     } catch (err) {
       onError(err instanceof Error ? err.message : '建立請款單失敗')
     }
@@ -105,10 +105,7 @@ export function BillingPanel({
 
   return (
     <section className="panel stack">
-      <strong>分期請款（FIN-003）</strong>
-      <p className="muted" style={{ margin: 0 }}>
-        請款單 ≠ 法定統一發票 ≠ 收款 ≠ 會計收入。同一節點僅能開立一張正式請款單。
-      </p>
+      <strong>分期請款</strong>
       {quote.workflowStatus === 'accepted' ? (
         <p style={{ margin: 0 }}>
           有效合約 NT${rem.contract.toLocaleString()}

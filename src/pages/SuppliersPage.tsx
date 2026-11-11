@@ -47,7 +47,7 @@ export function SuppliersPage() {
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <strong>供應商應付與信用額度（SUP-001）</strong>
+        <strong>供應商應付與信用額度</strong>
         <p className="muted" style={{ margin: 0 }}>
           未付款應付與未收貨承諾分開加總、不重複計算；未設定額度時不自行推測。
         </p>
