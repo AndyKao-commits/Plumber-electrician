@@ -1,6 +1,10 @@
 import { assertCanApprovePurchase } from '@/domain/approvals'
 import { assertCanApproveAttendanceCorrection } from '@/domain/permissions'
 import {
+  assertSiteStatus,
+  assertSiteStatusTransition,
+} from '@/domain/siteStatus'
+import {
   assertEmergencyReserveAllowed,
   sumOccupiedQuota,
   type EmergencyLimitEvent,
@@ -958,9 +962,31 @@ export const localDb = {
   },
 
   upsertSite(site: SiteProject) {
-    const sites = this.getSites().filter((s) => s.id !== site.id)
+    const sites = read(KEYS.sites, emptySites).filter((s) => s.id !== site.id)
     sites.unshift(site)
     write(KEYS.sites, sites)
+  },
+
+  updateSiteStatus(
+    actor: { id: string; role: AppUser['role'] },
+    siteId: string,
+    status: SiteProject['status'],
+  ): SiteProject {
+    if (actor.role !== 'boss') throw new Error('僅老闆可結案／重開工地')
+    const next = assertSiteStatus(status)
+    const all = read(KEYS.sites, emptySites)
+    const idx = all.findIndex((s) => s.id === siteId)
+    if (idx < 0) throw new Error('找不到工地')
+    assertSiteStatusTransition({ from: all[idx].status, to: next })
+    const updated: SiteProject = {
+      ...all[idx],
+      status: next,
+      updatedAt: new Date().toISOString(),
+      version: (all[idx].version || 1) + 1,
+    }
+    all[idx] = updated
+    write(KEYS.sites, all)
+    return updated
   },
 
   getAttendance(): AttendanceRecord[] {

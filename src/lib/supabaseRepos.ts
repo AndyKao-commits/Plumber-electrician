@@ -31,6 +31,10 @@ import {
 import { assertPhotoType } from '@/domain/photoTypes'
 import { assertCanAccessSite, filterSitesByAccess } from '@/domain/siteAccess'
 import {
+  assertSiteStatus,
+  assertSiteStatusTransition,
+} from '@/domain/siteStatus'
+import {
   assertAccountStatus,
   normalizeProfileFields,
   normalizeProfileName,
@@ -1307,6 +1311,39 @@ export const supabaseRepos = {
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法更新保固日期'))
+    const site = mapSite(data)
+    assertSameOrganization(actor.organizationId, site.organizationId)
+    return site
+  },
+
+  async updateSiteStatus(
+    actor: AppUser,
+    siteId: string,
+    status: SiteProject['status'],
+  ): Promise<SiteProject> {
+    if (actor.role !== 'boss') {
+      throw new AppError('僅老闆可結案／重開工地')
+    }
+    assertPermission(actor.role, PERMISSIONS.SITE_WRITE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const sid = requireUuid(siteId, '工地')
+    const current = await this.getSite(sid, actor)
+    if (!current) throw new AppError('找不到工地')
+    const next = assertSiteStatus(status)
+    assertSiteStatusTransition({ from: current.status, to: next })
+    const { data, error } = await sb()
+      .from('sites')
+      .update({
+        status: next,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', sid)
+      .select(
+        'id, organization_id, name, kind, status, address, customer_name, notes, warranty_until, created_at, updated_at, version',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新工地狀態'))
     const site = mapSite(data)
     assertSameOrganization(actor.organizationId, site.organizationId)
     return site

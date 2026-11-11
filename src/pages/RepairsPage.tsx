@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { REPAIR_STATUS_LABELS } from '@/domain/repairs'
+import { selectOpenSites } from '@/domain/siteStatus'
 import { WARRANTY_ASSESSMENT_LABELS } from '@/domain/warranty'
 import type {
   RepairCaseStatus,
@@ -15,6 +16,7 @@ import { Link } from 'react-router-dom'
 export function RepairsPage() {
   const { user } = useUser()
   const { sites } = useSites()
+  const openSites = useMemo(() => selectOpenSites(sites), [sites])
   const { materials } = useInventory(user?.id)
   const {
     repairs,
@@ -156,7 +158,7 @@ export function RepairsPage() {
                   onChange={(e) => setSiteId(e.target.value)}
                 >
                   <option value="">不指定</option>
-                  {sites.map((s) => (
+                  {openSites.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                     </option>

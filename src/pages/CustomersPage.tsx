@@ -2,9 +2,11 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { customersSharingSite } from '@/domain/crm'
 import { useCustomerContacts, useCustomers } from '@/hooks/useCustomers'
+import { selectOpenSites } from '@/domain/siteStatus'
 import { useSites } from '@/hooks/useSites'
 export function CustomersPage() {
   const { sites } = useSites()
+  const openSites = useMemo(() => selectOpenSites(sites), [sites])
   const {
     customers,
     links,
@@ -259,7 +261,7 @@ export function CustomersPage() {
                   required
                 >
                   <option value="">—</option>
-                  {sites.map((s) => (
+                  {openSites.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                       {s.address ? `（${s.address}）` : ''}

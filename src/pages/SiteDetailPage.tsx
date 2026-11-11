@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { SITE_STATUS_LABELS } from '@/domain/siteStatus'
 import type { DefectSeverity } from '@/domain/types'
 import { useAttendance } from '@/hooks/useAttendance'
 import { useDailyLogs } from '@/hooks/useDailyLogs'
@@ -23,7 +24,12 @@ import { taipeiDateString } from '@/lib/time'
 export function SiteDetailPage() {
   const { siteId } = useParams()
   const { data: site, isLoading, isError, error } = useSite(siteId)
-  const { updateWarranty, isUpdatingWarranty } = useSites()
+  const {
+    updateWarranty,
+    isUpdatingWarranty,
+    updateSiteStatus,
+    isUpdatingStatus,
+  } = useSites()
   const { user, directory } = useUser()
   const queryClient = useQueryClient()
   const { openShift, assignSite, isAssigningSite } = useAttendance(user?.id)
@@ -140,7 +146,10 @@ export function SiteDetailPage() {
   }
 
   const canAssign =
-    Boolean(openShift) && openShift?.status === 'clocked_in' && openShift.siteId !== site.id
+    site.status !== 'closed' &&
+    Boolean(openShift) &&
+    openShift?.status === 'clocked_in' &&
+    openShift.siteId !== site.id
 
   return (
     <div className="stack fade-up">
@@ -148,16 +157,78 @@ export function SiteDetailPage() {
         <Link to="/sites" className="muted">
           ← 工地列表
         </Link>
-        <div className="badge">{site.kind === 'formal' ? '正式工程' : '臨時維修'}</div>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <span className="badge">
+            {site.kind === 'formal' ? '正式工程' : '臨時維修'}
+          </span>
+          <span className={`badge ${site.status === 'closed' ? '' : 'ok'}`}>
+            {SITE_STATUS_LABELS[site.status]}
+          </span>
+        </div>
         <h2 style={{ margin: 0, fontSize: '1.8rem' }}>{site.name}</h2>
         <p className="muted" style={{ margin: 0 }}>
           {[site.customerName, site.address].filter(Boolean).join(' · ') ||
             '尚未填寫客戶或地址'}
         </p>
+        {isBoss ? (
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            {site.status !== 'closed' ? (
+              <button
+                type="button"
+                className="btn btn-steel"
+                disabled={isUpdatingStatus}
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      '確定結案？結案後不會再出現在 LINE 選工地，網站可於「已結案」查看。',
+                    )
+                  ) {
+                    return
+                  }
+                  void updateSiteStatus({
+                    siteId: site.id,
+                    status: 'closed',
+                  }).catch((e) => window.alert((e as Error).message))
+                }}
+              >
+                {isUpdatingStatus ? '更新中…' : '結案'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-steel"
+                disabled={isUpdatingStatus}
+                onClick={() => {
+                  void updateSiteStatus({
+                    siteId: site.id,
+                    status: 'active',
+                  }).catch((e) => window.alert((e as Error).message))
+                }}
+              >
+                {isUpdatingStatus ? '更新中…' : '重開工程'}
+              </button>
+            )}
+            {site.status !== 'warranty' ? (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={isUpdatingStatus}
+                onClick={() => {
+                  void updateSiteStatus({
+                    siteId: site.id,
+                    status: 'warranty',
+                  }).catch((e) => window.alert((e as Error).message))
+                }}
+              >
+                標為保固中
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {formal ? (
           <div className="stack" style={{ gap: 8 }}>
             <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-              保固到期：{site.warrantyUntil || '未設定'}（到期前 30 天會產生站內待辦）
+              保固到期：{site.warrantyUntil || '未設定'}
             </p>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <input

@@ -8,6 +8,7 @@ import {
   QUOTE_WORKFLOW_LABELS,
 } from '@/domain/quoteWorkflow'
 import type { TaxMode } from '@/domain/types'
+import { selectOpenSites } from '@/domain/siteStatus'
 import { useQuotes } from '@/hooks/useQuotes'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
@@ -17,6 +18,7 @@ export function QuotesPage() {
   const navigate = useNavigate()
   const { user } = useUser()
   const { sites } = useSites()
+  const openSites = useMemo(() => selectOpenSites(sites), [sites])
   const {
     quotes,
     changeOrders,
@@ -303,7 +305,7 @@ export function QuotesPage() {
                   onChange={(e) => setRepairSiteId(e.target.value)}
                 >
                   <option value="">不指定</option>
-                  {sites.map((s) => (
+                  {openSites.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                     </option>
