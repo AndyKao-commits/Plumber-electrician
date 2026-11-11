@@ -12,6 +12,11 @@ import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  downloadBlob,
+  generateSitePhotosPdfBlob,
+  sitePhotosPdfFilename,
+} from '@/lib/sitePhotoExport'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { taipeiDateString } from '@/lib/time'
 
@@ -65,13 +70,13 @@ export function SiteDetailPage() {
     },
   })
 
-  const sitePhotos = useMemo(
-    () =>
-      photos
-        .filter((p) => p.siteId === siteId && p.status === 'linked')
-        .slice(0, 8),
+  const allSitePhotos = useMemo(
+    () => photos.filter((p) => p.siteId === siteId && p.status === 'linked'),
     [photos, siteId],
   )
+  const sitePhotos = useMemo(() => allSitePhotos.slice(0, 8), [allSitePhotos])
+  const [exportingPdf, setExportingPdf] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
 
   const membersQuery = useQuery({
     queryKey: ['site-members', siteId],
@@ -381,9 +386,43 @@ export function SiteDetailPage() {
       </section>
 
       <section className="panel stack">
-        <div className="row between">
-          <strong>施工照片</strong>
-          <Link to="/photos">管理</Link>
+        <div className="row between" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <strong>施工照片（{allSitePhotos.length}）</strong>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <Link className="btn btn-ghost" to={`/photos?siteId=${siteId}`}>
+              管理
+            </Link>
+            <button
+              type="button"
+              className="btn btn-steel"
+              disabled={exportingPdf || allSitePhotos.length === 0}
+              onClick={() => {
+                void (async () => {
+                  if (!site) return
+                  setExportingPdf(true)
+                  try {
+                    const withUrl = allSitePhotos.filter((p) => p.previewUrl)
+                    const blob = await generateSitePhotosPdfBlob({
+                      siteName: site.name,
+                      photos: withUrl.map((p) => ({
+                        previewUrl: p.previewUrl!,
+                        photoType: p.photoType,
+                        createdAt: p.createdAt,
+                        uploaderName: p.uploaderName,
+                      })),
+                    })
+                    downloadBlob(blob, sitePhotosPdfFilename(site.name))
+                  } catch (e) {
+                    window.alert((e as Error).message)
+                  } finally {
+                    setExportingPdf(false)
+                  }
+                })()
+              }}
+            >
+              {exportingPdf ? '匯出中…' : '匯出照片 PDF'}
+            </button>
+          </div>
         </div>
         {sitePhotos.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>尚無已歸檔照片</p>
@@ -391,22 +430,59 @@ export function SiteDetailPage() {
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
             {sitePhotos.map((photo) =>
               photo.previewUrl ? (
-                <img
+                <button
                   key={photo.id}
-                  src={photo.previewUrl}
-                  alt="工地照片"
-                  style={{
-                    width: 96,
-                    height: 96,
-                    objectFit: 'cover',
-                    borderRadius: 8,
-                  }}
-                />
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ padding: 0, border: 'none', background: 'transparent' }}
+                  onClick={() => setPreviewUrl(photo.previewUrl!)}
+                >
+                  <img
+                    src={photo.previewUrl}
+                    alt="工地照片"
+                    style={{
+                      width: 96,
+                      height: 96,
+                      objectFit: 'cover',
+                      borderRadius: 8,
+                      display: 'block',
+                    }}
+                  />
+                </button>
               ) : null,
             )}
           </div>
         )}
       </section>
+
+      {previewUrl ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPreviewUrl(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.82)',
+            zIndex: 80,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <img
+            src={previewUrl}
+            alt="預覽"
+            style={{
+              maxWidth: '100%',
+              maxHeight: '85vh',
+              objectFit: 'contain',
+              borderRadius: 8,
+            }}
+          />
+        </div>
+      ) : null}
 
       {(quotesQuery.data ?? []).length > 0 ? (
         <section className="panel stack">

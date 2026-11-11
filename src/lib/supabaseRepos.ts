@@ -1924,14 +1924,51 @@ export const supabaseRepos = {
       requesterId: String(current.user_id),
     })
 
-    // Keep original attendance row untouched; write effective hours on correction only.
+    const effectiveIn = String(current.proposed_clock_in_at)
+    const effectiveOut = (current.proposed_clock_out_at as string | null) ?? null
+    const effectiveSite =
+      (current.proposed_site_id as string | null) ?? null
+    const attendanceId = (current.attendance_id as string | null) ?? null
+
+    // Approve → overwrite linked attendance (or create one if 漏打補登).
+    if (attendanceId) {
+      const { error: attError } = await sb()
+        .from('attendance')
+        .update({
+          clock_in_at: effectiveIn,
+          clock_out_at: effectiveOut,
+          site_id: effectiveSite,
+          status: effectiveOut ? 'clocked_out' : 'clocked_in',
+        })
+        .eq('id', attendanceId)
+        .eq('organization_id', actor.organizationId)
+      if (attError) {
+        throw new AppError(toUserMessage(attError, '核准後無法覆蓋出勤'))
+      }
+    } else {
+      const { error: createError } = await sb()
+        .from('attendance')
+        .insert({
+          organization_id: actor.organizationId,
+          user_id: current.user_id,
+          clock_in_at: effectiveIn,
+          clock_out_at: effectiveOut,
+          site_id: effectiveSite,
+          status: effectiveOut ? 'clocked_out' : 'clocked_in',
+          job_type: 'project',
+        })
+      if (createError) {
+        throw new AppError(toUserMessage(createError, '核准後無法建立出勤'))
+      }
+    }
+
     const { data, error } = await sb()
       .from('attendance_corrections')
       .update({
         status: 'approved',
-        effective_clock_in_at: current.proposed_clock_in_at,
-        effective_clock_out_at: current.proposed_clock_out_at,
-        effective_site_id: current.proposed_site_id,
+        effective_clock_in_at: effectiveIn,
+        effective_clock_out_at: effectiveOut,
+        effective_site_id: effectiveSite,
         reviewed_by: actor.id,
         reviewed_at: new Date().toISOString(),
       })
@@ -4966,6 +5003,7 @@ export const supabaseRepos = {
       .select(
         'id, organization_id, uploaded_by, site_id, photo_type, storage_path, content_type, byte_size, source, status, created_at',
       )
+      .neq('status', 'discarded')
       .order('created_at', { ascending: false })
       .limit(200)
     if (siteId) {
@@ -5069,6 +5107,56 @@ export const supabaseRepos = {
       .update({ status: 'discarded' })
       .eq('id', requireUuid(photoId, '照片'))
     if (error) throw new AppError(toUserMessage(error, '無法捨棄照片'))
+  },
+
+  async deletePhotoUploads(photoIds: string[]): Promise<number> {
+    const ids = [...new Set(photoIds.map((id) => requireUuid(id, '照片')))]
+    if (ids.length === 0) return 0
+
+    const { data: rows, error: loadError } = await sb()
+      .from('photo_uploads')
+      .select('id, storage_path')
+      .in('id', ids)
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取照片'))
+    const paths = (rows ?? [])
+      .map((r) => String(r.storage_path || ''))
+      .filter(Boolean)
+
+    if (paths.length > 0) {
+      const { error: storageError } = await sb()
+        .storage.from('site-photos')
+        .remove(paths)
+      if (storageError) {
+        throw new AppError(toUserMessage(storageError, '無法刪除照片檔案'))
+      }
+    }
+
+    const { error } = await sb().from('photo_uploads').delete().in('id', ids)
+    if (error) throw new AppError(toUserMessage(error, '無法刪除照片紀錄'))
+    return ids.length
+  },
+
+  async downloadPhotoBlobs(
+    photos: Array<{ id: string; storagePath: string; contentType?: string | null }>,
+  ): Promise<Array<{ id: string; blob: Blob; filename: string }>> {
+    const out: Array<{ id: string; blob: Blob; filename: string }> = []
+    for (const photo of photos) {
+      const { data, error } = await sb()
+        .storage.from('site-photos')
+        .download(photo.storagePath)
+      if (error || !data) {
+        throw new AppError(toUserMessage(error, '無法下載照片'))
+      }
+      const ext = photo.storagePath.includes('.')
+        ? photo.storagePath.split('.').pop() || 'jpg'
+        : 'jpg'
+      out.push({
+        id: photo.id,
+        blob: data,
+        filename: `photo-${photo.id.slice(0, 8)}.${ext}`,
+      })
+    }
+    return out
   },
 
   async uploadAppPhoto(input: {

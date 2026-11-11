@@ -48,6 +48,13 @@ export function usePhotos(siteId?: string | null) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: photoKeys.all }),
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: async (photoIds: string[]) => {
+      return supabaseRepos.deletePhotoUploads(photoIds)
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: photoKeys.all }),
+  })
+
   const uploadMutation = useMutation({
     mutationFn: async (input: {
       file: File
@@ -70,6 +77,8 @@ export function usePhotos(siteId?: string | null) {
     isClassifying: classifyMutation.isPending,
     discardPhoto: discardMutation.mutateAsync,
     isDiscarding: discardMutation.isPending,
+    deletePhotos: deleteMutation.mutateAsync,
+    isDeleting: deleteMutation.isPending,
     uploadPhoto: uploadMutation.mutateAsync,
     isUploading: uploadMutation.isPending,
     uploadError: uploadMutation.error
