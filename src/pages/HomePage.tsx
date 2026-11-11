@@ -86,23 +86,21 @@ export function HomePage() {
           </Link>
         </div>
 
-        <div className="site-link stack">
-          <strong style={{ margin: 0 }}>
+        <div className="hero-status">
+          <strong>
             目前狀態：{openShift ? '上班中' : '未上班'}
           </strong>
           {openShift ? (
             <>
-              <p style={{ margin: 0 }}>
+              <p>
                 上班時間：{formatTaipei(openShift.clockInAt, 'HH:mm')}
               </p>
-              <p className="muted" style={{ margin: 0 }}>
+              <p className="muted">
                 目前工地：{currentSiteName ?? '尚未指定'}
               </p>
             </>
           ) : (
-            <p className="muted" style={{ margin: 0 }}>
-              {PRODUCT.tagline}
-            </p>
+            <p className="muted">{PRODUCT.tagline}</p>
           )}
         </div>
 

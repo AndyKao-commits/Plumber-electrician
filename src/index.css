@@ -134,6 +134,34 @@ button {
   color: rgba(244, 247, 250, 0.72);
 }
 
+/* Status block inside dark hero: light surface + dark ink (avoid white-on-white). */
+.hero-status {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--ink);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.hero-status strong {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+.hero-status p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.hero-status .muted {
+  color: var(--ink-muted);
+}
+
 .stack {
   display: flex;
   flex-direction: column;

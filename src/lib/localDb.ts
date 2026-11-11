@@ -203,6 +203,7 @@ import { filterSitesByAccess } from '@/domain/siteAccess'
 import {
   assertAccountStatus,
   normalizeProfileFields,
+  normalizeProfileName,
 } from '@/domain/profileFields'
 import { roundMoney } from '@/domain/money'
 import { formatTaipei } from '@/lib/time'
@@ -861,6 +862,7 @@ export const localDb = {
     actor: { id: string; role: AppUser['role'] },
     targetUserId: string,
     input: {
+      name?: string | null
       nickname?: string | null
       birthDate?: string | null
       jobTitle?: string | null
@@ -882,9 +884,14 @@ export const localDb = {
       if (actor.role !== 'boss') throw new Error('僅老闆可停用帳號')
       nextStatus = assertAccountStatus(input.accountStatus)
     }
+    const nextName =
+      input.name != null
+        ? normalizeProfileName(input.name)
+        : users[idx].name
     const updated: AppUser = {
       ...users[idx],
       ...fields,
+      name: nextName,
       accountStatus: nextStatus,
     }
     users[idx] = updated
