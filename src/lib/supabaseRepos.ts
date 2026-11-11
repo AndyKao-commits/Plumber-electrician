@@ -1194,22 +1194,28 @@ export const supabaseRepos = {
       if (actor.role !== 'boss') throw new AppError('僅老闆可停用帳號')
       payload.account_status = assertAccountStatus(input.accountStatus)
     }
-    let { data, error } = await sb()
+    const updated = await sb()
       .from('profiles')
       .update(payload)
       .eq('id', tid)
       .select(PROFILE_SELECT)
       .single()
-    if (error && /role_group_name|access_template|column/i.test(error.message)) {
-      ;({ data, error } = await sb()
+    let row = updated.data
+    let updError = updated.error
+    if (updError && /role_group_name|access_template|column/i.test(updError.message)) {
+      const fallback = await sb()
         .from('profiles')
         .update(payload)
         .eq('id', tid)
         .select(PROFILE_SELECT_CORE)
-        .single())
+        .single()
+      row = fallback.data as typeof row
+      updError = fallback.error
     }
-    if (error) throw new AppError(toUserMessage(error, '無法更新個人資料'))
-    const mapped = mapUser(data)
+    if (updError || !row) {
+      throw new AppError(toUserMessage(updError, '無法更新個人資料'))
+    }
+    const mapped = mapUser(row)
     await this.appendAuditLog(actor, {
       action: 'permission.update',
       targetType: 'profile',
@@ -1226,19 +1232,22 @@ export const supabaseRepos = {
       .select(PROFILE_SELECT)
       .eq('organization_id', actor.organizationId)
       .order('name')
-    let data = full.data
-    let error = full.error
-    if (error && /role_group_name|access_template|column/i.test(error.message)) {
+    if (
+      full.error &&
+      /role_group_name|access_template|column/i.test(full.error.message)
+    ) {
       const fallback = await sb()
         .from('profiles')
         .select(PROFILE_SELECT_CORE)
         .eq('organization_id', actor.organizationId)
         .order('name')
-      data = fallback.data
-      error = fallback.error
+      if (fallback.error) {
+        throw new AppError(toUserMessage(fallback.error, '無法載入名冊'))
+      }
+      return (fallback.data ?? []).map((row) => mapUser(row))
     }
-    if (error) throw new AppError(toUserMessage(error, '無法載入名冊'))
-    return (data ?? []).map((row) => mapUser(row))
+    if (full.error) throw new AppError(toUserMessage(full.error, '無法載入名冊'))
+    return (full.data ?? []).map((row) => mapUser(row))
   },
 
   async listSites(actor?: AppUser): Promise<SiteProject[]> {
