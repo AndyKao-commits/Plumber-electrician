@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  assertCanApproveAttendanceCorrection,
   assertCanApprovePurchase,
   assertSameOrganization,
+  canApproveAttendanceCorrection,
   canApprovePurchase,
   hasPermission,
   mapLegacyRoleToSpec,
@@ -254,5 +256,37 @@ describe('權限與組織隔離', () => {
   it('跨組織拒絕', () => {
     expect(() => assertSameOrganization('org-a', 'org-b')).toThrow(/其他組織/)
     expect(() => assertSameOrganization('org-a', 'org-a')).not.toThrow()
+  })
+  it('補打卡：Owner/Admin 可核准他人；Member 不可；禁止自核', () => {
+    expect(hasPermission('boss', PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)).toBe(
+      true,
+    )
+    expect(hasPermission('admin', PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)).toBe(
+      true,
+    )
+    expect(
+      hasPermission('employee', PERMISSIONS.ATTENDANCE_CORRECT_APPROVE),
+    ).toBe(false)
+    expect(
+      canApproveAttendanceCorrection({
+        actorRole: 'boss',
+        actorId: 'boss1',
+        requesterId: 'm1',
+      }),
+    ).toBe(true)
+    expect(
+      canApproveAttendanceCorrection({
+        actorRole: 'member',
+        actorId: 'm1',
+        requesterId: 'm2',
+      }),
+    ).toBe(false)
+    expect(() =>
+      assertCanApproveAttendanceCorrection({
+        actorRole: 'boss',
+        actorId: 'same',
+        requesterId: 'same',
+      }),
+    ).toThrow(/自行核准/)
   })
 })

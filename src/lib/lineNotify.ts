@@ -7,6 +7,9 @@ export type LineNotifyEvent =
   | 'quote.published'
   | 'attendance.clock_in'
   | 'attendance.clock_out'
+  | 'attendance.correction_pending'
+  | 'attendance.correction_approved'
+  | 'attendance.correction_rejected'
   | 'notice.created'
 
 /**

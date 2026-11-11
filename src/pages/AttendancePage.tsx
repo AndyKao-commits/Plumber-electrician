@@ -1,3 +1,4 @@
+import { useState, type FormEvent } from 'react'
 import { formatDistanceStrict } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
 import { FEATURE_FLAGS } from '@/domain/rules'
@@ -6,22 +7,86 @@ import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
 import { formatTaipei } from '@/lib/time'
 
+/** datetime-local value → ISO, treating wall clock as Asia/Taipei. */
+function taipeiLocalToIso(local: string): string {
+  if (!local) throw new Error('請填寫時間')
+  const withSeconds = local.length === 16 ? `${local}:00` : local
+  const d = new Date(`${withSeconds}+08:00`)
+  if (Number.isNaN(d.getTime())) throw new Error('時間格式無效')
+  return d.toISOString()
+}
+
+function isoToTaipeiLocal(iso?: string | null): string {
+  if (!iso) return ''
+  return formatTaipei(iso, "yyyy-MM-dd'T'HH:mm")
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: '待核准',
+  approved: '已核准',
+  rejected: '已駁回',
+}
+
 export function AttendancePage() {
   const { user } = useUser()
   const { sites } = useSites()
   const {
     openShift,
     history,
+    corrections,
+    pendingCorrections,
+    canApproveCorrections,
     clockIn,
     clockOut,
     assignSite,
+    applyCorrection,
+    approveCorrection,
+    rejectCorrection,
     isClockingIn,
     isClockingOut,
     isAssigningSite,
+    isApplyingCorrection,
+    applyCorrectionError,
+    isApprovingCorrection,
+    approveCorrectionError,
+    isRejectingCorrection,
+    rejectCorrectionError,
   } = useAttendance(user?.id)
+
+  const [linkAttendanceId, setLinkAttendanceId] = useState('')
+  const [proposedIn, setProposedIn] = useState('')
+  const [proposedOut, setProposedOut] = useState('')
+  const [proposedSiteId, setProposedSiteId] = useState('')
+  const [reason, setReason] = useState('')
+  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({})
 
   const siteName = (id?: string | null) =>
     sites.find((s) => s.id === id)?.name ?? (id ? '未知工地' : '尚未補登工地')
+
+  function fillFromRecord(attendanceId: string) {
+    setLinkAttendanceId(attendanceId)
+    const record = history.find((h) => h.id === attendanceId)
+    if (!record) return
+    setProposedIn(isoToTaipeiLocal(record.clockInAt))
+    setProposedOut(isoToTaipeiLocal(record.clockOutAt))
+    setProposedSiteId(record.siteId ?? '')
+  }
+
+  async function onSubmitCorrection(event: FormEvent) {
+    event.preventDefault()
+    await applyCorrection({
+      attendanceId: linkAttendanceId || null,
+      proposedClockInAt: taipeiLocalToIso(proposedIn),
+      proposedClockOutAt: proposedOut ? taipeiLocalToIso(proposedOut) : null,
+      proposedSiteId: proposedSiteId || null,
+      reason,
+    })
+    setReason('')
+    setLinkAttendanceId('')
+    setProposedIn('')
+    setProposedOut('')
+    setProposedSiteId('')
+  }
 
   return (
     <div className="stack fade-up">
@@ -39,7 +104,10 @@ export function AttendancePage() {
               <div className="row between">
                 <span className="badge ok">上班中</span>
                 <span className="muted">
-                  已打卡 {formatDistanceStrict(new Date(openShift.clockInAt), new Date(), { locale: zhTW })}
+                  已打卡{' '}
+                  {formatDistanceStrict(new Date(openShift.clockInAt), new Date(), {
+                    locale: zhTW,
+                  })}
                 </span>
               </div>
               <h3 style={{ marginTop: 10 }}>{siteName(openShift.siteId)}</h3>
@@ -97,6 +165,218 @@ export function AttendancePage() {
         )}
       </section>
 
+      {canApproveCorrections && pendingCorrections.length > 0 ? (
+        <section className="panel stack">
+          <strong>待核准補打卡</strong>
+          <p className="muted" style={{ margin: 0 }}>
+            核准後寫入有效工時；原始打卡紀錄保留不改。
+          </p>
+          {pendingCorrections.map((c) => (
+            <div key={c.id} className="site-link stack">
+              <div className="row between">
+                <span className="badge">pending</span>
+                <span className="muted">
+                  {formatTaipei(c.createdAt, 'MM/dd HH:mm')}
+                </span>
+              </div>
+              <p style={{ margin: 0 }}>
+                擬訂 {formatTaipei(c.proposedClockInAt, 'MM/dd HH:mm')}
+                {c.proposedClockOutAt
+                  ? ` → ${formatTaipei(c.proposedClockOutAt, 'HH:mm')}`
+                  : ' → （未填下班）'}
+                {c.proposedSiteId ? ` · ${siteName(c.proposedSiteId)}` : ''}
+              </p>
+              {c.originalClockInAt ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  原始 {formatTaipei(c.originalClockInAt, 'MM/dd HH:mm')}
+                  {c.originalClockOutAt
+                    ? ` → ${formatTaipei(c.originalClockOutAt, 'HH:mm')}`
+                    : ' → （無下班）'}
+                </p>
+              ) : (
+                <p className="muted" style={{ margin: 0 }}>
+                  無對應原始打卡（漏打補登）
+                </p>
+              )}
+              <p style={{ margin: 0 }}>原因：{c.reason}</p>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-steel"
+                  disabled={isApprovingCorrection}
+                  onClick={() => void approveCorrection(c.id)}
+                >
+                  核准
+                </button>
+              </div>
+              <div className="field">
+                <label htmlFor={`reject-ac-${c.id}`}>駁回原因</label>
+                <input
+                  id={`reject-ac-${c.id}`}
+                  value={rejectReasons[c.id] ?? ''}
+                  onChange={(e) =>
+                    setRejectReasons((prev) => ({
+                      ...prev,
+                      [c.id]: e.target.value,
+                    }))
+                  }
+                  placeholder="必填"
+                />
+              </div>
+              <button
+                type="button"
+                className="btn btn-block"
+                disabled={isRejectingCorrection}
+                onClick={() =>
+                  void rejectCorrection({
+                    correctionId: c.id,
+                    reason: rejectReasons[c.id] ?? '',
+                  })
+                }
+              >
+                駁回
+              </button>
+            </div>
+          ))}
+          {approveCorrectionError ? (
+            <p className="error">{(approveCorrectionError as Error).message}</p>
+          ) : null}
+          {rejectCorrectionError ? (
+            <p className="error">{(rejectCorrectionError as Error).message}</p>
+          ) : null}
+        </section>
+      ) : null}
+
+      <section className="panel stack">
+        <strong>補打卡申請</strong>
+        <p className="muted" style={{ margin: 0 }}>
+          員工申請後需老闆／管理員確認才生效；原始出勤事件不會被改寫。
+        </p>
+        <form className="stack" onSubmit={(e) => void onSubmitCorrection(e)}>
+          <div className="field">
+            <label htmlFor="link-attendance">對應出勤（可選）</label>
+            <select
+              id="link-attendance"
+              value={linkAttendanceId}
+              onChange={(e) => fillFromRecord(e.target.value)}
+            >
+              <option value="">漏打補登（無原始紀錄）</option>
+              {history.map((record) => (
+                <option key={record.id} value={record.id}>
+                  {formatTaipei(record.clockInAt, 'MM/dd HH:mm')}
+                  {record.clockOutAt
+                    ? ` → ${formatTaipei(record.clockOutAt, 'HH:mm')}`
+                    : ' → 進行中'}{' '}
+                  · {siteName(record.siteId)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="proposed-in">擬訂上班（台北時間）</label>
+            <input
+              id="proposed-in"
+              type="datetime-local"
+              required
+              value={proposedIn}
+              onChange={(e) => setProposedIn(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="proposed-out">擬訂下班（可空）</label>
+            <input
+              id="proposed-out"
+              type="datetime-local"
+              value={proposedOut}
+              onChange={(e) => setProposedOut(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="proposed-site">擬訂工地（可空）</label>
+            <select
+              id="proposed-site"
+              value={proposedSiteId}
+              onChange={(e) => setProposedSiteId(e.target.value)}
+            >
+              <option value="">不指定</option>
+              {sites.map((site) => (
+                <option key={site.id} value={site.id}>
+                  {site.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="correction-reason">原因</label>
+            <input
+              id="correction-reason"
+              required
+              minLength={2}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="例如：手機沒電漏打卡"
+            />
+          </div>
+          <button
+            type="submit"
+            className="btn btn-steel btn-block"
+            disabled={isApplyingCorrection}
+          >
+            {isApplyingCorrection ? '送出中…' : '送出補打卡'}
+          </button>
+          {applyCorrectionError ? (
+            <p className="error">{(applyCorrectionError as Error).message}</p>
+          ) : null}
+        </form>
+      </section>
+
+      <section className="panel stack">
+        <strong>我的補打卡紀錄</strong>
+        {corrections.length === 0 ? (
+          <div className="empty">尚無補打卡申請</div>
+        ) : (
+          corrections
+            .filter((c) => !canApproveCorrections || c.userId === user?.id)
+            .slice(0, 20)
+            .map((c) => (
+              <div key={c.id} className="site-link">
+                <div className="row between">
+                  <span
+                    className={`badge ${c.status === 'approved' ? 'ok' : ''}`}
+                  >
+                    {STATUS_LABEL[c.status] ?? c.status}
+                  </span>
+                  <span className="muted">
+                    {formatTaipei(c.createdAt, 'MM/dd HH:mm')}
+                  </span>
+                </div>
+                <p style={{ marginTop: 8 }}>
+                  擬訂 {formatTaipei(c.proposedClockInAt, 'MM/dd HH:mm')}
+                  {c.proposedClockOutAt
+                    ? ` → ${formatTaipei(c.proposedClockOutAt, 'HH:mm')}`
+                    : ''}
+                </p>
+                {c.status === 'approved' && c.effectiveClockInAt ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    有效工時 {formatTaipei(c.effectiveClockInAt, 'MM/dd HH:mm')}
+                    {c.effectiveClockOutAt
+                      ? ` → ${formatTaipei(c.effectiveClockOutAt, 'HH:mm')}`
+                      : ''}
+                  </p>
+                ) : null}
+                {c.status === 'rejected' && c.reviewNote ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    駁回：{c.reviewNote}
+                  </p>
+                ) : null}
+                <p className="muted" style={{ margin: 0 }}>
+                  {c.reason}
+                </p>
+              </div>
+            ))
+        )}
+      </section>
+
       <section className="panel stack">
         <strong>最近出勤</strong>
         {history.length === 0 ? (
@@ -116,6 +396,14 @@ export function AttendancePage() {
                   ? ` → ${formatTaipei(record.clockOutAt, 'HH:mm')}`
                   : ' → 尚未下班'}
               </p>
+              <button
+                type="button"
+                className="btn"
+                style={{ marginTop: 8 }}
+                onClick={() => fillFromRecord(record.id)}
+              >
+                申請更正
+              </button>
             </div>
           ))
         )}

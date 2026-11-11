@@ -147,6 +147,31 @@ export interface AttendanceRecord {
   note?: string | null
 }
 
+export type AttendanceCorrectionStatus = 'pending' | 'approved' | 'rejected'
+
+export interface AttendanceCorrection {
+  id: string
+  organizationId: string
+  userId: string
+  userName?: string
+  attendanceId?: string | null
+  proposedClockInAt: string
+  proposedClockOutAt?: string | null
+  proposedSiteId?: string | null
+  reason: string
+  status: AttendanceCorrectionStatus
+  originalClockInAt?: string | null
+  originalClockOutAt?: string | null
+  originalSiteId?: string | null
+  effectiveClockInAt?: string | null
+  effectiveClockOutAt?: string | null
+  effectiveSiteId?: string | null
+  reviewedBy?: string | null
+  reviewedAt?: string | null
+  reviewNote?: string | null
+  createdAt: string
+}
+
 export interface PurchaseRecord {
   id: string
   organizationId: string

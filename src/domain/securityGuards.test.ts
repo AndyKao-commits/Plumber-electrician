@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  assertCanApproveAttendanceCorrection,
   assertCanApprovePurchase,
   assertCanManageAccess,
   assertCanPublishQuote,
@@ -7,6 +8,7 @@ import {
   assertCanViewSensitiveFinance,
   assertPermission,
   assertSameOrganization,
+  canApproveAttendanceCorrection,
   canApprovePurchase,
   hasPermission,
   mapLegacyRoleToSpec,
@@ -112,6 +114,25 @@ describe('負向：自己核准自己的採購', () => {
     ).toBe(false)
     expect(() =>
       assertCanApprovePurchase({
+        actorRole: 'admin',
+        actorId: 'same',
+        requesterId: 'same',
+      }),
+    ).toThrow(/自行核准/)
+  })
+})
+
+describe('負向：補打卡核准', () => {
+  it('Member 不可核准；申請人不可自核', () => {
+    expect(
+      canApproveAttendanceCorrection({
+        actorRole: 'employee',
+        actorId: 'm1',
+        requesterId: 'm2',
+      }),
+    ).toBe(false)
+    expect(() =>
+      assertCanApproveAttendanceCorrection({
         actorRole: 'admin',
         actorId: 'same',
         requesterId: 'same',
