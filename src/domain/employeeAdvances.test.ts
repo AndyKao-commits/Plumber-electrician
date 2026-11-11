@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   assertAdvanceItem,
+  assertCanCancelAdvance,
   assertCanSettleAdvances,
   buildSettleExpenseItem,
   sumAdvanceAmounts,
@@ -21,6 +22,18 @@ describe('employeeAdvances', () => {
     ).toThrow(/至少選/)
     expect(() =>
       assertCanSettleAdvances({ actorRole: 'boss', selectedIds: ['a'] }),
+    ).not.toThrow()
+  })
+
+  it('boss may cancel open or settled advances', () => {
+    expect(() =>
+      assertCanCancelAdvance({ actorRole: 'employee', status: 'open' }),
+    ).toThrow(/老闆/)
+    expect(() =>
+      assertCanCancelAdvance({ actorRole: 'boss', status: 'cancelled' }),
+    ).toThrow(/已取消/)
+    expect(() =>
+      assertCanCancelAdvance({ actorRole: 'boss', status: 'settled' }),
     ).not.toThrow()
   })
 

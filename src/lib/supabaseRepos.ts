@@ -131,7 +131,10 @@ import {
   sumSupplierExposure,
 } from '@/domain/suppliers'
 import {
+  assertBossCancelFinance,
   assertBossFinalize,
+  assertCanCancelExpense,
+  assertCanCancelReceipt,
   assertCanConfirmReceipt,
   assertCanReviewExpense,
   assertExpenseItem,
@@ -140,6 +143,7 @@ import {
 } from '@/domain/fieldFinance'
 import {
   assertAdvanceItem,
+  assertCanCancelAdvance,
   assertCanSettleAdvances,
   buildSettleExpenseItem,
 } from '@/domain/employeeAdvances'
@@ -6066,6 +6070,60 @@ export const supabaseRepos = {
     return row
   },
 
+  async cancelExpenseReport(
+    actor: AppUser,
+    input: { id: string; note?: string | null },
+  ): Promise<ExpenseReport> {
+    assertBossCancelFinance(actor.role)
+    const id = requireUuid(input.id, '支出')
+    const current = (await this.listExpenseReports(actor)).find((e) => e.id === id)
+    if (!current) throw new AppError('找不到支出回報')
+    assertCanCancelExpense(current.status)
+    const note =
+      input.note?.trim() ||
+      (current.status === 'confirmed' ? '老闆刪除已確認支出' : '老闆刪除支出')
+    const { data, error } = await sb()
+      .from('expense_reports')
+      .update({
+        status: 'cancelled',
+        reviewed_by: actor.id,
+        reviewed_at: new Date().toISOString(),
+        review_note: note,
+      })
+      .eq('id', id)
+      .select(
+        'id, organization_id, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法刪除支出'))
+    const row: ExpenseReport = {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: data.site_id ? String(data.site_id) : null,
+      siteName: String(data.site_name),
+      locationText: (data.location_text as string | null) ?? null,
+      item: String(data.item),
+      amount: Number(data.amount),
+      note: (data.note as string | null) ?? null,
+      receiptPhotoPath: (data.receipt_photo_path as string | null) ?? null,
+      status: data.status as ExpenseReport['status'],
+      reportedBy: String(data.reported_by),
+      reportedByName: String(data.reported_by_name),
+      reportedAt: String(data.reported_at),
+      reviewedBy: (data.reviewed_by as string | null) ?? null,
+      reviewedAt: (data.reviewed_at as string | null) ?? null,
+      reviewNote: (data.review_note as string | null) ?? null,
+    }
+    await this.appendAuditLog(actor, {
+      action: 'expense.cancel',
+      targetType: 'expense_report',
+      targetId: row.id,
+      before: current,
+      after: row,
+    })
+    return row
+  },
+
   async listEmployeeAdvances(actor: AppUser): Promise<EmployeeAdvance[]> {
     let q = sb()
       .from('employee_advances')
@@ -6225,6 +6283,53 @@ export const supabaseRepos = {
     return { expense, advances }
   },
 
+  async cancelEmployeeAdvance(
+    actor: AppUser,
+    input: { id: string; note?: string | null },
+  ): Promise<EmployeeAdvance> {
+    const id = requireUuid(input.id, '代墊')
+    const current = (await this.listEmployeeAdvances(actor)).find((a) => a.id === id)
+    if (!current) throw new AppError('找不到代墊')
+    assertCanCancelAdvance({ actorRole: actor.role, status: current.status })
+
+    if (current.status === 'settled' && current.expenseReportId) {
+      const linked = (await this.listExpenseReports(actor)).find(
+        (e) => e.id === current.expenseReportId,
+      )
+      if (linked && linked.status !== 'cancelled') {
+        await this.cancelExpenseReport(actor, {
+          id: linked.id,
+          note: input.note?.trim() || '取消代墊核銷連帶取消支出',
+        })
+      }
+    }
+
+    const { data, error } = await sb()
+      .from('employee_advances')
+      .update({
+        status: 'cancelled',
+        note:
+          input.note?.trim() ||
+          current.note ||
+          (current.status === 'settled' ? '老闆取消已核銷代墊' : '老闆取消代墊'),
+      })
+      .eq('id', id)
+      .select(
+        'id, organization_id, employee_id, employee_name, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_at, settled_at, settled_by, expense_report_id',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法取消代墊'))
+    const row = mapEmployeeAdvance(data)
+    await this.appendAuditLog(actor, {
+      action: 'advance.cancel',
+      targetType: 'employee_advance',
+      targetId: row.id,
+      before: current,
+      after: row,
+    })
+    return row
+  },
+
   async listCashReceipts(actor: AppUser): Promise<CashReceiptReport[]> {
     let q = sb()
       .from('cash_receipt_reports')
@@ -6380,6 +6485,59 @@ export const supabaseRepos = {
           : input.decision === 'return'
             ? 'receipt.return'
             : 'receipt.cancel',
+      targetType: 'cash_receipt',
+      targetId: row.id,
+      before: current,
+      after: row,
+    })
+    return row
+  },
+
+  async cancelCashReceipt(
+    actor: AppUser,
+    input: { id: string; note?: string | null },
+  ): Promise<CashReceiptReport> {
+    assertBossCancelFinance(actor.role)
+    const id = requireUuid(input.id, '收款')
+    const current = (await this.listCashReceipts(actor)).find((e) => e.id === id)
+    if (!current) throw new AppError('找不到收款回報')
+    assertCanCancelReceipt(current.status)
+    const note =
+      input.note?.trim() ||
+      (current.status === 'confirmed' ? '老闆刪除已確認收款' : '老闆刪除收款')
+    const { data, error } = await sb()
+      .from('cash_receipt_reports')
+      .update({
+        status: 'cancelled',
+        confirmed_by: actor.id,
+        confirmed_at: new Date().toISOString(),
+        confirm_note: note,
+      })
+      .eq('id', id)
+      .select(
+        'id, organization_id, site_id, site_name, location_text, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法刪除收款'))
+    const row: CashReceiptReport = {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: data.site_id ? String(data.site_id) : null,
+      siteName: String(data.site_name),
+      locationText: (data.location_text as string | null) ?? null,
+      amount: Number(data.amount),
+      sourceNote: (data.source_note as string | null) ?? null,
+      proofPhotoPath: (data.proof_photo_path as string | null) ?? null,
+      status: data.status as CashReceiptReport['status'],
+      reportedBy: String(data.reported_by),
+      reportedByName: String(data.reported_by_name),
+      reportedAt: String(data.reported_at),
+      confirmedBy: (data.confirmed_by as string | null) ?? null,
+      confirmedAt: (data.confirmed_at as string | null) ?? null,
+      confirmNote: (data.confirm_note as string | null) ?? null,
+    }
+    await this.appendAuditLog(actor, {
+      action: 'receipt.cancel',
       targetType: 'cash_receipt',
       targetId: row.id,
       before: current,

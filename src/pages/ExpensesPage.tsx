@@ -31,16 +31,19 @@ export function ExpensesPage() {
     isCreatingExpense,
     createExpenseError,
     reviewExpense,
+    cancelExpense,
     createReceipt,
     isCreatingReceipt,
     createReceiptError,
     confirmReceipt,
+    cancelReceipt,
     createAdvance,
     isCreatingAdvance,
     createAdvanceError,
     settleAdvances,
     isSettlingAdvances,
     settleAdvancesError,
+    cancelAdvance,
   } = useFieldFinance(user?.id)
 
   const [siteId, setSiteId] = useState('')
@@ -499,6 +502,28 @@ export function ExpensesPage() {
                   </div>
                   <span className="badge">{ADVANCE_STATUS_LABELS[a.status]}</span>
                 </div>
+                {isBoss && a.status !== 'cancelled' ? (
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => {
+                      const settledHint =
+                        a.status === 'settled'
+                          ? '\n（已核銷代墊會一併取消對應支出）'
+                          : ''
+                      if (
+                        !window.confirm(
+                          `確定刪除代墊「${a.item}」NT$${a.amount.toLocaleString()}？${settledHint}`,
+                        )
+                      ) {
+                        return
+                      }
+                      void cancelAdvance({ id: a.id })
+                    }}
+                  >
+                    刪除代墊
+                  </button>
+                ) : null}
               </div>
             ))}
           </>
@@ -550,6 +575,24 @@ export function ExpensesPage() {
                   </button>
                 </div>
               ) : null}
+              {isBoss && e.status !== 'cancelled' ? (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        `確定刪除支出「${e.item}」NT$${e.amount.toLocaleString()}？\n刪除後不再計入案件統計（紀錄會保留為已取消）。`,
+                      )
+                    ) {
+                      return
+                    }
+                    void cancelExpense({ id: e.id })
+                  }}
+                >
+                  刪除支出
+                </button>
+              ) : null}
             </div>
           ))
         )}
@@ -597,6 +640,24 @@ export function ExpensesPage() {
                     退回
                   </button>
                 </div>
+              ) : null}
+              {isBoss && r.status !== 'cancelled' ? (
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => {
+                    if (
+                      !window.confirm(
+                        `確定刪除收款 NT$${r.amount.toLocaleString()}？\n刪除後不再計入統計（紀錄會保留為已取消）。`,
+                      )
+                    ) {
+                      return
+                    }
+                    void cancelReceipt({ id: r.id })
+                  }}
+                >
+                  刪除收款
+                </button>
               ) : null}
             </div>
           ))
