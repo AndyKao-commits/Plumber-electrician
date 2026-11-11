@@ -23,6 +23,7 @@ import { SiteDetailPage } from '@/pages/SiteDetailPage'
 import { SitesPage } from '@/pages/SitesPage'
 import { TeamPage } from '@/pages/TeamPage'
 import { OfflineQueuePage } from '@/pages/OfflineQueuePage'
+import { PettyCashPage } from '@/pages/PettyCashPage'
 import { TodosPage } from '@/pages/TodosPage'
 
 function Protected({ children }: { children: ReactNode }) {
@@ -49,6 +50,7 @@ export default function App() {
             <Route path="/quotes" element={<Protected><QuotesPage /></Protected>} />
             <Route path="/quotes/:quoteId" element={<Protected><QuoteDetailPage /></Protected>} />
             <Route path="/inventory" element={<Protected><InventoryPage /></Protected>} />
+            <Route path="/petty-cash" element={<Protected><PettyCashPage /></Protected>} />
             <Route path="/notifications" element={<Protected><NotificationsPage /></Protected>} />
             <Route path="/todos" element={<Protected><TodosPage /></Protected>} />
             <Route path="/team" element={<Protected><TeamPage /></Protected>} />
