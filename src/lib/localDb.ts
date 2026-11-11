@@ -90,6 +90,10 @@ import type {
   MaterialUnit,
   MaterialUsage,
   OperatingCostKind,
+  PettyCashAccount,
+  PettyCashDisbursement,
+  PettyCashLedgerEntry,
+  PettyCashTopUpRequest,
   StockBalance,
   StockLocation,
   StockMovement,
@@ -153,6 +157,16 @@ import {
   assertUnitFactor,
   convertMaterialQty,
 } from '@/domain/materialMaster'
+import {
+  applyDisbursementCredit,
+  assertApproveDoesNotCreditBalance,
+  assertCanApprove,
+  assertCanDisburse,
+  assertCanRequest,
+  assertRequestApprovable,
+  assertRequestDisbursable,
+  assertTopUpAmount,
+} from '@/domain/pettyCash'
 import { roundMoney } from '@/domain/money'
 import { formatTaipei } from '@/lib/time'
 
@@ -200,6 +214,10 @@ const KEYS = {
   stockBalances: 'eg.stockBalances.v1',
   stockMovements: 'eg.stockMovements.v1',
   stockReservations: 'eg.stockReservations.v1',
+  pettyCashAccounts: 'eg.pettyCashAccounts.v1',
+  pettyCashRequests: 'eg.pettyCashRequests.v1',
+  pettyCashDisbursements: 'eg.pettyCashDisbursements.v1',
+  pettyCashLedger: 'eg.pettyCashLedger.v1',
 } as const
 
 function read<T>(key: string, fallback: T): T {
@@ -251,6 +269,10 @@ const emptyStockLocations: StockLocation[] = []
 const emptyStockBalances: StockBalance[] = []
 const emptyStockMovements: StockMovement[] = []
 const emptyStockReservations: StockReservation[] = []
+const emptyPettyCashAccounts: PettyCashAccount[] = []
+const emptyPettyCashRequests: PettyCashTopUpRequest[] = []
+const emptyPettyCashDisbursements: PettyCashDisbursement[] = []
+const emptyPettyCashLedger: PettyCashLedgerEntry[] = []
 
 function write<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value))
@@ -611,12 +633,26 @@ function seedIfNeeded() {
   ])
   write(KEYS.stockMovements, emptyStockMovements)
   write(KEYS.stockReservations, emptyStockReservations)
+  write(KEYS.pettyCashAccounts, [
+    {
+      id: 'pca-worker',
+      organizationId: ORG_ID,
+      custodianUserId: 'user-worker',
+      label: '員工零用金（示範）',
+      balance: 2000,
+      updatedAt: now,
+    },
+  ])
+  write(KEYS.pettyCashRequests, emptyPettyCashRequests)
+  write(KEYS.pettyCashDisbursements, emptyPettyCashDisbursements)
+  write(KEYS.pettyCashLedger, emptyPettyCashLedger)
   write(KEYS.shortcuts, [
     'clock',
     'sites',
     'purchase',
     'quotes',
     'inventory',
+    'petty',
     'todos',
     'team',
     'notices',
@@ -3259,6 +3295,167 @@ export const localDb = {
       reservedQty,
       availableQty: roundMoney(updated.qty - reservedQty, 4),
     }
+  },
+
+  listPettyCashAccounts(): PettyCashAccount[] {
+    return read(KEYS.pettyCashAccounts, emptyPettyCashAccounts)
+  },
+
+  listPettyCashRequests(): PettyCashTopUpRequest[] {
+    return read(KEYS.pettyCashRequests, emptyPettyCashRequests).sort((a, b) =>
+      b.requestedAt.localeCompare(a.requestedAt),
+    )
+  },
+
+  listPettyCashLedger(accountId?: string): PettyCashLedgerEntry[] {
+    const all = read(KEYS.pettyCashLedger, emptyPettyCashLedger)
+    const filtered = accountId
+      ? all.filter((e) => e.accountId === accountId)
+      : all
+    return filtered.sort((a, b) => b.postedAt.localeCompare(a.postedAt))
+  },
+
+  requestPettyCashTopUp(
+    actor: { id: string; role: AppUser['role'] },
+    input: { accountId: string; amount: number; reason: string },
+  ): PettyCashTopUpRequest {
+    assertCanRequest(actor.role)
+    const amount = assertTopUpAmount(input.amount)
+    const reason = input.reason.trim()
+    if (!reason) throw new Error('請填寫補充原因')
+    const account = this.listPettyCashAccounts().find(
+      (a) => a.id === input.accountId,
+    )
+    if (!account) throw new Error('找不到零用金帳戶')
+    const row: PettyCashTopUpRequest = {
+      id: `pcr-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      accountId: account.id,
+      amount,
+      reason,
+      status: 'pending_approval',
+      requestedBy: actor.id,
+      requestedAt: new Date().toISOString(),
+      approvedBy: null,
+      approvedAt: null,
+      rejectedReason: null,
+      disbursementId: null,
+    }
+    const all = read(KEYS.pettyCashRequests, emptyPettyCashRequests)
+    all.unshift(row)
+    write(KEYS.pettyCashRequests, all)
+    return row
+  },
+
+  approvePettyCashTopUp(
+    actor: { id: string; role: AppUser['role'] },
+    requestId: string,
+  ): PettyCashTopUpRequest {
+    assertCanApprove(actor.role)
+    const all = read(KEYS.pettyCashRequests, emptyPettyCashRequests)
+    const idx = all.findIndex((r) => r.id === requestId)
+    if (idx < 0) throw new Error('找不到申請')
+    const current = all[idx]
+    assertRequestApprovable(current.status)
+    const accounts = read(KEYS.pettyCashAccounts, emptyPettyCashAccounts)
+    const account = accounts.find((a) => a.id === current.accountId)
+    if (!account) throw new Error('找不到零用金帳戶')
+    const balanceBefore = account.balance
+    const updated: PettyCashTopUpRequest = {
+      ...current,
+      status: 'approved',
+      approvedBy: actor.id,
+      approvedAt: new Date().toISOString(),
+    }
+    all[idx] = updated
+    write(KEYS.pettyCashRequests, all)
+    assertApproveDoesNotCreditBalance({
+      balanceBefore,
+      balanceAfterApprove: account.balance,
+    })
+    return updated
+  },
+
+  rejectPettyCashTopUp(
+    actor: { id: string; role: AppUser['role'] },
+    input: { requestId: string; reason: string },
+  ): PettyCashTopUpRequest {
+    assertCanApprove(actor.role)
+    const all = read(KEYS.pettyCashRequests, emptyPettyCashRequests)
+    const idx = all.findIndex((r) => r.id === input.requestId)
+    if (idx < 0) throw new Error('找不到申請')
+    assertRequestApprovable(all[idx].status)
+    const updated: PettyCashTopUpRequest = {
+      ...all[idx],
+      status: 'rejected',
+      approvedBy: actor.id,
+      approvedAt: new Date().toISOString(),
+      rejectedReason: input.reason.trim() || '駁回',
+    }
+    all[idx] = updated
+    write(KEYS.pettyCashRequests, all)
+    return updated
+  },
+
+  disbursePettyCashTopUp(
+    actor: { id: string; role: AppUser['role'] },
+    input: { requestId: string; note?: string | null },
+  ): PettyCashDisbursement {
+    assertCanDisburse(actor.role)
+    const requests = read(KEYS.pettyCashRequests, emptyPettyCashRequests)
+    const rIdx = requests.findIndex((r) => r.id === input.requestId)
+    if (rIdx < 0) throw new Error('找不到申請')
+    const request = requests[rIdx]
+    assertRequestDisbursable(request.status)
+    const accounts = read(KEYS.pettyCashAccounts, emptyPettyCashAccounts)
+    const aIdx = accounts.findIndex((a) => a.id === request.accountId)
+    if (aIdx < 0) throw new Error('找不到零用金帳戶')
+    const account = accounts[aIdx]
+    const now = new Date().toISOString()
+    const nextBalance = applyDisbursementCredit({
+      balance: account.balance,
+      amount: request.amount,
+    })
+    const disbursement: PettyCashDisbursement = {
+      id: `pcd-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      requestId: request.id,
+      accountId: account.id,
+      amount: request.amount,
+      disbursedBy: actor.id,
+      disbursedAt: now,
+      note: input.note?.trim() || null,
+    }
+    const disbursements = read(
+      KEYS.pettyCashDisbursements,
+      emptyPettyCashDisbursements,
+    )
+    disbursements.unshift(disbursement)
+    write(KEYS.pettyCashDisbursements, disbursements)
+    accounts[aIdx] = { ...account, balance: nextBalance, updatedAt: now }
+    write(KEYS.pettyCashAccounts, accounts)
+    requests[rIdx] = {
+      ...request,
+      status: 'disbursed',
+      disbursementId: disbursement.id,
+    }
+    write(KEYS.pettyCashRequests, requests)
+    const ledger = read(KEYS.pettyCashLedger, emptyPettyCashLedger)
+    ledger.unshift({
+      id: `pcl-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      accountId: account.id,
+      entryType: 'top_up',
+      amount: request.amount,
+      balanceAfter: nextBalance,
+      sourceType: 'disbursement',
+      sourceId: disbursement.id,
+      note: input.note?.trim() || `補充申請 ${request.id}`,
+      postedAt: now,
+      createdBy: actor.id,
+    })
+    write(KEYS.pettyCashLedger, ledger)
+    return disbursement
   },
 
   getNotices(userId: string): AppNotice[] {

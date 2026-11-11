@@ -609,6 +609,62 @@ export interface CaseOperatingCost {
 
 export type MaterialTrackingMode = 'quantity' | 'serial'
 
+export type PettyCashRequestStatus =
+  | 'pending_approval'
+  | 'approved'
+  | 'rejected'
+  | 'disbursed'
+
+/** PET-001: custodian petty cash account. */
+export interface PettyCashAccount {
+  id: string
+  organizationId: string
+  custodianUserId: string
+  label: string
+  balance: number
+  updatedAt: string
+}
+
+export interface PettyCashTopUpRequest {
+  id: string
+  organizationId: string
+  accountId: string
+  amount: number
+  reason: string
+  status: PettyCashRequestStatus
+  requestedBy: string
+  requestedAt: string
+  approvedBy?: string | null
+  approvedAt?: string | null
+  rejectedReason?: string | null
+  disbursementId?: string | null
+}
+
+export interface PettyCashDisbursement {
+  id: string
+  organizationId: string
+  requestId: string
+  accountId: string
+  amount: number
+  disbursedBy: string
+  disbursedAt: string
+  note?: string | null
+}
+
+export interface PettyCashLedgerEntry {
+  id: string
+  organizationId: string
+  accountId: string
+  entryType: 'top_up' | 'expense' | 'adjust'
+  amount: number
+  balanceAfter: number
+  sourceType: 'disbursement' | 'manual'
+  sourceId: string
+  note?: string | null
+  postedAt: string
+  createdBy: string
+}
+
 export interface MaterialStock {
   id: string
   organizationId: string

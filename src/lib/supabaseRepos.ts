@@ -88,6 +88,16 @@ import {
   assertUnitFactor,
   convertMaterialQty,
 } from '@/domain/materialMaster'
+import {
+  applyDisbursementCredit,
+  assertApproveDoesNotCreditBalance,
+  assertCanApprove,
+  assertCanDisburse,
+  assertCanRequest,
+  assertRequestApprovable,
+  assertRequestDisbursable,
+  assertTopUpAmount,
+} from '@/domain/pettyCash'
 import { roundMoney } from '@/domain/money'
 import {
   assertCanMarkChangeOrderAccept,
@@ -130,6 +140,10 @@ import type {
   MaterialStock,
   MaterialUnit,
   MaterialUsage,
+  PettyCashAccount,
+  PettyCashDisbursement,
+  PettyCashLedgerEntry,
+  PettyCashTopUpRequest,
   StockBalance,
   StockLocation,
   StockMovement,
@@ -4091,6 +4105,267 @@ export const supabaseRepos = {
       p_as_todo: true,
     })
     if (error) throw new AppError(toUserMessage(error, '無法新增待辦'))
+  },
+
+  async listPettyCashAccounts(): Promise<PettyCashAccount[]> {
+    const { data, error } = await sb()
+      .from('petty_cash_accounts')
+      .select(
+        'id, organization_id, custodian_user_id, label, balance, updated_at',
+      )
+      .order('label', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入零用金帳戶'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      custodianUserId: String(row.custodian_user_id),
+      label: String(row.label),
+      balance: Number(row.balance),
+      updatedAt: String(row.updated_at),
+    }))
+  },
+
+  async listPettyCashRequests(): Promise<PettyCashTopUpRequest[]> {
+    const { data, error } = await sb()
+      .from('petty_cash_top_up_requests')
+      .select(
+        'id, organization_id, account_id, amount, reason, status, requested_by, requested_at, approved_by, approved_at, rejected_reason, disbursement_id',
+      )
+      .order('requested_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入補充申請'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      accountId: String(row.account_id),
+      amount: Number(row.amount),
+      reason: String(row.reason),
+      status: row.status as PettyCashTopUpRequest['status'],
+      requestedBy: String(row.requested_by),
+      requestedAt: String(row.requested_at),
+      approvedBy: (row.approved_by as string | null) ?? null,
+      approvedAt: (row.approved_at as string | null) ?? null,
+      rejectedReason: (row.rejected_reason as string | null) ?? null,
+      disbursementId: (row.disbursement_id as string | null) ?? null,
+    }))
+  },
+
+  async listPettyCashLedger(accountId?: string): Promise<PettyCashLedgerEntry[]> {
+    let q = sb()
+      .from('petty_cash_ledger_entries')
+      .select(
+        'id, organization_id, account_id, entry_type, amount, balance_after, source_type, source_id, note, posted_at, created_by',
+      )
+    if (accountId) q = q.eq('account_id', requireUuid(accountId, '帳戶'))
+    const { data, error } = await q.order('posted_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入零用金流水'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      accountId: String(row.account_id),
+      entryType: row.entry_type as PettyCashLedgerEntry['entryType'],
+      amount: Number(row.amount),
+      balanceAfter: Number(row.balance_after),
+      sourceType: row.source_type as PettyCashLedgerEntry['sourceType'],
+      sourceId: String(row.source_id),
+      note: (row.note as string | null) ?? null,
+      postedAt: String(row.posted_at),
+      createdBy: String(row.created_by ?? ''),
+    }))
+  },
+
+  async requestPettyCashTopUp(
+    actor: AppUser,
+    input: { accountId: string; amount: number; reason: string },
+  ): Promise<PettyCashTopUpRequest> {
+    assertCanRequest(actor.role)
+    const amount = assertTopUpAmount(input.amount)
+    const reason = input.reason.trim()
+    if (!reason) throw new AppError('請填寫補充原因')
+    const { data, error } = await sb()
+      .from('petty_cash_top_up_requests')
+      .insert({
+        account_id: requireUuid(input.accountId, '帳戶'),
+        amount,
+        reason,
+        status: 'pending_approval',
+        requested_by: actor.id,
+      })
+      .select(
+        'id, organization_id, account_id, amount, reason, status, requested_by, requested_at, approved_by, approved_at, rejected_reason, disbursement_id',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法送出申請'))
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      accountId: String(data.account_id),
+      amount: Number(data.amount),
+      reason: String(data.reason),
+      status: data.status as PettyCashTopUpRequest['status'],
+      requestedBy: String(data.requested_by),
+      requestedAt: String(data.requested_at),
+      approvedBy: (data.approved_by as string | null) ?? null,
+      approvedAt: (data.approved_at as string | null) ?? null,
+      rejectedReason: (data.rejected_reason as string | null) ?? null,
+      disbursementId: (data.disbursement_id as string | null) ?? null,
+    }
+  },
+
+  async approvePettyCashTopUp(
+    actor: AppUser,
+    requestId: string,
+  ): Promise<PettyCashTopUpRequest> {
+    assertCanApprove(actor.role)
+    const rid = requireUuid(requestId, '申請')
+    const requests = await this.listPettyCashRequests()
+    const current = requests.find((r) => r.id === rid)
+    if (!current) throw new AppError('找不到申請')
+    assertRequestApprovable(current.status)
+    const accounts = await this.listPettyCashAccounts()
+    const account = accounts.find((a) => a.id === current.accountId)
+    if (!account) throw new AppError('找不到零用金帳戶')
+    const balanceBefore = account.balance
+    const { data, error } = await sb()
+      .from('petty_cash_top_up_requests')
+      .update({
+        status: 'approved',
+        approved_by: actor.id,
+        approved_at: new Date().toISOString(),
+      })
+      .eq('id', rid)
+      .select(
+        'id, organization_id, account_id, amount, reason, status, requested_by, requested_at, approved_by, approved_at, rejected_reason, disbursement_id',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法核准'))
+    const afterAccounts = await this.listPettyCashAccounts()
+    const after = afterAccounts.find((a) => a.id === current.accountId)
+    assertApproveDoesNotCreditBalance({
+      balanceBefore,
+      balanceAfterApprove: after?.balance ?? balanceBefore,
+    })
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      accountId: String(data.account_id),
+      amount: Number(data.amount),
+      reason: String(data.reason),
+      status: data.status as PettyCashTopUpRequest['status'],
+      requestedBy: String(data.requested_by),
+      requestedAt: String(data.requested_at),
+      approvedBy: (data.approved_by as string | null) ?? null,
+      approvedAt: (data.approved_at as string | null) ?? null,
+      rejectedReason: (data.rejected_reason as string | null) ?? null,
+      disbursementId: (data.disbursement_id as string | null) ?? null,
+    }
+  },
+
+  async rejectPettyCashTopUp(
+    actor: AppUser,
+    input: { requestId: string; reason: string },
+  ): Promise<PettyCashTopUpRequest> {
+    assertCanApprove(actor.role)
+    const rid = requireUuid(input.requestId, '申請')
+    const current = (await this.listPettyCashRequests()).find((r) => r.id === rid)
+    if (!current) throw new AppError('找不到申請')
+    assertRequestApprovable(current.status)
+    const { data, error } = await sb()
+      .from('petty_cash_top_up_requests')
+      .update({
+        status: 'rejected',
+        approved_by: actor.id,
+        approved_at: new Date().toISOString(),
+        rejected_reason: input.reason.trim() || '駁回',
+      })
+      .eq('id', rid)
+      .select(
+        'id, organization_id, account_id, amount, reason, status, requested_by, requested_at, approved_by, approved_at, rejected_reason, disbursement_id',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法駁回'))
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      accountId: String(data.account_id),
+      amount: Number(data.amount),
+      reason: String(data.reason),
+      status: data.status as PettyCashTopUpRequest['status'],
+      requestedBy: String(data.requested_by),
+      requestedAt: String(data.requested_at),
+      approvedBy: (data.approved_by as string | null) ?? null,
+      approvedAt: (data.approved_at as string | null) ?? null,
+      rejectedReason: (data.rejected_reason as string | null) ?? null,
+      disbursementId: (data.disbursement_id as string | null) ?? null,
+    }
+  },
+
+  async disbursePettyCashTopUp(
+    actor: AppUser,
+    input: { requestId: string; note?: string | null },
+  ): Promise<PettyCashDisbursement> {
+    assertCanDisburse(actor.role)
+    const rid = requireUuid(input.requestId, '申請')
+    const request = (await this.listPettyCashRequests()).find((r) => r.id === rid)
+    if (!request) throw new AppError('找不到申請')
+    assertRequestDisbursable(request.status)
+    const accounts = await this.listPettyCashAccounts()
+    const account = accounts.find((a) => a.id === request.accountId)
+    if (!account) throw new AppError('找不到零用金帳戶')
+    const nextBalance = applyDisbursementCredit({
+      balance: account.balance,
+      amount: request.amount,
+    })
+    const { data: disbursement, error: dError } = await sb()
+      .from('petty_cash_disbursements')
+      .insert({
+        request_id: rid,
+        account_id: requireUuid(account.id, '帳戶'),
+        amount: request.amount,
+        disbursed_by: actor.id,
+        note: input.note?.trim() || null,
+      })
+      .select(
+        'id, organization_id, request_id, account_id, amount, disbursed_by, disbursed_at, note',
+      )
+      .single()
+    if (dError) throw new AppError(toUserMessage(dError, '無法撥款'))
+    const { error: balError } = await sb()
+      .from('petty_cash_accounts')
+      .update({
+        balance: nextBalance,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', account.id)
+    if (balError) throw new AppError(toUserMessage(balError, '無法更新餘額'))
+    const { error: reqError } = await sb()
+      .from('petty_cash_top_up_requests')
+      .update({
+        status: 'disbursed',
+        disbursement_id: disbursement.id,
+      })
+      .eq('id', rid)
+    if (reqError) throw new AppError(toUserMessage(reqError, '無法更新申請狀態'))
+    const { error: ledError } = await sb().from('petty_cash_ledger_entries').insert({
+      account_id: account.id,
+      entry_type: 'top_up',
+      amount: request.amount,
+      balance_after: nextBalance,
+      source_type: 'disbursement',
+      source_id: disbursement.id,
+      note: input.note?.trim() || `補充申請 ${rid}`,
+      created_by: actor.id,
+    })
+    if (ledError) throw new AppError(toUserMessage(ledError, '無法寫入流水'))
+    return {
+      id: String(disbursement.id),
+      organizationId: String(disbursement.organization_id),
+      requestId: String(disbursement.request_id),
+      accountId: String(disbursement.account_id),
+      amount: Number(disbursement.amount),
+      disbursedBy: String(disbursement.disbursed_by),
+      disbursedAt: String(disbursement.disbursed_at),
+      note: (disbursement.note as string | null) ?? null,
+    }
   },
 
   async createMaterial(
