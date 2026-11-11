@@ -1,15 +1,23 @@
 import { useMemo, useState, type ChangeEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import JSZip from 'jszip'
 import {
   PHOTO_TYPE_LABELS,
   PHOTO_TYPE_OPTIONS,
   groupPhotosByType,
   type PhotoType,
 } from '@/domain/photoTypes'
+import type { PhotoUpload } from '@/domain/types'
 import { useAttendance } from '@/hooks/useAttendance'
 import { usePhotos } from '@/hooks/usePhotos'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
+import { supabaseRepos } from '@/lib/supabaseRepos'
+import {
+  downloadBlob,
+  generateSitePhotosPdfBlob,
+  sitePhotosPdfFilename,
+} from '@/lib/sitePhotoExport'
 
 export function PhotosPage() {
   const [params] = useSearchParams()
@@ -22,9 +30,11 @@ export function PhotosPage() {
     linkPhoto,
     classifyPhoto,
     discardPhoto,
+    deletePhotos,
     isLinking,
     isClassifying,
     isDiscarding,
+    isDeleting,
     uploadPhoto,
     isUploading,
     uploadError,
@@ -39,6 +49,10 @@ export function PhotosPage() {
   const [uploadPhotoType, setUploadPhotoType] =
     useState<PhotoType>('unclassified')
   const [filterType, setFilterType] = useState<PhotoType | 'all'>('all')
+  const [selected, setSelected] = useState<Record<string, boolean>>({})
+  const [viewer, setViewer] = useState<PhotoUpload | null>(null)
+  const [busyAction, setBusyAction] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const scopedSite = sites.find((s) => s.id === scopedSiteId)
   const effectiveUploadSite = scopedSiteId || uploadSiteId
@@ -56,6 +70,31 @@ export function PhotosPage() {
     return linked.filter((p) => (p.photoType || 'unclassified') === filterType)
   }, [linked, filterType])
   const grouped = useMemo(() => groupPhotosByType(linked), [linked])
+  const selectedIds = useMemo(
+    () => Object.keys(selected).filter((id) => selected[id]),
+    [selected],
+  )
+  const selectedPhotos = useMemo(
+    () => linkedFiltered.filter((p) => selected[p.id]),
+    [linkedFiltered, selected],
+  )
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => ({ ...prev, [id]: !prev[id] }))
+  }
+
+  function toggleSelectAll() {
+    if (
+      linkedFiltered.length > 0 &&
+      linkedFiltered.every((p) => selected[p.id])
+    ) {
+      setSelected({})
+      return
+    }
+    const next: Record<string, boolean> = {}
+    for (const p of linkedFiltered) next[p.id] = true
+    setSelected(next)
+  }
 
   async function onPickFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -70,6 +109,82 @@ export function PhotosPage() {
       siteId: effectiveUploadSite,
       photoType: uploadPhotoType,
     })
+  }
+
+  async function onDeleteSelected() {
+    if (selectedIds.length === 0) return
+    if (!window.confirm(`確定刪除 ${selectedIds.length} 張照片？此操作無法復原。`)) {
+      return
+    }
+    setActionError(null)
+    setBusyAction('delete')
+    try {
+      await deletePhotos(selectedIds)
+      setSelected({})
+      if (viewer && selectedIds.includes(viewer.id)) setViewer(null)
+    } catch (e) {
+      setActionError((e as Error).message)
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  async function onDownloadSelected() {
+    const targets = selectedPhotos.length > 0 ? selectedPhotos : linkedFiltered
+    if (targets.length === 0) return
+    setActionError(null)
+    setBusyAction('download')
+    try {
+      const files = await supabaseRepos.downloadPhotoBlobs(
+        targets.map((p) => ({
+          id: p.id,
+          storagePath: p.storagePath,
+          contentType: p.contentType,
+        })),
+      )
+      if (files.length === 1) {
+        downloadBlob(files[0].blob, files[0].filename)
+      } else {
+        const zip = new JSZip()
+        for (const f of files) zip.file(f.filename, f.blob)
+        const blob = await zip.generateAsync({ type: 'blob' })
+        const name = scopedSite
+          ? `${scopedSite.name}_照片.zip`
+          : `施工照片_${files.length}.zip`
+        downloadBlob(blob, name.replace(/[\\/:*?"<>|]+/g, '_'))
+      }
+    } catch (e) {
+      setActionError((e as Error).message)
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
+  async function onExportPdf() {
+    const targets = selectedPhotos.length > 0 ? selectedPhotos : linkedFiltered
+    const withUrl = targets.filter((p) => p.previewUrl)
+    if (withUrl.length === 0) {
+      setActionError('沒有可匯出的照片')
+      return
+    }
+    setActionError(null)
+    setBusyAction('pdf')
+    try {
+      const blob = await generateSitePhotosPdfBlob({
+        siteName: scopedSite?.name || '施工照片',
+        photos: withUrl.map((p) => ({
+          previewUrl: p.previewUrl!,
+          photoType: p.photoType,
+          createdAt: p.createdAt,
+          uploaderName: p.uploaderName,
+        })),
+      })
+      downloadBlob(blob, sitePhotosPdfFilename(scopedSite?.name || '施工照片'))
+    } catch (e) {
+      setActionError((e as Error).message)
+    } finally {
+      setBusyAction(null)
+    }
   }
 
   if (!isFormalMode) {
@@ -106,7 +221,7 @@ export function PhotosPage() {
       </section>
 
       <section className="panel stack">
-        <strong>上傳（分類引導）</strong>
+        <strong>上傳</strong>
         {!scopedSiteId ? (
           <div className="field">
             <label htmlFor="upload-site">工地（必填）</label>
@@ -173,16 +288,24 @@ export function PhotosPage() {
           {pending.map((photo) => (
             <div key={photo.id} className="site-link stack">
               {photo.previewUrl ? (
-                <img
-                  src={photo.previewUrl}
-                  alt="施工照片"
-                  style={{
-                    width: '100%',
-                    maxHeight: 240,
-                    objectFit: 'cover',
-                    borderRadius: 8,
-                  }}
-                />
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ padding: 0, border: 'none', background: 'transparent' }}
+                  onClick={() => setViewer(photo)}
+                >
+                  <img
+                    src={photo.previewUrl}
+                    alt="施工照片"
+                    style={{
+                      width: '100%',
+                      maxHeight: 240,
+                      objectFit: 'cover',
+                      borderRadius: 8,
+                      display: 'block',
+                    }}
+                  />
+                </button>
               ) : (
                 <div className="empty">無法預覽</div>
               )}
@@ -191,7 +314,6 @@ export function PhotosPage() {
                 {new Date(photo.createdAt).toLocaleString('zh-TW', {
                   timeZone: 'Asia/Taipei',
                 })}
-                （台北） · {photo.source}
               </p>
               <div className="field">
                 <label htmlFor={`site-${photo.id}`}>指定工地</label>
@@ -250,10 +372,21 @@ export function PhotosPage() {
                 <button
                   className="btn btn-ghost"
                   type="button"
-                  disabled={isDiscarding}
+                  disabled={isDiscarding || isDeleting}
                   onClick={() => void discardPhoto(photo.id)}
                 >
                   捨棄
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => {
+                    if (!window.confirm('確定刪除此照片？')) return
+                    void deletePhotos([photo.id])
+                  }}
+                >
+                  刪除
                 </button>
               </div>
             </div>
@@ -281,22 +414,118 @@ export function PhotosPage() {
             ))}
           </select>
         </div>
+
+        {linkedFiltered.length > 0 ? (
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={toggleSelectAll}
+            >
+              {linkedFiltered.every((p) => selected[p.id])
+                ? '取消全選'
+                : '全選'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={
+                Boolean(busyAction) ||
+                isDeleting ||
+                (selectedIds.length === 0 && linkedFiltered.length === 0)
+              }
+              onClick={() => void onDownloadSelected()}
+            >
+              {busyAction === 'download'
+                ? '下載中…'
+                : selectedIds.length > 0
+                  ? `下載選取（${selectedIds.length}）`
+                  : '全部下載'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={
+                Boolean(busyAction) ||
+                isDeleting ||
+                selectedIds.length === 0
+              }
+              onClick={() => void onDeleteSelected()}
+            >
+              {busyAction === 'delete' || isDeleting
+                ? '刪除中…'
+                : `刪除選取（${selectedIds.length}）`}
+            </button>
+            <button
+              type="button"
+              className="btn btn-steel"
+              disabled={Boolean(busyAction) || linkedFiltered.length === 0}
+              onClick={() => void onExportPdf()}
+            >
+              {busyAction === 'pdf'
+                ? '匯出中…'
+                : selectedIds.length > 0
+                  ? `匯出 PDF（${selectedIds.length}）`
+                  : '匯出 PDF'}
+            </button>
+          </div>
+        ) : null}
+
+        {actionError ? (
+          <p style={{ color: 'var(--danger)', margin: 0 }}>{actionError}</p>
+        ) : null}
+
         {linkedFiltered.length === 0 && !isLoading ? (
           <div className="empty">尚無照片。</div>
         ) : null}
-        {linkedFiltered.slice(0, 40).map((photo) => (
+        {linkedFiltered.map((photo) => (
           <div key={photo.id} className="site-link stack">
-            {photo.previewUrl ? (
-              <img
-                src={photo.previewUrl}
-                alt="已歸檔照片"
-                style={{
-                  width: '100%',
-                  maxHeight: 180,
-                  objectFit: 'cover',
-                  borderRadius: 8,
+            <div className="row between" style={{ gap: 8 }}>
+              <label className="row" style={{ gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(selected[photo.id])}
+                  onChange={() => toggleSelect(photo.id)}
+                />
+                <span>選取</span>
+              </label>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={isDeleting}
+                onClick={() => {
+                  if (!window.confirm('確定刪除此照片？')) return
+                  void deletePhotos([photo.id]).then(() => {
+                    setSelected((prev) => {
+                      const next = { ...prev }
+                      delete next[photo.id]
+                      return next
+                    })
+                  })
                 }}
-              />
+              >
+                刪除
+              </button>
+            </div>
+            {photo.previewUrl ? (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ padding: 0, border: 'none', background: 'transparent' }}
+                onClick={() => setViewer(photo)}
+              >
+                <img
+                  src={photo.previewUrl}
+                  alt="已歸檔照片"
+                  style={{
+                    width: '100%',
+                    maxHeight: 180,
+                    objectFit: 'cover',
+                    borderRadius: 8,
+                    display: 'block',
+                  }}
+                />
+              </button>
             ) : null}
             <div className="row between" style={{ flexWrap: 'wrap', gap: 8 }}>
               <p style={{ margin: 0 }}>
@@ -325,6 +554,89 @@ export function PhotosPage() {
           </div>
         ))}
       </section>
+
+      {viewer?.previewUrl ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="照片預覽"
+          onClick={() => setViewer(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.82)',
+            zIndex: 80,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            className="stack"
+            style={{ maxWidth: 720, width: '100%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={viewer.previewUrl}
+              alt="預覽"
+              style={{
+                width: '100%',
+                maxHeight: '75vh',
+                objectFit: 'contain',
+                borderRadius: 8,
+                background: '#111',
+              }}
+            />
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-steel"
+                onClick={() => setViewer(null)}
+              >
+                關閉
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={Boolean(busyAction)}
+                onClick={() => {
+                  void (async () => {
+                    setBusyAction('download')
+                    try {
+                      const files = await supabaseRepos.downloadPhotoBlobs([
+                        {
+                          id: viewer.id,
+                          storagePath: viewer.storagePath,
+                          contentType: viewer.contentType,
+                        },
+                      ])
+                      downloadBlob(files[0].blob, files[0].filename)
+                    } catch (e) {
+                      setActionError((e as Error).message)
+                    } finally {
+                      setBusyAction(null)
+                    }
+                  })()
+                }}
+              >
+                下載
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={isDeleting}
+                onClick={() => {
+                  if (!window.confirm('確定刪除此照片？')) return
+                  void deletePhotos([viewer.id]).then(() => setViewer(null))
+                }}
+              >
+                刪除
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

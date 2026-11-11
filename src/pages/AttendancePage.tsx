@@ -99,6 +99,11 @@ export function AttendancePage() {
     setProposedIn(isoToTaipeiLocal(record.clockInAt))
     setProposedOut(isoToTaipeiLocal(record.clockOutAt))
     setProposedSiteId(record.siteId ?? '')
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById('correction-form')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
   }
 
   async function onSubmitCorrection(event: FormEvent) {
@@ -227,7 +232,7 @@ export function AttendancePage() {
                   disabled={isApprovingCorrection}
                   onClick={() => void approveCorrection(c.id)}
                 >
-                  核准
+                  核准並覆蓋出勤
                 </button>
               </div>
               <div className="field">
@@ -268,8 +273,8 @@ export function AttendancePage() {
         </section>
       ) : null}
 
-      <section className="panel stack">
-        <strong>補打卡申請</strong>
+      <section className="panel stack" id="correction-form">
+        <strong>申請更正</strong>
         <form className="stack" onSubmit={(e) => void onSubmitCorrection(e)}>
           <div className="field">
             <label htmlFor="link-attendance">對應出勤（可選）</label>
@@ -340,7 +345,7 @@ export function AttendancePage() {
             className="btn btn-steel btn-block"
             disabled={isApplyingCorrection}
           >
-            {isApplyingCorrection ? '送出中…' : '送出補打卡'}
+            {isApplyingCorrection ? '送出中…' : '送出更正申請'}
           </button>
           {applyCorrectionError ? (
             <p className="error">{(applyCorrectionError as Error).message}</p>

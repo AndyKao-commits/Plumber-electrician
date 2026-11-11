@@ -4699,12 +4699,42 @@ getOrgSpendSettings(): OrgSpendSettings {
       actorId: actor.id,
       requesterId: current.userId,
     })
+    const effectiveIn = current.proposedClockInAt
+    const effectiveOut = current.proposedClockOutAt ?? null
+    const effectiveSite = current.proposedSiteId ?? null
+
+    if (current.attendanceId) {
+      const att = this.getAttendance().find((a) => a.id === current.attendanceId)
+      if (!att) throw new Error('找不到要覆蓋的出勤紀錄')
+      this.saveAttendance({
+        ...att,
+        clockInAt: effectiveIn,
+        clockOutAt: effectiveOut,
+        siteId: effectiveSite,
+        status: effectiveOut ? 'clocked_out' : 'clocked_in',
+      })
+    } else {
+      this.saveAttendance({
+        id: `att-${crypto.randomUUID()}`,
+        organizationId: current.organizationId,
+        userId: current.userId,
+        clockInAt: effectiveIn,
+        clockOutAt: effectiveOut,
+        siteId: effectiveSite,
+        status: effectiveOut ? 'clocked_out' : 'clocked_in',
+        jobType: 'project',
+        latitude: null,
+        longitude: null,
+        note: `補打卡核准：${current.reason}`,
+      })
+    }
+
     const updated: AttendanceCorrection = {
       ...current,
       status: 'approved',
-      effectiveClockInAt: current.proposedClockInAt,
-      effectiveClockOutAt: current.proposedClockOutAt ?? null,
-      effectiveSiteId: current.proposedSiteId ?? null,
+      effectiveClockInAt: effectiveIn,
+      effectiveClockOutAt: effectiveOut,
+      effectiveSiteId: effectiveSite,
       reviewedBy: actor.id,
       reviewedAt: new Date().toISOString(),
     }
@@ -4716,7 +4746,7 @@ getOrgSpendSettings(): OrgSpendSettings {
       organizationId: ORG_ID,
       userId: current.userId,
       kind: 'notice',
-      title: '補打卡已核准',
+      title: '補打卡已核准（已覆蓋出勤）',
       detail: current.reason,
       status: 'open',
       unread: true,

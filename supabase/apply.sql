@@ -4032,3 +4032,21 @@ comment on table public.salary_entries is
   '薪資明細項目：老闆登錄／確認／支付；員工僅可讀自己的資料';
 comment on table public.salary_entry_corrections is
   '已確認薪資更正紀錄：保留操作者、時間與原因，不可默默覆寫';
+
+-- ===== Photo delete policies (from migrations/20261111_photo_delete_and_storage.sql) =====
+-- Allow org members to hard-delete construction photos (row + storage object).
+
+grant delete on table public.photo_uploads to authenticated;
+
+drop policy if exists "photo_uploads_delete_org" on public.photo_uploads;
+create policy "photo_uploads_delete_org"
+  on public.photo_uploads for delete to authenticated
+  using (organization_id = public.current_user_org_id());
+
+drop policy if exists "site_photos_delete_org" on storage.objects;
+create policy "site_photos_delete_org"
+  on storage.objects for delete to authenticated
+  using (
+    bucket_id = 'site-photos'
+    and (storage.foldername(name))[1] = public.current_user_org_id()::text
+  );
