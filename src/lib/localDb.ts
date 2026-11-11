@@ -103,7 +103,12 @@ import type {
   StockBalance,
   ExpenseReport,
   EmployeeAdvance,
+  EmployeePaySetting,
+  SalaryEntry,
+  SalaryEntryCategory,
+  SalaryEntryStatus,
   CashReceiptReport,
+  PayType,
   AuditLogEntry,
   StockLocation,
   StockMovement,
@@ -197,6 +202,16 @@ import {
   assertCanSettleAdvances,
   buildSettleExpenseItem,
 } from '@/domain/employeeAdvances'
+import {
+  assertBossSalaryAction,
+  assertCorrectionReason,
+  assertPayType,
+  assertSalaryAmount,
+  assertSalaryCategory,
+  canConfirmSalaryEntry,
+  canMarkSalaryPaid,
+  periodFromDate,
+} from '@/domain/salary'
 import { buildAuditEntry, type AuditAction } from '@/domain/auditLog'
 import {
   assertSpendSettingsInput,
@@ -268,6 +283,9 @@ const KEYS = {
   expenseReports: 'eg.expenseReports.v1',
   cashReceipts: 'eg.cashReceipts.v1',
   employeeAdvances: 'eg.employeeAdvances.v1',
+  employeePaySettings: 'eg.employeePaySettings.v1',
+  salaryEntries: 'eg.salaryEntries.v1',
+  salaryCorrections: 'eg.salaryCorrections.v1',
   auditLogs: 'eg.auditLogs.v1',
   orgSpendSettings: 'eg.orgSpendSettings.v1',
   siteMembers: 'eg.siteMembers.v1',
@@ -338,6 +356,17 @@ const emptySuppliers: Supplier[] = []
 const emptyExpenseReports: ExpenseReport[] = []
 const emptyCashReceipts: CashReceiptReport[] = []
 const emptyEmployeeAdvances: EmployeeAdvance[] = []
+const emptyEmployeePaySettings: EmployeePaySetting[] = []
+const emptySalaryEntries: SalaryEntry[] = []
+const emptySalaryCorrections: Array<{
+  id: string
+  salaryEntryId: string
+  beforeJson: string
+  afterJson: string
+  reason: string
+  correctedBy: string
+  createdAt: string
+}> = []
 const emptyAuditLogs: AuditLogEntry[] = []
 
 function write<T>(key: string, value: T) {
@@ -758,6 +787,9 @@ function seedIfNeeded() {
   ])
   write(KEYS.expenseReports, emptyExpenseReports)
   write(KEYS.employeeAdvances, emptyEmployeeAdvances)
+  write(KEYS.employeePaySettings, emptyEmployeePaySettings)
+  write(KEYS.salaryEntries, emptySalaryEntries)
+  write(KEYS.salaryCorrections, emptySalaryCorrections)
   write(KEYS.cashReceipts, emptyCashReceipts)
   write(KEYS.auditLogs, emptyAuditLogs)
   write(KEYS.orgSpendSettings, defaultOrgSpendSettings(ORG_ID))
@@ -966,6 +998,227 @@ export const localDb = {
         return formatTaipei(c.recordedAt, 'yyyy-MM-dd') === day
       })
       .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
+  },
+
+  listAttendanceForMonth(
+    userId: string,
+    year: number,
+    month: number,
+  ): AttendanceRecord[] {
+    const prefix = `${year}-${String(month).padStart(2, '0')}`
+    return this.getAttendance()
+      .filter(
+        (a) =>
+          a.userId === userId &&
+          formatTaipei(a.clockInAt, 'yyyy-MM').startsWith(prefix),
+      )
+      .sort((a, b) => a.clockInAt.localeCompare(b.clockInAt))
+  },
+
+  getEmployeePaySetting(userId: string): EmployeePaySetting | null {
+    return (
+      read(KEYS.employeePaySettings, emptyEmployeePaySettings)
+        .filter((s) => s.userId === userId)
+        .sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0] ??
+      null
+    )
+  },
+
+  upsertEmployeePaySetting(
+    actor: { id: string; role: AppUser['role'] },
+    input: {
+      userId: string
+      payType: PayType
+      baseAmount: number
+      effectiveFrom: string
+      note?: string | null
+    },
+  ): EmployeePaySetting {
+    assertBossSalaryAction(actor.role)
+    const payType = assertPayType(input.payType)
+    const baseAmount = Math.round(Number(input.baseAmount))
+    if (!Number.isFinite(baseAmount) || baseAmount < 0) {
+      throw new Error('基本薪資需為 0 以上整數')
+    }
+    const effectiveFrom = input.effectiveFrom.slice(0, 10)
+    const all = read(KEYS.employeePaySettings, emptyEmployeePaySettings)
+    const idx = all.findIndex(
+      (s) => s.userId === input.userId && s.effectiveFrom === effectiveFrom,
+    )
+    const now = new Date().toISOString()
+    const row: EmployeePaySetting =
+      idx >= 0
+        ? {
+            ...all[idx],
+            payType,
+            baseAmount,
+            note: input.note?.trim() || null,
+            updatedBy: actor.id,
+            updatedAt: now,
+          }
+        : {
+            id: `payset-${crypto.randomUUID()}`,
+            organizationId: ORG_ID,
+            userId: input.userId,
+            payType,
+            baseAmount,
+            effectiveFrom,
+            note: input.note?.trim() || null,
+            updatedBy: actor.id,
+            createdAt: now,
+            updatedAt: now,
+          }
+    if (idx >= 0) all[idx] = row
+    else all.unshift(row)
+    write(KEYS.employeePaySettings, all)
+    const users = this.getUsers()
+    const uidx = users.findIndex((u) => u.id === input.userId)
+    if (uidx >= 0) {
+      users[uidx] = { ...users[uidx], payType }
+      write(KEYS.users, users)
+    }
+    return row
+  },
+
+  listSalaryEntries(filter: {
+    year: number
+    month: number
+    userId?: string
+  }): SalaryEntry[] {
+    return read(KEYS.salaryEntries, emptySalaryEntries)
+      .filter((e) => {
+        if (e.periodYear !== filter.year || e.periodMonth !== filter.month) {
+          return false
+        }
+        if (filter.userId && e.userId !== filter.userId) return false
+        return true
+      })
+      .sort((a, b) => a.entryDate.localeCompare(b.entryDate))
+  },
+
+  createSalaryEntry(
+    actor: { id: string; role: AppUser['role'] },
+    input: {
+      userId: string
+      userName: string
+      entryDate: string
+      category: SalaryEntryCategory
+      amount: number
+      title: string
+      note?: string | null
+      siteId?: string | null
+      siteName?: string | null
+      status?: SalaryEntryStatus
+    },
+  ): SalaryEntry {
+    assertBossSalaryAction(actor.role)
+    const category = assertSalaryCategory(input.category)
+    const amount = assertSalaryAmount(input.amount, category)
+    const entryDate = input.entryDate.slice(0, 10)
+    const { year, month } = periodFromDate(entryDate)
+    const now = new Date().toISOString()
+    const row: SalaryEntry = {
+      id: `sal-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      userId: input.userId,
+      userName: input.userName,
+      periodYear: year,
+      periodMonth: month,
+      entryDate,
+      category,
+      amount,
+      title: input.title.trim(),
+      note: input.note?.trim() || null,
+      siteId: input.siteId || null,
+      siteName: input.siteName || null,
+      status: input.status ?? 'pending',
+      createdBy: actor.id,
+      createdAt: now,
+      updatedAt: now,
+    }
+    const all = read(KEYS.salaryEntries, emptySalaryEntries)
+    all.unshift(row)
+    write(KEYS.salaryEntries, all)
+    return row
+  },
+
+  updateSalaryEntryStatus(
+    actor: { id: string; role: AppUser['role'] },
+    input: {
+      id: string
+      status: 'confirmed' | 'paid' | 'cancelled' | 'pending'
+      reason?: string | null
+    },
+  ): SalaryEntry {
+    assertBossSalaryAction(actor.role)
+    const all = read(KEYS.salaryEntries, emptySalaryEntries)
+    const idx = all.findIndex((e) => e.id === input.id)
+    if (idx < 0) throw new Error('找不到薪資項目')
+    const before = all[idx]
+    const now = new Date().toISOString()
+    let next = { ...before, status: input.status as SalaryEntryStatus, updatedAt: now }
+    if (input.status === 'confirmed') {
+      if (!canConfirmSalaryEntry(before.status)) throw new Error('此狀態不可確認')
+      next = { ...next, confirmedBy: actor.id, confirmedAt: now }
+    } else if (input.status === 'paid') {
+      if (!canMarkSalaryPaid(before.status)) {
+        throw new Error('僅已確認項目可標記支付')
+      }
+      next = { ...next, paidBy: actor.id, paidAt: now }
+    } else if (input.status === 'cancelled') {
+      next = {
+        ...next,
+        cancelledBy: actor.id,
+        cancelledAt: now,
+        cancelReason: input.reason?.trim() || null,
+      }
+    }
+    all[idx] = next
+    write(KEYS.salaryEntries, all)
+    return next
+  },
+
+  correctSalaryEntry(
+    actor: { id: string; role: AppUser['role'] },
+    input: {
+      id: string
+      amount: number
+      title?: string
+      note?: string | null
+      reason: string
+    },
+  ): SalaryEntry {
+    assertBossSalaryAction(actor.role)
+    const reason = assertCorrectionReason(input.reason)
+    const all = read(KEYS.salaryEntries, emptySalaryEntries)
+    const idx = all.findIndex((e) => e.id === input.id)
+    if (idx < 0) throw new Error('找不到薪資項目')
+    const before = all[idx]
+    if (before.status !== 'confirmed' && before.status !== 'paid') {
+      throw new Error('僅已確認／已支付項目需走更正流程')
+    }
+    const amount = assertSalaryAmount(input.amount, before.category)
+    const after: SalaryEntry = {
+      ...before,
+      amount,
+      title: input.title?.trim() || before.title,
+      note: input.note !== undefined ? input.note?.trim() || null : before.note,
+      updatedAt: new Date().toISOString(),
+    }
+    all[idx] = after
+    write(KEYS.salaryEntries, all)
+    const corr = read(KEYS.salaryCorrections, emptySalaryCorrections)
+    corr.unshift({
+      id: `salcorr-${crypto.randomUUID()}`,
+      salaryEntryId: before.id,
+      beforeJson: JSON.stringify(before),
+      afterJson: JSON.stringify(after),
+      reason,
+      correctedBy: actor.id,
+      createdAt: new Date().toISOString(),
+    })
+    write(KEYS.salaryCorrections, corr)
+    return after
   },
 
   listTeamPresenceToday(): TeamPresence[] {

@@ -19,7 +19,9 @@ import { NotificationsPage } from '@/pages/NotificationsPage'
 import { PhotosPage } from '@/pages/PhotosPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { LocationCheckinPage } from '@/pages/LocationCheckinPage'
+import { MySalaryPage } from '@/pages/MySalaryPage'
 import { ProfilePage } from '@/pages/ProfilePage'
+import { SalaryAdminPage } from '@/pages/SalaryAdminPage'
 import { PurchasesPage } from '@/pages/PurchasesPage'
 import { ReportsPage } from '@/pages/ReportsPage'
 import { QuoteDetailPage } from '@/pages/QuoteDetailPage'
@@ -68,6 +70,8 @@ export default function App() {
             <Route path="/photos" element={<Protected><PhotosPage /></Protected>} />
             <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
             <Route path="/profile" element={<Protected><ProfilePage /></Protected>} />
+            <Route path="/my-salary" element={<Protected><MySalaryPage /></Protected>} />
+            <Route path="/salary" element={<Protected><SalaryAdminPage /></Protected>} />
             <Route path="/location-checkin" element={<Protected><LocationCheckinPage /></Protected>} />
             <Route path="/reports" element={<Protected><ReportsPage /></Protected>} />
             <Route path="/audit" element={<Protected><AuditPage /></Protected>} />

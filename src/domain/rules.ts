@@ -58,7 +58,7 @@ export const FEATURE_FLAGS = {
   offlineFirst: false,
   gpsOptionalOnClockIn: true,
   autoDeductBreak: false,
-  payrollMonthly: false,
+  payrollMonthly: true,
   simpleInventory: true,
   hybridInventory: false,
   lineOfficialAccount: true,
@@ -146,6 +146,19 @@ export const MORE_MENU = [
         label: '個人資料',
         path: '/profile',
         description: '暱稱、工種、到職資訊',
+      },
+      {
+        id: 'my-salary',
+        label: '我的薪資與出勤',
+        path: '/my-salary',
+        description: '當月累積、明細與歷史出勤',
+      },
+      {
+        id: 'salary-admin',
+        label: '薪資管理',
+        path: '/salary',
+        description: '設定薪資、獎勵、確認與付款',
+        bossOnly: true,
       },
       {
         id: 'settings',
