@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNotices, noticeKeys } from '@/hooks/useNotices'
 import { useSites } from '@/hooks/useSites'
+import { useTeam } from '@/hooks/useTeam'
 import { useUser } from '@/hooks/useUser'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
+import { localDb } from '@/lib/localDb'
 import { enqueueOfflineOp, isBrowserOnline } from '@/lib/offlineQueue'
 import { notifyOfflineQueueChanged } from '@/lib/offlineSync'
 import { supabaseRepos } from '@/lib/supabaseRepos'
@@ -14,34 +16,52 @@ export function TodosPage() {
   const { user } = useUser()
   const { todos, complete } = useNotices(user?.id)
   const { sites } = useSites()
+  const { members } = useTeam()
   const queryClient = useQueryClient()
   const formal = isFormalMode()
   const [title, setTitle] = useState('')
   const [detail, setDetail] = useState('')
   const [siteId, setSiteId] = useState('')
+  const [assigneeId, setAssigneeId] = useState('')
   const [showForm, setShowForm] = useState(false)
 
   const createTodo = useMutation({
     mutationFn: async () => {
-      if (!formal) throw new Error('本機示範模式請用系統產生的待辦')
-      const href = siteId ? `/sites/${siteId}` : null
+      const href = siteId ? `/sites/${siteId}` : '/todos'
       const detailText =
         detail ||
         (siteId
           ? `工地：${sites.find((s) => s.id === siteId)?.name || ''}`
           : '')
+      const assignee =
+        assigneeId ||
+        user?.id ||
+        ''
+      if (!user) throw new Error('尚未登入')
+      if (!formal) {
+        return localDb.createAssignedTodo(
+          { id: user.id, name: user.name },
+          {
+            title,
+            detail: detailText,
+            assigneeUserId: assignee,
+            href,
+          },
+        )
+      }
       if (!isBrowserOnline()) {
         enqueueOfflineOp({
           operationType: 'manual_todo',
-          payload: { title, detail: detailText, href },
+          payload: { title, detail: detailText, href, assigneeUserId: assignee },
         })
         notifyOfflineQueueChanged()
         return { queued: true as const }
       }
-      await supabaseRepos.createManualTodo({
+      await supabaseRepos.createAssignedTodo(user, {
         title,
         detail: detailText,
         href,
+        assigneeUserId: assignee,
       })
       return { queued: false as const }
     },
@@ -51,6 +71,7 @@ export function TodosPage() {
       setTitle('')
       setDetail('')
       setSiteId('')
+      setAssigneeId('')
       setShowForm(false)
     },
   })
@@ -60,6 +81,15 @@ export function TodosPage() {
     await createTodo.mutateAsync()
   }
 
+  const teammates = members.length
+    ? members
+    : localDb.getUsers().map((u) => ({
+        userId: u.id,
+        name: u.name,
+        clockedIn: false,
+        siteName: null as string | null,
+      }))
+
   return (
     <div className="stack fade-up">
       <section className="panel stack">
@@ -67,18 +97,16 @@ export function TodosPage() {
           <div>
             <strong>待辦中心</strong>
             <p className="muted" style={{ margin: '4px 0 0' }}>
-              可手動新增；採購核准等系統待辦也會出現在此。不做 LINE 推播。
+              可建立並指派給其他員工；不做 LINE 主動推播。
             </p>
           </div>
-          {formal ? (
-            <button
-              type="button"
-              className="btn btn-steel"
-              onClick={() => setShowForm((v) => !v)}
-            >
-              {showForm ? '取消' : '新增待辦'}
-            </button>
-          ) : null}
+          <button
+            type="button"
+            className="btn btn-steel"
+            onClick={() => setShowForm((v) => !v)}
+          >
+            {showForm ? '取消' : '新增／指派'}
+          </button>
         </div>
       </section>
 
@@ -103,6 +131,21 @@ export function TodosPage() {
                 value={detail}
                 onChange={(e) => setDetail(e.target.value)}
               />
+            </div>
+            <div className="field">
+              <label htmlFor="todo-assignee">指派給</label>
+              <select
+                id="todo-assignee"
+                value={assigneeId || user?.id || ''}
+                onChange={(e) => setAssigneeId(e.target.value)}
+              >
+                {teammates.map((t) => (
+                  <option key={t.userId} value={t.userId}>
+                    {t.name}
+                    {t.userId === user?.id ? '（自己）' : ''}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="field">
               <label htmlFor="todo-site">關聯工地（選填）</label>

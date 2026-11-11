@@ -103,6 +103,14 @@ import {
   assertWithinCreditLimit,
   sumSupplierExposure,
 } from '@/domain/suppliers'
+import {
+  assertBossFinalize,
+  assertCanConfirmReceipt,
+  assertCanReviewExpense,
+  assertExpenseItem,
+  assertPositiveMoney,
+} from '@/domain/fieldFinance'
+import { type AuditAction } from '@/domain/auditLog'
 import { roundMoney } from '@/domain/money'
 import {
   assertCanMarkChangeOrderAccept,
@@ -151,6 +159,9 @@ import type {
   PettyCashTopUpRequest,
   Supplier,
   StockBalance,
+  ExpenseReport,
+  CashReceiptReport,
+  AuditLogEntry,
   StockLocation,
   StockMovement,
   StockReservation,
@@ -4113,6 +4124,386 @@ export const supabaseRepos = {
       p_as_todo: true,
     })
     if (error) throw new AppError(toUserMessage(error, '無法新增待辦'))
+  },
+
+  async createAssignedTodo(
+    actor: AppUser,
+    input: {
+      title: string
+      detail?: string
+      href?: string | null
+      assigneeUserId: string
+    },
+  ): Promise<void> {
+    const title = input.title.trim()
+    if (!title) throw new AppError('請填寫待辦標題')
+    const assignee = requireUuid(input.assigneeUserId, '指派對象')
+    const { error } = await sb().rpc('create_org_notices', {
+      p_recipient_ids: [assignee],
+      p_kind: 'todo',
+      p_title: title,
+      p_detail: input.detail?.trim() || `由 ${actor.name} 指派`,
+      p_href: input.href ?? '/todos',
+      p_as_todo: true,
+    })
+    if (error) throw new AppError(toUserMessage(error, '無法指派待辦'))
+    await this.appendAuditLog(actor, {
+      action: 'todo.assign',
+      targetType: 'todo',
+      targetId: assignee,
+      after: { title, assigneeUserId: assignee },
+    })
+  },
+
+  async appendAuditLog(
+    actor: AppUser,
+    input: {
+      action: AuditAction | string
+      targetType: string
+      targetId: string
+      before?: unknown
+      after?: unknown
+      result?: 'ok' | 'error'
+      message?: string
+    },
+  ): Promise<void> {
+    await sb().from('audit_logs').insert({
+      action: input.action,
+      actor_id: actor.id,
+      actor_name: actor.name,
+      target_type: input.targetType,
+      target_id: input.targetId,
+      before_json: input.before == null ? null : JSON.stringify(input.before),
+      after_json: input.after == null ? null : JSON.stringify(input.after),
+      result: input.result || 'ok',
+      message: input.message || null,
+    })
+  },
+
+  async listAuditLogs(): Promise<AuditLogEntry[]> {
+    const { data, error } = await sb()
+      .from('audit_logs')
+      .select(
+        'id, organization_id, action, actor_id, actor_name, target_type, target_id, before_json, after_json, result, message, created_at',
+      )
+      .order('created_at', { ascending: false })
+      .limit(80)
+    if (error) throw new AppError(toUserMessage(error, '無法載入操作紀錄'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      action: String(row.action),
+      actorId: String(row.actor_id),
+      actorName: String(row.actor_name),
+      targetType: String(row.target_type),
+      targetId: String(row.target_id),
+      beforeJson: (row.before_json as string | null) ?? null,
+      afterJson: (row.after_json as string | null) ?? null,
+      result: row.result as 'ok' | 'error',
+      message: (row.message as string | null) ?? null,
+      createdAt: String(row.created_at),
+    }))
+  },
+
+  async listExpenseReports(actor: AppUser): Promise<ExpenseReport[]> {
+    let q = sb()
+      .from('expense_reports')
+      .select(
+        'id, organization_id, site_id, site_name, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
+      )
+    if (actor.role !== 'boss') q = q.eq('reported_by', actor.id)
+    const { data, error } = await q.order('reported_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入支出'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      siteId: String(row.site_id),
+      siteName: String(row.site_name),
+      item: String(row.item),
+      amount: Number(row.amount),
+      note: (row.note as string | null) ?? null,
+      receiptPhotoPath: (row.receipt_photo_path as string | null) ?? null,
+      status: row.status as ExpenseReport['status'],
+      reportedBy: String(row.reported_by),
+      reportedByName: String(row.reported_by_name),
+      reportedAt: String(row.reported_at),
+      reviewedBy: (row.reviewed_by as string | null) ?? null,
+      reviewedAt: (row.reviewed_at as string | null) ?? null,
+      reviewNote: (row.review_note as string | null) ?? null,
+    }))
+  },
+
+  async createExpenseReport(
+    actor: AppUser,
+    input: {
+      siteId: string
+      item: string
+      amount: number
+      note?: string | null
+    },
+  ): Promise<ExpenseReport> {
+    const siteId = requireUuid(input.siteId, '工地')
+    const sites = await this.listSites(actor)
+    const site = sites.find((s) => s.id === siteId)
+    if (!site) throw new AppError('找不到工地／案件')
+    const { data, error } = await sb()
+      .from('expense_reports')
+      .insert({
+        site_id: siteId,
+        site_name: site.name,
+        item: assertExpenseItem(input.item),
+        amount: assertPositiveMoney(input.amount, '支出金額'),
+        note: input.note?.trim() || null,
+        status: 'pending_review',
+        reported_by: actor.id,
+        reported_by_name: actor.name,
+      })
+      .select(
+        'id, organization_id, site_id, site_name, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立支出'))
+    const row = {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: String(data.site_id),
+      siteName: String(data.site_name),
+      item: String(data.item),
+      amount: Number(data.amount),
+      note: (data.note as string | null) ?? null,
+      receiptPhotoPath: (data.receipt_photo_path as string | null) ?? null,
+      status: data.status as ExpenseReport['status'],
+      reportedBy: String(data.reported_by),
+      reportedByName: String(data.reported_by_name),
+      reportedAt: String(data.reported_at),
+      reviewedBy: (data.reviewed_by as string | null) ?? null,
+      reviewedAt: (data.reviewed_at as string | null) ?? null,
+      reviewNote: (data.review_note as string | null) ?? null,
+    }
+    await this.appendAuditLog(actor, {
+      action: 'expense.create',
+      targetType: 'expense_report',
+      targetId: row.id,
+      after: row,
+    })
+    return row
+  },
+
+  async reviewExpenseReport(
+    actor: AppUser,
+    input: {
+      id: string
+      decision: 'confirm' | 'return' | 'cancel'
+      note?: string | null
+    },
+  ): Promise<ExpenseReport> {
+    const id = requireUuid(input.id, '支出')
+    const current = (await this.listExpenseReports(actor)).find((e) => e.id === id)
+    if (!current) throw new AppError('找不到支出回報')
+    assertBossFinalize({
+      actorRole: actor.role,
+      actorId: actor.id,
+      reporterId: current.reportedBy,
+    })
+    assertCanReviewExpense(current.status)
+    const status =
+      input.decision === 'confirm'
+        ? 'confirmed'
+        : input.decision === 'return'
+          ? 'returned'
+          : 'cancelled'
+    const { data, error } = await sb()
+      .from('expense_reports')
+      .update({
+        status,
+        reviewed_by: actor.id,
+        reviewed_at: new Date().toISOString(),
+        review_note: input.note?.trim() || null,
+      })
+      .eq('id', id)
+      .select(
+        'id, organization_id, site_id, site_name, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法審核支出'))
+    const row = {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: String(data.site_id),
+      siteName: String(data.site_name),
+      item: String(data.item),
+      amount: Number(data.amount),
+      note: (data.note as string | null) ?? null,
+      receiptPhotoPath: (data.receipt_photo_path as string | null) ?? null,
+      status: data.status as ExpenseReport['status'],
+      reportedBy: String(data.reported_by),
+      reportedByName: String(data.reported_by_name),
+      reportedAt: String(data.reported_at),
+      reviewedBy: (data.reviewed_by as string | null) ?? null,
+      reviewedAt: (data.reviewed_at as string | null) ?? null,
+      reviewNote: (data.review_note as string | null) ?? null,
+    }
+    await this.appendAuditLog(actor, {
+      action:
+        input.decision === 'confirm'
+          ? 'expense.confirm'
+          : input.decision === 'return'
+            ? 'expense.return'
+            : 'expense.cancel',
+      targetType: 'expense_report',
+      targetId: row.id,
+      before: current,
+      after: row,
+    })
+    return row
+  },
+
+  async listCashReceipts(actor: AppUser): Promise<CashReceiptReport[]> {
+    let q = sb()
+      .from('cash_receipt_reports')
+      .select(
+        'id, organization_id, site_id, site_name, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note',
+      )
+    if (actor.role !== 'boss') q = q.eq('reported_by', actor.id)
+    const { data, error } = await q.order('reported_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入收款'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      siteId: String(row.site_id),
+      siteName: String(row.site_name),
+      amount: Number(row.amount),
+      sourceNote: (row.source_note as string | null) ?? null,
+      proofPhotoPath: (row.proof_photo_path as string | null) ?? null,
+      status: row.status as CashReceiptReport['status'],
+      reportedBy: String(row.reported_by),
+      reportedByName: String(row.reported_by_name),
+      reportedAt: String(row.reported_at),
+      confirmedBy: (row.confirmed_by as string | null) ?? null,
+      confirmedAt: (row.confirmed_at as string | null) ?? null,
+      confirmNote: (row.confirm_note as string | null) ?? null,
+    }))
+  },
+
+  async createCashReceipt(
+    actor: AppUser,
+    input: {
+      siteId: string
+      amount: number
+      sourceNote?: string | null
+    },
+  ): Promise<CashReceiptReport> {
+    const siteId = requireUuid(input.siteId, '工地')
+    const sites = await this.listSites(actor)
+    const site = sites.find((s) => s.id === siteId)
+    if (!site) throw new AppError('找不到工地／案件')
+    const { data, error } = await sb()
+      .from('cash_receipt_reports')
+      .insert({
+        site_id: siteId,
+        site_name: site.name,
+        amount: assertPositiveMoney(input.amount, '收款金額'),
+        source_note: input.sourceNote?.trim() || null,
+        status: 'pending_confirm',
+        reported_by: actor.id,
+        reported_by_name: actor.name,
+      })
+      .select(
+        'id, organization_id, site_id, site_name, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立收款'))
+    const row = {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: String(data.site_id),
+      siteName: String(data.site_name),
+      amount: Number(data.amount),
+      sourceNote: (data.source_note as string | null) ?? null,
+      proofPhotoPath: (data.proof_photo_path as string | null) ?? null,
+      status: data.status as CashReceiptReport['status'],
+      reportedBy: String(data.reported_by),
+      reportedByName: String(data.reported_by_name),
+      reportedAt: String(data.reported_at),
+      confirmedBy: (data.confirmed_by as string | null) ?? null,
+      confirmedAt: (data.confirmed_at as string | null) ?? null,
+      confirmNote: (data.confirm_note as string | null) ?? null,
+    }
+    await this.appendAuditLog(actor, {
+      action: 'receipt.create',
+      targetType: 'cash_receipt',
+      targetId: row.id,
+      after: row,
+    })
+    return row
+  },
+
+  async confirmCashReceipt(
+    actor: AppUser,
+    input: {
+      id: string
+      decision: 'confirm' | 'return' | 'cancel'
+      note?: string | null
+    },
+  ): Promise<CashReceiptReport> {
+    const id = requireUuid(input.id, '收款')
+    const current = (await this.listCashReceipts(actor)).find((e) => e.id === id)
+    if (!current) throw new AppError('找不到收款回報')
+    assertBossFinalize({
+      actorRole: actor.role,
+      actorId: actor.id,
+      reporterId: current.reportedBy,
+    })
+    assertCanConfirmReceipt(current.status)
+    const status =
+      input.decision === 'confirm'
+        ? 'confirmed'
+        : input.decision === 'return'
+          ? 'returned'
+          : 'cancelled'
+    const { data, error } = await sb()
+      .from('cash_receipt_reports')
+      .update({
+        status,
+        confirmed_by: actor.id,
+        confirmed_at: new Date().toISOString(),
+        confirm_note: input.note?.trim() || null,
+      })
+      .eq('id', id)
+      .select(
+        'id, organization_id, site_id, site_name, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法確認收款'))
+    const row = {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: String(data.site_id),
+      siteName: String(data.site_name),
+      amount: Number(data.amount),
+      sourceNote: (data.source_note as string | null) ?? null,
+      proofPhotoPath: (data.proof_photo_path as string | null) ?? null,
+      status: data.status as CashReceiptReport['status'],
+      reportedBy: String(data.reported_by),
+      reportedByName: String(data.reported_by_name),
+      reportedAt: String(data.reported_at),
+      confirmedBy: (data.confirmed_by as string | null) ?? null,
+      confirmedAt: (data.confirmed_at as string | null) ?? null,
+      confirmNote: (data.confirm_note as string | null) ?? null,
+    }
+    await this.appendAuditLog(actor, {
+      action:
+        input.decision === 'confirm'
+          ? 'receipt.confirm'
+          : input.decision === 'return'
+            ? 'receipt.return'
+            : 'receipt.cancel',
+      targetType: 'cash_receipt',
+      targetId: row.id,
+      before: current,
+      after: row,
+    })
+    return row
   },
 
   async listSuppliers(): Promise<Supplier[]> {

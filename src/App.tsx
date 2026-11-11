@@ -23,6 +23,8 @@ import { SiteDetailPage } from '@/pages/SiteDetailPage'
 import { SitesPage } from '@/pages/SitesPage'
 import { TeamPage } from '@/pages/TeamPage'
 import { OfflineQueuePage } from '@/pages/OfflineQueuePage'
+import { AuditPage } from '@/pages/AuditPage'
+import { ExpensesPage } from '@/pages/ExpensesPage'
 import { PettyCashPage } from '@/pages/PettyCashPage'
 import { SuppliersPage } from '@/pages/SuppliersPage'
 import { TodosPage } from '@/pages/TodosPage'
@@ -51,6 +53,8 @@ export default function App() {
             <Route path="/quotes" element={<Protected><QuotesPage /></Protected>} />
             <Route path="/quotes/:quoteId" element={<Protected><QuoteDetailPage /></Protected>} />
             <Route path="/inventory" element={<Protected><InventoryPage /></Protected>} />
+            <Route path="/expenses" element={<Protected><ExpensesPage /></Protected>} />
+            <Route path="/audit" element={<Protected><AuditPage /></Protected>} />
             <Route path="/petty-cash" element={<Protected><PettyCashPage /></Protected>} />
             <Route path="/suppliers" element={<Protected><SuppliersPage /></Protected>} />
             <Route path="/notifications" element={<Protected><NotificationsPage /></Protected>} />

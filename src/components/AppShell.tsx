@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { PRODUCT, ROLES } from '@/domain/rules'
+import { FEATURE_FLAGS, PRODUCT, ROLES } from '@/domain/rules'
 import { useNotices } from '@/hooks/useNotices'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { useUser } from '@/hooks/useUser'
@@ -9,6 +9,7 @@ export function AppShell() {
   const { user, logout } = useUser()
   const { unreadCount } = useNotices(user?.id)
   const { online, pendingCount, flush, flushing } = useOfflineQueue()
+  const showOffline = FEATURE_FLAGS.offlineFirst && user && (!online || pendingCount > 0)
 
   return (
     <div className="app-shell">
@@ -33,7 +34,7 @@ export function AppShell() {
         ) : null}
       </header>
 
-      {user && (!online || pendingCount > 0) ? (
+      {showOffline ? (
         <div
           className="panel"
           style={{
@@ -51,7 +52,7 @@ export function AppShell() {
             </strong>
             <p className="muted" style={{ margin: '2px 0 0', fontSize: 13 }}>
               {!online
-                ? '可暫存回報／待辦／出勤；採購與庫存需連線。'
+                ? 'V1.0 建議連線操作；草稿僅輔助。'
                 : `${pendingCount} 筆將在連線時自動同步。`}
             </p>
           </div>
@@ -81,8 +82,9 @@ export function AppShell() {
             首頁
           </NavLink>
           <NavLink to="/sites">工地</NavLink>
-          <NavLink to="/purchases">採購</NavLink>
+          <NavLink to="/expenses">收支</NavLink>
           <NavLink to="/attendance">出勤</NavLink>
+          <NavLink to="/todos">待辦</NavLink>
         </nav>
       ) : null}
     </div>

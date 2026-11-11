@@ -97,6 +97,9 @@ import type {
   Supplier,
   SupplierExposure,
   StockBalance,
+  ExpenseReport,
+  CashReceiptReport,
+  AuditLogEntry,
   StockLocation,
   StockMovement,
   StockReservation,
@@ -175,6 +178,15 @@ import {
   availableCredit,
   sumSupplierExposure,
 } from '@/domain/suppliers'
+import {
+  assertBossFinalize,
+  assertCanConfirmReceipt,
+  assertCanReviewExpense,
+  assertExpenseItem,
+  assertPositiveMoney,
+  computeCaseFinance,
+} from '@/domain/fieldFinance'
+import { buildAuditEntry, type AuditAction } from '@/domain/auditLog'
 import { roundMoney } from '@/domain/money'
 import { formatTaipei } from '@/lib/time'
 
@@ -227,6 +239,9 @@ const KEYS = {
   pettyCashDisbursements: 'eg.pettyCashDisbursements.v1',
   pettyCashLedger: 'eg.pettyCashLedger.v1',
   suppliers: 'eg.suppliers.v1',
+  expenseReports: 'eg.expenseReports.v1',
+  cashReceipts: 'eg.cashReceipts.v1',
+  auditLogs: 'eg.auditLogs.v1',
 } as const
 
 function read<T>(key: string, fallback: T): T {
@@ -283,6 +298,9 @@ const emptyPettyCashRequests: PettyCashTopUpRequest[] = []
 const emptyPettyCashDisbursements: PettyCashDisbursement[] = []
 const emptyPettyCashLedger: PettyCashLedgerEntry[] = []
 const emptySuppliers: Supplier[] = []
+const emptyExpenseReports: ExpenseReport[] = []
+const emptyCashReceipts: CashReceiptReport[] = []
+const emptyAuditLogs: AuditLogEntry[] = []
 
 function write<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value))
@@ -689,16 +707,18 @@ function seedIfNeeded() {
       updatedAt: now,
     },
   ])
+  write(KEYS.expenseReports, emptyExpenseReports)
+  write(KEYS.cashReceipts, emptyCashReceipts)
+  write(KEYS.auditLogs, emptyAuditLogs)
   write(KEYS.shortcuts, [
-    'clock',
     'sites',
-    'purchase',
+    'cash',
+    'clock',
+    'photos',
     'quotes',
-    'inventory',
-    'petty',
-    'suppliers',
     'todos',
     'team',
+    'audit',
     'notices',
   ])
 }
@@ -3597,6 +3617,271 @@ export const localDb = {
     return disbursement
   },
 
+  appendAudit(
+    actor: { id: string; name: string },
+    input: {
+      action: AuditAction
+      targetType: string
+      targetId: string
+      before?: unknown
+      after?: unknown
+      result?: 'ok' | 'error'
+      message?: string
+    },
+  ): AuditLogEntry {
+    const built = buildAuditEntry({
+      action: input.action,
+      actorId: actor.id,
+      actorName: actor.name,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      before: input.before,
+      after: input.after,
+      result: input.result || 'ok',
+      message: input.message,
+    })
+    const row: AuditLogEntry = {
+      id: built.id,
+      organizationId: ORG_ID,
+      action: built.action,
+      actorId: built.actorId,
+      actorName: built.actorName,
+      targetType: built.targetType,
+      targetId: built.targetId,
+      beforeJson: input.before == null ? null : JSON.stringify(input.before),
+      afterJson: input.after == null ? null : JSON.stringify(input.after),
+      result: built.result,
+      message: built.message || null,
+      createdAt: built.createdAt,
+    }
+    const all = read(KEYS.auditLogs, emptyAuditLogs)
+    all.unshift(row)
+    write(KEYS.auditLogs, all)
+    return row
+  },
+
+  listAuditLogs(limit = 50): AuditLogEntry[] {
+    return read(KEYS.auditLogs, emptyAuditLogs).slice(0, limit)
+  },
+
+  listExpenseReports(filter?: {
+    status?: ExpenseReport['status']
+    reportedBy?: string
+  }): ExpenseReport[] {
+    let all = read(KEYS.expenseReports, emptyExpenseReports)
+    if (filter?.status) all = all.filter((e) => e.status === filter.status)
+    if (filter?.reportedBy) {
+      all = all.filter((e) => e.reportedBy === filter.reportedBy)
+    }
+    return all.sort((a, b) => b.reportedAt.localeCompare(a.reportedAt))
+  },
+
+  createExpenseReport(
+    actor: { id: string; name: string; role: AppUser['role'] },
+    input: {
+      siteId: string
+      item: string
+      amount: number
+      note?: string | null
+    },
+  ): ExpenseReport {
+    const site = this.getSites().find((s) => s.id === input.siteId)
+    if (!site) throw new Error('找不到工地／案件')
+    const row: ExpenseReport = {
+      id: `exp-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      siteId: site.id,
+      siteName: site.name,
+      item: assertExpenseItem(input.item),
+      amount: assertPositiveMoney(input.amount, '支出金額'),
+      note: input.note?.trim() || null,
+      receiptPhotoPath: null,
+      status: 'pending_review',
+      reportedBy: actor.id,
+      reportedByName: actor.name,
+      reportedAt: new Date().toISOString(),
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewNote: null,
+    }
+    const all = read(KEYS.expenseReports, emptyExpenseReports)
+    all.unshift(row)
+    write(KEYS.expenseReports, all)
+    this.appendAudit(actor, {
+      action: 'expense.create',
+      targetType: 'expense_report',
+      targetId: row.id,
+      after: row,
+    })
+    return row
+  },
+
+  reviewExpenseReport(
+    actor: { id: string; name: string; role: AppUser['role'] },
+    input: {
+      id: string
+      decision: 'confirm' | 'return' | 'cancel'
+      note?: string | null
+    },
+  ): ExpenseReport {
+    const all = read(KEYS.expenseReports, emptyExpenseReports)
+    const idx = all.findIndex((e) => e.id === input.id)
+    if (idx < 0) throw new Error('找不到支出回報')
+    const current = all[idx]
+    assertBossFinalize({
+      actorRole: actor.role,
+      actorId: actor.id,
+      reporterId: current.reportedBy,
+    })
+    assertCanReviewExpense(current.status)
+    const status =
+      input.decision === 'confirm'
+        ? 'confirmed'
+        : input.decision === 'return'
+          ? 'returned'
+          : 'cancelled'
+    const updated: ExpenseReport = {
+      ...current,
+      status,
+      reviewedBy: actor.id,
+      reviewedAt: new Date().toISOString(),
+      reviewNote: input.note?.trim() || null,
+    }
+    all[idx] = updated
+    write(KEYS.expenseReports, all)
+    this.appendAudit(actor, {
+      action:
+        input.decision === 'confirm'
+          ? 'expense.confirm'
+          : input.decision === 'return'
+            ? 'expense.return'
+            : 'expense.cancel',
+      targetType: 'expense_report',
+      targetId: updated.id,
+      before: current,
+      after: updated,
+    })
+    return updated
+  },
+
+  listCashReceipts(filter?: {
+    status?: CashReceiptReport['status']
+    reportedBy?: string
+  }): CashReceiptReport[] {
+    let all = read(KEYS.cashReceipts, emptyCashReceipts)
+    if (filter?.status) all = all.filter((e) => e.status === filter.status)
+    if (filter?.reportedBy) {
+      all = all.filter((e) => e.reportedBy === filter.reportedBy)
+    }
+    return all.sort((a, b) => b.reportedAt.localeCompare(a.reportedAt))
+  },
+
+  createCashReceipt(
+    actor: { id: string; name: string; role: AppUser['role'] },
+    input: {
+      siteId: string
+      amount: number
+      sourceNote?: string | null
+    },
+  ): CashReceiptReport {
+    const site = this.getSites().find((s) => s.id === input.siteId)
+    if (!site) throw new Error('找不到工地／案件')
+    const row: CashReceiptReport = {
+      id: `cr-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      siteId: site.id,
+      siteName: site.name,
+      amount: assertPositiveMoney(input.amount, '收款金額'),
+      sourceNote: input.sourceNote?.trim() || null,
+      proofPhotoPath: null,
+      status: 'pending_confirm',
+      reportedBy: actor.id,
+      reportedByName: actor.name,
+      reportedAt: new Date().toISOString(),
+      confirmedBy: null,
+      confirmedAt: null,
+      confirmNote: null,
+    }
+    const all = read(KEYS.cashReceipts, emptyCashReceipts)
+    all.unshift(row)
+    write(KEYS.cashReceipts, all)
+    this.appendAudit(actor, {
+      action: 'receipt.create',
+      targetType: 'cash_receipt',
+      targetId: row.id,
+      after: row,
+    })
+    return row
+  },
+
+  confirmCashReceipt(
+    actor: { id: string; name: string; role: AppUser['role'] },
+    input: {
+      id: string
+      decision: 'confirm' | 'return' | 'cancel'
+      note?: string | null
+    },
+  ): CashReceiptReport {
+    const all = read(KEYS.cashReceipts, emptyCashReceipts)
+    const idx = all.findIndex((e) => e.id === input.id)
+    if (idx < 0) throw new Error('找不到收款回報')
+    const current = all[idx]
+    assertBossFinalize({
+      actorRole: actor.role,
+      actorId: actor.id,
+      reporterId: current.reportedBy,
+    })
+    assertCanConfirmReceipt(current.status)
+    const status =
+      input.decision === 'confirm'
+        ? 'confirmed'
+        : input.decision === 'return'
+          ? 'returned'
+          : 'cancelled'
+    const updated: CashReceiptReport = {
+      ...current,
+      status,
+      confirmedBy: actor.id,
+      confirmedAt: new Date().toISOString(),
+      confirmNote: input.note?.trim() || null,
+    }
+    all[idx] = updated
+    write(KEYS.cashReceipts, all)
+    this.appendAudit(actor, {
+      action:
+        input.decision === 'confirm'
+          ? 'receipt.confirm'
+          : input.decision === 'return'
+            ? 'receipt.return'
+            : 'receipt.cancel',
+      targetType: 'cash_receipt',
+      targetId: updated.id,
+      before: current,
+      after: updated,
+    })
+    return updated
+  },
+
+  getOrgCaseFinanceSummary(acceptedContractTotal = 0) {
+    const expenses = this.listExpenseReports()
+    const receipts = this.listCashReceipts()
+    return computeCaseFinance({
+      acceptedContractAmount: acceptedContractTotal,
+      confirmedExpenseTotal: expenses
+        .filter((e) => e.status === 'confirmed')
+        .reduce((s, e) => s + e.amount, 0),
+      pendingExpenseTotal: expenses
+        .filter((e) => e.status === 'pending_review')
+        .reduce((s, e) => s + e.amount, 0),
+      confirmedReceiptTotal: receipts
+        .filter((e) => e.status === 'confirmed')
+        .reduce((s, e) => s + e.amount, 0),
+      pendingReceiptTotal: receipts
+        .filter((e) => e.status === 'pending_confirm')
+        .reduce((s, e) => s + e.amount, 0),
+    })
+  },
+
   getNotices(userId: string): AppNotice[] {
     return read(KEYS.notices, emptyNotices)
       .filter((n) => n.userId === userId)
@@ -3618,16 +3903,77 @@ export const localDb = {
   },
 
   getShortcutIds(): string[] {
-    return read(KEYS.shortcuts, [
-      'clock',
+    const defaults = [
       'sites',
-      'purchase',
+      'cash',
+      'clock',
+      'photos',
       'quotes',
-      'inventory',
       'todos',
       'team',
+      'audit',
       'notices',
+    ]
+    const stored = read(KEYS.shortcuts, defaults)
+    // Migrate away from advanced ERP shortcut ids in V1.0
+    const blocked = new Set([
+      'purchase',
+      'inventory',
+      'petty',
+      'suppliers',
+      'complaints',
+      'analytics',
+      'customers',
+      'repairs',
+      'reports',
     ])
+    const filtered = stored.filter((id) => !blocked.has(id))
+    const merged = [
+      ...new Set([
+        ...filtered,
+        ...defaults.filter((d) => !filtered.includes(d)),
+      ]),
+    ]
+    return merged.length ? merged : defaults
+  },
+
+  createAssignedTodo(
+    actor: { id: string; name: string },
+    input: {
+      title: string
+      detail?: string
+      assigneeUserId: string
+      href?: string | null
+    },
+  ): AppNotice {
+    const title = input.title.trim()
+    if (!title) throw new Error('請填寫待辦標題')
+    const assignee = this.getUsers().find((u) => u.id === input.assigneeUserId)
+    if (!assignee) throw new Error('找不到指派對象')
+    const row: AppNotice = {
+      id: `todo-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      userId: assignee.id,
+      kind: 'todo',
+      title,
+      detail:
+        input.detail?.trim() ||
+        `由 ${actor.name} 指派`,
+      status: 'open',
+      unread: true,
+      createdAt: new Date().toISOString(),
+      href: input.href ?? '/todos',
+    }
+    const all = read(KEYS.notices, emptyNotices)
+    all.unshift(row)
+    write(KEYS.notices, all)
+    this.appendAudit(actor, {
+      action: 'todo.assign',
+      targetType: 'todo',
+      targetId: row.id,
+      after: { ...row, assignedBy: actor.id },
+    })
+    return row
   },
 
   setShortcutIds(ids: string[]) {

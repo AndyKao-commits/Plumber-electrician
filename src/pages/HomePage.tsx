@@ -1,21 +1,22 @@
 import { Link } from 'react-router-dom'
-import {
-  DEFAULT_PURCHASE_RULES,
-  FEATURE_FLAGS,
-  HOME_SHORTCUTS,
-  PRODUCT,
-} from '@/domain/rules'
+import { FEATURE_FLAGS, HOME_SHORTCUTS, PRODUCT } from '@/domain/rules'
+import { computeCaseFinance } from '@/domain/fieldFinance'
 import { useAttendance } from '@/hooks/useAttendance'
+import { useFieldFinance } from '@/hooks/useFieldFinance'
 import { useNotices } from '@/hooks/useNotices'
+import { useQuotes } from '@/hooks/useQuotes'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
 import { formatTaipei } from '@/lib/time'
 import { localDb } from '@/lib/localDb'
+import { useMemo } from 'react'
 
 export function HomePage() {
   const { user } = useUser()
   const { sites } = useSites()
   const { todos, unreadCount } = useNotices(user?.id)
+  const { quotes } = useQuotes(user?.id)
+  const { expenses, receipts } = useFieldFinance(user?.id)
   const {
     openShift,
     clockIn,
@@ -27,13 +28,45 @@ export function HomePage() {
   const busy = isClockingIn || isClockingOut
   const shortcutIds = localDb.getShortcutIds()
   const shortcuts = HOME_SHORTCUTS.filter((s) => shortcutIds.includes(s.id))
+  const isBoss = user?.role === 'boss'
+
+  const acceptedContract = useMemo(
+    () =>
+      (quotes ?? [])
+        .filter((q) => q.workflowStatus === 'accepted')
+        .reduce((s, q) => s + Number(q.amountAfterTax || 0), 0),
+    [quotes],
+  )
+
+  const summary = useMemo(
+    () =>
+      computeCaseFinance({
+        acceptedContractAmount: acceptedContract,
+        confirmedExpenseTotal: expenses
+          .filter((e) => e.status === 'confirmed')
+          .reduce((s, e) => s + e.amount, 0),
+        pendingExpenseTotal: expenses
+          .filter((e) => e.status === 'pending_review')
+          .reduce((s, e) => s + e.amount, 0),
+        confirmedReceiptTotal: receipts
+          .filter((e) => e.status === 'confirmed')
+          .reduce((s, e) => s + e.amount, 0),
+        pendingReceiptTotal: receipts
+          .filter((e) => e.status === 'pending_confirm')
+          .reduce((s, e) => s + e.amount, 0),
+      }),
+    [acceptedContract, expenses, receipts],
+  )
+
+  const pendingExpenses = expenses.filter((e) => e.status === 'pending_review')
+  const pendingReceipts = receipts.filter((e) => e.status === 'pending_confirm')
 
   return (
     <div className="stack fade-up">
       <section className="panel hero-panel stack">
         <div className="row between">
           <div>
-            <div className="badge">今日待辦＋快捷</div>
+            <div className="badge">V1.0 現場＋審核</div>
             <h2 style={{ margin: '10px 0 4px', fontSize: '1.7rem' }}>
               你好，{user?.name}
             </h2>
@@ -76,17 +109,68 @@ export function HomePage() {
         <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
           {FEATURE_FLAGS.lineProactivePush
             ? 'LINE 推播啟用中'
-            : '不主動推播 LINE；待辦與通知只在系統內顯示。'}
-          {FEATURE_FLAGS.gpsOptionalOnClockIn ? ' GPS 僅輔助定位。' : ''}
+            : '不主動推播 LINE；師傅用選單操作，老闆在網站審核。'}
         </p>
       </section>
+
+      {isBoss ? (
+        <section className="panel stack">
+          <strong>老闆總覽</strong>
+          <div className="grid-2">
+            <Link className="site-link" to="/sites">
+              <p>案件數</p>
+              <h3>{sites.length}</h3>
+            </Link>
+            <Link className="site-link" to="/expenses">
+              <p>待審核支出</p>
+              <h3>{pendingExpenses.length}</h3>
+            </Link>
+            <Link className="site-link" to="/expenses">
+              <p>待確認收款</p>
+              <h3>{pendingReceipts.length}</h3>
+            </Link>
+            <div className="site-link">
+              <p>有效合約</p>
+              <h3>NT${summary.acceptedContractAmount.toLocaleString()}</h3>
+            </div>
+            <div className="site-link">
+              <p>已確認支出</p>
+              <h3>NT${summary.confirmedExpenseTotal.toLocaleString()}</h3>
+            </div>
+            <div className="site-link">
+              <p>已確認收款</p>
+              <h3>NT${summary.confirmedReceiptTotal.toLocaleString()}</h3>
+            </div>
+          </div>
+        </section>
+      ) : (
+        <section className="panel stack">
+          <strong>我的回報</strong>
+          <p className="muted" style={{ margin: 0 }}>
+            待審核支出{' '}
+            {
+              expenses.filter(
+                (e) =>
+                  e.reportedBy === user?.id && e.status === 'pending_review',
+              ).length
+            }{' '}
+            · 待確認收款{' '}
+            {
+              receipts.filter(
+                (r) =>
+                  r.reportedBy === user?.id && r.status === 'pending_confirm',
+              ).length
+            }
+          </p>
+          <Link className="btn btn-steel" to="/expenses">
+            去回報支出／收款
+          </Link>
+        </section>
+      )}
 
       <section className="panel stack">
         <div className="row between">
           <strong>快捷功能</strong>
-          <span className="muted" style={{ fontSize: '0.85rem' }}>
-            可自訂順序（之後）
-          </span>
         </div>
         <div className="shortcut-grid">
           {shortcuts.map((item) => (
@@ -133,26 +217,6 @@ export function HomePage() {
           </div>
         </section>
       ) : null}
-
-      <section className="panel stack">
-        <strong>採購額度（已確認）</strong>
-        <div className="grid-2">
-          <div className="site-link">
-            <p>一般採購事前核准</p>
-            <h3>NT${DEFAULT_PURCHASE_RULES.preApprovalThresholdNtd.toLocaleString()}+</h3>
-          </div>
-          <div className="site-link">
-            <p>緊急單次／每日</p>
-            <h3>
-              {DEFAULT_PURCHASE_RULES.emergencySingleLimitNtd.toLocaleString()} /{' '}
-              {DEFAULT_PURCHASE_RULES.emergencyDailyLimitNtd?.toLocaleString()}
-            </h3>
-          </div>
-        </div>
-        <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-          以最終應付金額（折扣後含稅運）判斷；材料成本採移動加權平均。
-        </p>
-      </section>
     </div>
   )
 }

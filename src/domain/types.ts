@@ -37,9 +37,80 @@ export interface AppUser {
   role: UserRole
   email?: string
   phone?: string
+  /** V1.0 profile */
+  nickname?: string | null
+  birthDate?: string | null
+  jobTitle?: string | null
+  hiredAt?: string | null
+  accountStatus?: 'active' | 'disabled'
+  notes?: string | null
   payType?: PayType
   lineUserId?: string | null
   financeAuthorized?: boolean
+  createdAt: string
+}
+
+export type ExpenseReportStatus =
+  | 'pending_review'
+  | 'confirmed'
+  | 'returned'
+  | 'cancelled'
+
+export type CashReceiptStatus =
+  | 'pending_confirm'
+  | 'confirmed'
+  | 'returned'
+  | 'cancelled'
+
+/** V1.0 employee expense report (awaiting boss review). */
+export interface ExpenseReport {
+  id: string
+  organizationId: string
+  siteId: string
+  siteName: string
+  item: string
+  amount: number
+  note?: string | null
+  receiptPhotoPath?: string | null
+  status: ExpenseReportStatus
+  reportedBy: string
+  reportedByName: string
+  reportedAt: string
+  reviewedBy?: string | null
+  reviewedAt?: string | null
+  reviewNote?: string | null
+}
+
+/** V1.0 cash receipt report (awaiting boss confirm). */
+export interface CashReceiptReport {
+  id: string
+  organizationId: string
+  siteId: string
+  siteName: string
+  amount: number
+  sourceNote?: string | null
+  proofPhotoPath?: string | null
+  status: CashReceiptStatus
+  reportedBy: string
+  reportedByName: string
+  reportedAt: string
+  confirmedBy?: string | null
+  confirmedAt?: string | null
+  confirmNote?: string | null
+}
+
+export interface AuditLogEntry {
+  id: string
+  organizationId: string
+  action: string
+  actorId: string
+  actorName: string
+  targetType: string
+  targetId: string
+  beforeJson?: string | null
+  afterJson?: string | null
+  result: 'ok' | 'error'
+  message?: string | null
   createdAt: string
 }
 
