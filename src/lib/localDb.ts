@@ -85,7 +85,9 @@ import type {
   CustomerPayment,
   CustomerRefund,
   CustomerSiteLink,
+  MaterialSerial,
   MaterialStock,
+  MaterialUnit,
   MaterialUsage,
   OperatingCostKind,
   StockBalance,
@@ -144,6 +146,13 @@ import {
   assertTransferDoesNotAffectCost,
   sumActiveReserved,
 } from '@/domain/stockLedger'
+import {
+  assertSameOrganization as assertMaterialOrg,
+  assertSerialUniqueInOrg,
+  assertSkuUniqueInOrg,
+  assertUnitFactor,
+  convertMaterialQty,
+} from '@/domain/materialMaster'
 import { roundMoney } from '@/domain/money'
 import { formatTaipei } from '@/lib/time'
 
@@ -185,6 +194,8 @@ const KEYS = {
   customerSiteLinks: 'eg.customerSiteLinks.v1',
   materials: 'eg.materials.v1',
   materialUsages: 'eg.materialUsages.v1',
+  materialUnits: 'eg.materialUnits.v1',
+  materialSerials: 'eg.materialSerials.v1',
   stockLocations: 'eg.stockLocations.v1',
   stockBalances: 'eg.stockBalances.v1',
   stockMovements: 'eg.stockMovements.v1',
@@ -234,6 +245,8 @@ const emptyCustomerContacts: CustomerContact[] = []
 const emptyCustomerSiteLinks: CustomerSiteLink[] = []
 const emptyMaterials: MaterialStock[] = []
 const emptyMaterialUsages: MaterialUsage[] = []
+const emptyMaterialUnits: MaterialUnit[] = []
+const emptyMaterialSerials: MaterialSerial[] = []
 const emptyStockLocations: StockLocation[] = []
 const emptyStockBalances: StockBalance[] = []
 const emptyStockMovements: StockMovement[] = []
@@ -407,6 +420,9 @@ function seedIfNeeded() {
       unit: '支',
       qty: 20,
       unitCost: 45,
+      sku: 'PVC-4',
+      trackingMode: 'quantity',
+      baseUnitCode: '支',
       updatedAt: now,
     },
     {
@@ -416,6 +432,21 @@ function seedIfNeeded() {
       unit: '米',
       qty: 100,
       unitCost: 12.5,
+      sku: 'WIRE-20',
+      trackingMode: 'quantity',
+      baseUnitCode: '米',
+      updatedAt: now,
+    },
+    {
+      id: 'mat-pump',
+      organizationId: ORG_ID,
+      name: '加壓馬達',
+      unit: '台',
+      qty: 1,
+      unitCost: 8500,
+      sku: 'PUMP-BOOST',
+      trackingMode: 'serial',
+      baseUnitCode: '台',
       updatedAt: now,
     },
   ]
@@ -473,6 +504,66 @@ function seedIfNeeded() {
   write(KEYS.customerSiteLinks, emptyCustomerSiteLinks)
   write(KEYS.materials, seededMaterials)
   write(KEYS.materialUsages, emptyMaterialUsages)
+  write(KEYS.materialUnits, [
+    {
+      id: 'mu-pipe-base',
+      organizationId: ORG_ID,
+      materialId: 'mat-pipe',
+      code: '支',
+      label: '支',
+      factorToBase: 1,
+      isBase: true,
+    },
+    {
+      id: 'mu-pipe-box',
+      organizationId: ORG_ID,
+      materialId: 'mat-pipe',
+      code: '箱',
+      label: '箱（20 支）',
+      factorToBase: 20,
+      isBase: false,
+    },
+    {
+      id: 'mu-wire-base',
+      organizationId: ORG_ID,
+      materialId: 'mat-wire',
+      code: '米',
+      label: '米',
+      factorToBase: 1,
+      isBase: true,
+    },
+    {
+      id: 'mu-wire-roll',
+      organizationId: ORG_ID,
+      materialId: 'mat-wire',
+      code: '捲',
+      label: '捲（100 米）',
+      factorToBase: 100,
+      isBase: false,
+    },
+    {
+      id: 'mu-pump-base',
+      organizationId: ORG_ID,
+      materialId: 'mat-pump',
+      code: '台',
+      label: '台',
+      factorToBase: 1,
+      isBase: true,
+    },
+  ])
+  write(KEYS.materialSerials, [
+    {
+      id: 'ms-pump-1',
+      organizationId: ORG_ID,
+      materialId: 'mat-pump',
+      serialNumber: 'PUMP-SEED-001',
+      status: 'in_stock',
+      unitCost: 8500,
+      locationId: 'loc-warehouse',
+      createdAt: now,
+      createdBy: 'user-boss',
+    },
+  ])
   const defaultWh: StockLocation = {
     id: 'loc-warehouse',
     organizationId: ORG_ID,
@@ -507,6 +598,14 @@ function seedIfNeeded() {
       materialId: 'mat-wire',
       locationId: defaultWh.id,
       qty: 100,
+      updatedAt: now,
+    },
+    {
+      id: 'bal-pump-wh',
+      organizationId: ORG_ID,
+      materialId: 'mat-pump',
+      locationId: defaultWh.id,
+      qty: 1,
       updatedAt: now,
     },
   ])
@@ -2504,6 +2603,188 @@ export const localDb = {
         availableQty: roundMoney(m.qty - reservedQty, 4),
       }
     })
+  },
+
+  listMaterialUnits(materialId?: string): MaterialUnit[] {
+    const all = read(KEYS.materialUnits, emptyMaterialUnits)
+    return materialId ? all.filter((u) => u.materialId === materialId) : all
+  },
+
+  listMaterialSerials(materialId?: string): MaterialSerial[] {
+    const all = read(KEYS.materialSerials, emptyMaterialSerials)
+    const filtered = materialId
+      ? all.filter((s) => s.materialId === materialId)
+      : all
+    return filtered.sort((a, b) => a.serialNumber.localeCompare(b.serialNumber))
+  },
+
+  convertMaterialQtyFor(
+    materialId: string,
+    qty: number,
+    fromCode: string,
+    toCode: string,
+  ): number {
+    const units = this.listMaterialUnits(materialId)
+    const from = units.find((u) => u.code === fromCode)
+    const to = units.find((u) => u.code === toCode)
+    if (!from || !to) throw new Error('找不到單位設定')
+    return convertMaterialQty({
+      qty,
+      fromFactorToBase: from.factorToBase,
+      toFactorToBase: to.factorToBase,
+    })
+  },
+
+  addMaterialUnit(
+    actor: { id: string; organizationId: string },
+    input: {
+      materialId: string
+      code: string
+      label: string
+      factorToBase: number
+    },
+  ): MaterialUnit {
+    const mat = read(KEYS.materials, emptyMaterials).find(
+      (m) => m.id === input.materialId,
+    )
+    if (!mat) throw new Error('找不到材料')
+    assertMaterialOrg(actor.organizationId, mat.organizationId)
+    const code = input.code.trim()
+    if (!code) throw new Error('單位代碼必填')
+    const units = read(KEYS.materialUnits, emptyMaterialUnits)
+    if (units.some((u) => u.materialId === mat.id && u.code === code)) {
+      throw new Error('同一材料單位代碼不可重複')
+    }
+    const row: MaterialUnit = {
+      id: `munit-${crypto.randomUUID()}`,
+      organizationId: mat.organizationId,
+      materialId: mat.id,
+      code,
+      label: input.label.trim() || code,
+      factorToBase: assertUnitFactor(input.factorToBase),
+      isBase: false,
+    }
+    units.push(row)
+    write(KEYS.materialUnits, units)
+    return row
+  },
+
+  registerMaterialSerial(
+    actor: { id: string; organizationId: string },
+    input: {
+      materialId: string
+      serialNumber: string
+      unitCost: number
+      locationId?: string | null
+    },
+  ): MaterialSerial {
+    const mat = read(KEYS.materials, emptyMaterials).find(
+      (m) => m.id === input.materialId,
+    )
+    if (!mat) throw new Error('找不到材料')
+    assertMaterialOrg(actor.organizationId, mat.organizationId)
+    if ((mat.trackingMode || 'quantity') !== 'serial') {
+      throw new Error('僅序號追蹤材料可登錄序號')
+    }
+    const serial = assertSerialUniqueInOrg({
+      serial: input.serialNumber,
+      existingSerials: read(KEYS.materialSerials, emptyMaterialSerials).map(
+        (s) => s.serialNumber,
+      ),
+    })
+    const locationId = input.locationId || this.defaultWarehouseId()
+    const row: MaterialSerial = {
+      id: `ms-${crypto.randomUUID()}`,
+      organizationId: mat.organizationId,
+      materialId: mat.id,
+      serialNumber: serial,
+      status: 'in_stock',
+      unitCost: roundMoney(Number(input.unitCost) || 0, 4),
+      locationId,
+      createdAt: new Date().toISOString(),
+      createdBy: actor.id,
+    }
+    const all = read(KEYS.materialSerials, emptyMaterialSerials)
+    all.push(row)
+    write(KEYS.materialSerials, all)
+    // Serial inbound: bump qty + location; cost uses individual serial cost (not MA).
+    const materials = read(KEYS.materials, emptyMaterials)
+    const idx = materials.findIndex((m) => m.id === mat.id)
+    materials[idx] = {
+      ...materials[idx],
+      qty: roundMoney(materials[idx].qty + 1, 4),
+      updatedAt: new Date().toISOString(),
+    }
+    write(KEYS.materials, materials)
+    this.upsertBalance({
+      materialId: mat.id,
+      locationId,
+      delta: 1,
+    })
+    this.appendMovement(
+      { id: actor.id },
+      {
+        movementType: 'inbound',
+        materialId: mat.id,
+        materialName: mat.name,
+        qty: 1,
+        unitCost: row.unitCost,
+        fromLocationId: null,
+        toLocationId: locationId,
+        reservationId: null,
+        note: `序號 ${serial}`,
+        clientOperationId: `serial-in-${row.id}`,
+        reversalOf: null,
+      },
+    )
+    return row
+  },
+
+  createLocalMaterial(
+    actor: { id: string; organizationId: string },
+    input: {
+      name: string
+      unit: string
+      sku: string
+      trackingMode?: 'quantity' | 'serial'
+    },
+  ): MaterialStock {
+    const sku = assertSkuUniqueInOrg({
+      sku: input.sku,
+      existingSkus: read(KEYS.materials, emptyMaterials)
+        .map((m) => m.sku || '')
+        .filter(Boolean),
+    })
+    const unit = input.unit.trim() || '式'
+    const now = new Date().toISOString()
+    const row: MaterialStock = {
+      id: `mat-${crypto.randomUUID()}`,
+      organizationId: actor.organizationId || ORG_ID,
+      name: input.name.trim(),
+      unit,
+      qty: 0,
+      unitCost: 0,
+      sku,
+      trackingMode: input.trackingMode || 'quantity',
+      baseUnitCode: unit,
+      updatedAt: now,
+    }
+    if (!row.name) throw new Error('材料名稱必填')
+    const all = read(KEYS.materials, emptyMaterials)
+    all.push(row)
+    write(KEYS.materials, all)
+    const units = read(KEYS.materialUnits, emptyMaterialUnits)
+    units.push({
+      id: `munit-${crypto.randomUUID()}`,
+      organizationId: row.organizationId,
+      materialId: row.id,
+      code: unit,
+      label: unit,
+      factorToBase: 1,
+      isBase: true,
+    })
+    write(KEYS.materialUnits, units)
+    return row
   },
 
   listStockLocations(): StockLocation[] {

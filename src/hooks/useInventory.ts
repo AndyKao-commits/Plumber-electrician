@@ -13,6 +13,8 @@ export const inventoryKeys = {
   movements: ['inventory', 'movements'] as const,
   reservations: ['inventory', 'reservations'] as const,
   balances: ['inventory', 'balances'] as const,
+  units: ['inventory', 'units'] as const,
+  serials: ['inventory', 'serials'] as const,
 }
 
 export function useInventory(userId: string | undefined) {
@@ -90,12 +92,42 @@ export function useInventory(userId: string | undefined) {
     },
   })
 
+  const unitsQuery = useQuery({
+    queryKey: inventoryKeys.units,
+    enabled: Boolean(userId),
+    queryFn: async () => {
+      try {
+        return formal
+          ? await supabaseRepos.listMaterialUnits()
+          : localDb.listMaterialUnits()
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入單位'))
+      }
+    },
+  })
+
+  const serialsQuery = useQuery({
+    queryKey: inventoryKeys.serials,
+    enabled: Boolean(userId),
+    queryFn: async () => {
+      try {
+        return formal
+          ? await supabaseRepos.listMaterialSerials()
+          : localDb.listMaterialSerials()
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入序號'))
+      }
+    },
+  })
+
   const invalidateAll = () => {
     void queryClient.invalidateQueries({ queryKey: inventoryKeys.all })
     void queryClient.invalidateQueries({ queryKey: inventoryKeys.locations })
     void queryClient.invalidateQueries({ queryKey: inventoryKeys.movements })
     void queryClient.invalidateQueries({ queryKey: inventoryKeys.reservations })
     void queryClient.invalidateQueries({ queryKey: inventoryKeys.balances })
+    void queryClient.invalidateQueries({ queryKey: inventoryKeys.units })
+    void queryClient.invalidateQueries({ queryKey: inventoryKeys.serials })
   }
 
   const inboundMutation = useMutation({
@@ -123,10 +155,60 @@ export function useInventory(userId: string | undefined) {
   })
 
   const createMaterialMutation = useMutation({
-    mutationFn: async (input: { name: string; unit: string }) => {
+    mutationFn: async (input: {
+      name: string
+      unit: string
+      sku?: string
+      trackingMode?: 'quantity' | 'serial'
+    }) => {
       if (!user) throw new Error('尚未登入')
-      if (!formal) throw new Error('本機示範模式不支援新增材料')
-      return supabaseRepos.createMaterial(user, input)
+      if (formal) return supabaseRepos.createMaterial(user, input)
+      return localDb.createLocalMaterial(
+        { id: user.id, organizationId: user.organizationId },
+        {
+          name: input.name,
+          unit: input.unit,
+          sku: input.sku || input.name.slice(0, 12),
+          trackingMode: input.trackingMode,
+        },
+      )
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const addUnitMutation = useMutation({
+    mutationFn: async (input: {
+      materialId: string
+      code: string
+      label: string
+      factorToBase: number
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      return formal
+        ? supabaseRepos.addMaterialUnit(user, input)
+        : localDb.addMaterialUnit(
+            { id: user.id, organizationId: user.organizationId },
+            input,
+          )
+    },
+    onSuccess: invalidateAll,
+  })
+
+  const registerSerialMutation = useMutation({
+    mutationFn: async (input: {
+      materialId: string
+      serialNumber: string
+      unitCost: number
+      locationId?: string | null
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      assertOnlineForOp('inventory_inbound', isBrowserOnline())
+      return formal
+        ? supabaseRepos.registerMaterialSerial(user, input)
+        : localDb.registerMaterialSerial(
+            { id: user.id, organizationId: user.organizationId },
+            input,
+          )
     },
     onSuccess: invalidateAll,
   })
@@ -205,6 +287,8 @@ export function useInventory(userId: string | undefined) {
     movements: movementsQuery.data ?? [],
     reservations: reservationsQuery.data ?? [],
     balances: balancesQuery.data ?? [],
+    units: unitsQuery.data ?? [],
+    serials: serialsQuery.data ?? [],
     inbound: inboundMutation.mutateAsync,
     isInbound: inboundMutation.isPending,
     inboundError: inboundMutation.error,
@@ -213,6 +297,11 @@ export function useInventory(userId: string | undefined) {
     createMaterialError: createMaterialMutation.error
       ? new Error(toUserMessage(createMaterialMutation.error))
       : null,
+    addUnit: addUnitMutation.mutateAsync,
+    isAddingUnit: addUnitMutation.isPending,
+    registerSerial: registerSerialMutation.mutateAsync,
+    isRegisteringSerial: registerSerialMutation.isPending,
+    registerSerialError: registerSerialMutation.error,
     transfer: transferMutation.mutateAsync,
     isTransfer: transferMutation.isPending,
     transferError: transferMutation.error,
