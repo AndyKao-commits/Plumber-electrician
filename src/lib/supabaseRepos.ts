@@ -28,6 +28,11 @@ import {
   type OrgSpendSettings,
 } from '@/domain/orgSpendSettings'
 import { assertPhotoType } from '@/domain/photoTypes'
+import { assertCanAccessSite, filterSitesByAccess } from '@/domain/siteAccess'
+import {
+  assertAccountStatus,
+  normalizeProfileFields,
+} from '@/domain/profileFields'
 import {
   assertBillingDocumentEditable,
   assertCanManageBilling,
@@ -700,6 +705,9 @@ function mapStockReservationRow(row: Record<string, unknown>): StockReservation 
   }
 }
 
+const PROFILE_SELECT =
+  'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, created_at'
+
 function mapUser(row: {
   id: string
   organization_id: string
@@ -710,6 +718,12 @@ function mapUser(row: {
   pay_type: AppUser['payType'] | null
   line_user_id: string | null
   finance_authorized: boolean | null
+  nickname?: string | null
+  birth_date?: string | null
+  job_title?: string | null
+  hired_at?: string | null
+  account_status?: string | null
+  profile_notes?: string | null
   created_at: string
 }): AppUser {
   return {
@@ -722,6 +736,13 @@ function mapUser(row: {
     payType: row.pay_type ?? undefined,
     lineUserId: row.line_user_id,
     financeAuthorized: Boolean(row.finance_authorized),
+    nickname: row.nickname ?? null,
+    birthDate: row.birth_date ?? null,
+    jobTitle: row.job_title ?? null,
+    hiredAt: row.hired_at ?? null,
+    accountStatus:
+      row.account_status === 'disabled' ? 'disabled' : 'active',
+    notes: row.profile_notes ?? null,
     createdAt: row.created_at,
   }
 }
@@ -796,9 +817,7 @@ export const supabaseRepos = {
 
     const { data, error } = await client
       .from('profiles')
-      .select(
-        'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, created_at',
-      )
+      .select(PROFILE_SELECT)
       .eq('id', auth.user.id)
       .maybeSingle()
     if (error) throw new AppError(toUserMessage(error, '無法讀取個人資料'))
@@ -817,9 +836,7 @@ export const supabaseRepos = {
 
     const { data: profile, error: profileError } = await client
       .from('profiles')
-      .select(
-        'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, created_at',
-      )
+      .select(PROFILE_SELECT)
       .eq('id', data.user.id)
       .maybeSingle()
     if (profileError) throw new AppError(toUserMessage(profileError, '無法讀取個人資料'))
@@ -884,6 +901,110 @@ export const supabaseRepos = {
     if (error) throw new AppError(toUserMessage(error, '登出失敗'))
   },
 
+  async listAllowedSiteIds(userId: string): Promise<string[]> {
+    const { data, error } = await sb()
+      .from('site_members')
+      .select('site_id')
+      .eq('user_id', requireUuid(userId, '使用者'))
+    if (error) throw new AppError(toUserMessage(error, '無法讀取工地權限'))
+    return (data ?? []).map((r) => String(r.site_id))
+  },
+
+  async listSiteMemberIds(siteId: string): Promise<string[]> {
+    const { data, error } = await sb()
+      .from('site_members')
+      .select('user_id')
+      .eq('site_id', requireUuid(siteId, '工地'))
+    if (error) throw new AppError(toUserMessage(error, '無法讀取工地成員'))
+    return (data ?? []).map((r) => String(r.user_id))
+  },
+
+  async setSiteMembers(
+    actor: AppUser,
+    siteId: string,
+    userIds: string[],
+  ): Promise<void> {
+    if (actor.role !== 'boss') throw new AppError('僅老闆可設定工地權限')
+    const sid = requireUuid(siteId, '工地')
+    const { error: delError } = await sb()
+      .from('site_members')
+      .delete()
+      .eq('site_id', sid)
+    if (delError) throw new AppError(toUserMessage(delError, '無法更新工地權限'))
+    const rows = userIds.map((uid) => ({
+      site_id: sid,
+      user_id: requireUuid(uid, '成員'),
+      organization_id: actor.organizationId,
+      created_by: actor.id,
+    }))
+    if (rows.length === 0) return
+    const { error } = await sb().from('site_members').insert(rows)
+    if (error) throw new AppError(toUserMessage(error, '無法更新工地權限'))
+    await this.appendAuditLog(actor, {
+      action: 'permission.update',
+      targetType: 'site_members',
+      targetId: sid,
+      after: { userIds },
+    })
+  },
+
+  async updateProfile(
+    actor: AppUser,
+    targetUserId: string,
+    input: {
+      nickname?: string | null
+      birthDate?: string | null
+      jobTitle?: string | null
+      hiredAt?: string | null
+      notes?: string | null
+      accountStatus?: string | null
+    },
+  ): Promise<AppUser> {
+    const tid = requireUuid(targetUserId, '使用者')
+    const self = actor.id === tid
+    if (!self && actor.role !== 'boss') {
+      throw new AppError('僅本人或老闆可更新資料')
+    }
+    const fields = normalizeProfileFields(input)
+    const payload: Record<string, unknown> = {
+      nickname: fields.nickname,
+      birth_date: fields.birthDate,
+      job_title: fields.jobTitle,
+      hired_at: fields.hiredAt,
+      profile_notes: fields.notes,
+    }
+    if (input.accountStatus != null) {
+      if (actor.role !== 'boss') throw new AppError('僅老闆可停用帳號')
+      payload.account_status = assertAccountStatus(input.accountStatus)
+    }
+    const { data, error } = await sb()
+      .from('profiles')
+      .update(payload)
+      .eq('id', tid)
+      .select(PROFILE_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新個人資料'))
+    const mapped = mapUser(data)
+    await this.appendAuditLog(actor, {
+      action: 'permission.update',
+      targetType: 'profile',
+      targetId: tid,
+      after: mapped,
+    })
+    return mapped
+  },
+
+  async listOrgProfiles(actor: AppUser): Promise<AppUser[]> {
+    if (actor.role !== 'boss') throw new AppError('僅老闆可查看完整名冊')
+    const { data, error } = await sb()
+      .from('profiles')
+      .select(PROFILE_SELECT)
+      .eq('organization_id', actor.organizationId)
+      .order('name')
+    if (error) throw new AppError(toUserMessage(error, '無法載入名冊'))
+    return (data ?? []).map((row) => mapUser(row))
+  },
+
   async listSites(actor?: AppUser): Promise<SiteProject[]> {
     if (actor) {
       assertPermission(actor.role, PERMISSIONS.SITE_READ, {
@@ -897,7 +1018,14 @@ export const supabaseRepos = {
       )
       .order('updated_at', { ascending: false })
     if (error) throw new AppError(toUserMessage(error, '無法載入工地列表'))
-    return (data ?? []).map((row) => mapSite(row))
+    const sites = (data ?? []).map((row) => mapSite(row))
+    if (!actor || actor.role === 'boss') return sites
+    const allowed = await this.listAllowedSiteIds(actor.id)
+    return filterSitesByAccess({
+      role: actor.role,
+      sites,
+      allowedSiteIds: allowed,
+    })
   },
 
   async getSite(id: string, actor?: AppUser): Promise<SiteProject | null> {
@@ -919,6 +1047,14 @@ export const supabaseRepos = {
     if (!data) return null
     const site = mapSite(data)
     if (actor) assertSameOrganization(actor.organizationId, site.organizationId)
+    if (actor && actor.role !== 'boss') {
+      const allowed = await this.listAllowedSiteIds(actor.id)
+      assertCanAccessSite({
+        role: actor.role,
+        siteId: site.id,
+        allowedSiteIds: allowed,
+      })
+    }
     return site
   },
 
@@ -4364,6 +4500,36 @@ export const supabaseRepos = {
     }))
   },
 
+  async uploadReceiptPhoto(input: {
+    file: File
+    siteId: string
+  }): Promise<string> {
+    const me = await this.getCurrentUser()
+    if (!me) throw new AppError('尚未登入')
+    const siteId = requireUuid(input.siteId, '工地')
+    const mime = input.file.type || 'image/jpeg'
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg'
+    const path = `${me.organizationId}/${me.id}/receipt-${crypto.randomUUID()}.${ext}`
+    const { error: uploadError } = await sb()
+      .storage.from('site-photos')
+      .upload(path, input.file, { contentType: mime, upsert: false })
+    if (uploadError) {
+      throw new AppError(toUserMessage(uploadError, '無法上傳收據照片'))
+    }
+    await sb().from('photo_uploads').insert({
+      organization_id: me.organizationId,
+      uploaded_by: me.id,
+      site_id: siteId,
+      photo_type: 'unclassified',
+      storage_path: path,
+      content_type: mime,
+      byte_size: input.file.size,
+      source: 'app-receipt',
+      status: 'linked',
+    })
+    return path
+  },
+
   async createExpenseReport(
     actor: AppUser,
     input: {
@@ -4371,6 +4537,7 @@ export const supabaseRepos = {
       item: string
       amount: number
       note?: string | null
+      receiptPhotoPath?: string | null
     },
   ): Promise<ExpenseReport> {
     const siteId = requireUuid(input.siteId, '工地')
@@ -4392,6 +4559,7 @@ export const supabaseRepos = {
         item: assertExpenseItem(input.item),
         amount,
         note: input.note?.trim() || null,
+        receipt_photo_path: input.receiptPhotoPath?.trim() || null,
         status: needsReview ? 'pending_review' : 'confirmed',
         reported_by: actor.id,
         reported_by_name: actor.name,
@@ -4534,6 +4702,7 @@ export const supabaseRepos = {
       siteId: string
       amount: number
       sourceNote?: string | null
+      proofPhotoPath?: string | null
     },
   ): Promise<CashReceiptReport> {
     const siteId = requireUuid(input.siteId, '工地')
@@ -4547,6 +4716,7 @@ export const supabaseRepos = {
         site_name: site.name,
         amount: assertPositiveMoney(input.amount, '收款金額'),
         source_note: input.sourceNote?.trim() || null,
+        proof_photo_path: input.proofPhotoPath?.trim() || null,
         status: 'pending_confirm',
         reported_by: actor.id,
         reported_by_name: actor.name,

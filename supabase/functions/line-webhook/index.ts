@@ -1,7 +1,8 @@
 /**
  * LINE webhook — reply-only (DEC-007).
  * Phase 1: flow drafts + batch photo upload + todos Flex.
- * Phase 2: attendance clock/switch-site + purchase apply.
+ * Phase 2: attendance clock/switch-site.
+ * V1.0: 支出／收款 → expense_reports / cash_receipt_reports（非舊採購流）.
  * No proactive push / broadcast / timeout reminders.
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
@@ -72,10 +73,6 @@ const FLOW_LABELS: Record<FlowType, string> = {
   /** V1.0：圖文選單「支出／收款」；複雜採購額度先不強調 */
   purchase: '支出／收款',
 }
-
-const PURCHASE_PREAPPROVAL_NTD = 3000
-const EMERGENCY_SINGLE_LIMIT_NTD = 5000
-const EMERGENCY_DAILY_LIMIT_NTD = 10_000
 
 const PHOTO_TYPE_LABELS: Record<string, string> = {
   before: '施工前',
@@ -410,32 +407,37 @@ async function handlePostback(
     ]
   }
 
-  if (action === 'pur_mode') {
+  if (action === 'cash_kind') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「採購申請」。')]
+      return [textMsg('請先點「支出／收款」。')]
     }
-    return selectPurchaseMode(admin, gate.draft, params.m || '')
+    return selectCashKind(admin, profile, gate.draft, params.k || '')
   }
 
-  if (action === 'pur_site') {
+  if (action === 'cash_site') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「採購申請」。')]
+      return [textMsg('請先點「支出／收款」。')]
     }
-    return selectPurchaseSite(admin, profile, gate.draft, params.id || '')
+    return selectCashSite(admin, profile, gate.draft, params.id || '')
   }
 
-  if (action === 'pur_site_skip') {
+  if (action === 'cash_receipt_skip') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「採購申請」。')]
+      return [textMsg('請先點「支出／收款」。')]
     }
-    return promptPurchaseConfirm(admin, gate.draft)
+    return promptCashConfirm(admin, gate.draft)
   }
 
-  if (action === 'pur_confirm') {
+  if (action === 'cash_confirm') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「採購申請」。')]
+      return [textMsg('請先點「支出／收款」。')]
     }
-    return submitPurchase(admin, profile, gate.draft)
+    return submitFieldCash(admin, profile, gate.draft)
+  }
+
+  // Legacy postback aliases from older rich menus
+  if (action === 'pur_mode' || action === 'pur_site' || action === 'pur_site_skip' || action === 'pur_confirm') {
+    return [textMsg('採購申請已改為「支出／收款」。請從圖文選單重新開始。')]
   }
 
   if (action === 'photo_site') {
@@ -487,6 +489,16 @@ async function handleImageEvent(
   const gate = await prepareActiveDraft(admin, profile)
   if (gate.messages && (gate.age === 'paused' || gate.age === 'expired')) {
     return gate.messages
+  }
+
+  if (gate.draft?.flow_type === 'purchase') {
+    return handleCashReceiptImage(
+      admin,
+      lineToken,
+      profile,
+      gate.draft,
+      messageId,
+    )
   }
 
   if (!gate.draft || gate.draft.flow_type !== 'photo_upload') {
@@ -554,8 +566,8 @@ async function startFlow(
   }
 
   if (flowType === 'purchase') {
-    const draft = await createDraft(admin, profile, 'purchase', 'select_mode', {})
-    return promptPurchaseMode()
+    const draft = await createDraft(admin, profile, 'purchase', 'select_kind', {})
+    return promptCashKind()
   }
 
   const draft = await createDraft(admin, profile, 'photo_upload', 'select_site', {})
@@ -1193,14 +1205,21 @@ function summarizeDraft(draft: DraftRow): { filled: string; pending: string } {
   if (draft.flow_type === 'purchase') {
     const filled: string[] = []
     const pending: string[] = []
-    if (p.mode) filled.push(p.mode === 'emergency' ? '緊急' : '一般')
-    else pending.push('選擇類型')
-    if (p.title) filled.push('品名')
-    else if (p.mode) pending.push('填寫品名')
-    if (p.goodsAmount != null) filled.push('金額')
-    else if (p.title) pending.push('填寫金額')
+    if (p.kind === 'expense') filled.push('支出')
+    else if (p.kind === 'receipt') filled.push('收款')
+    else pending.push('選擇支出或收款')
     if (p.siteName) filled.push('工地')
-    if (p.title && p.goodsAmount != null) pending.push('確認送出')
+    else if (p.kind) pending.push('選擇工地')
+    if (p.kind === 'expense') {
+      if (p.item) filled.push('項目')
+      else if (p.siteName) pending.push('填寫項目')
+    } else if (p.kind === 'receipt' && p.sourceNote) {
+      filled.push('來源')
+    }
+    if (p.amount != null) filled.push('金額')
+    else if (p.kind === 'expense' ? p.item : p.siteName) pending.push('填寫金額')
+    if (Number(p.receiptCount ?? 0) > 0) filled.push(`${p.receiptCount} 張收據`)
+    if (p.amount != null) pending.push('確認送出')
     return {
       filled: filled.length ? filled.join('、') : '尚無',
       pending: pending.length ? pending.join('、') : '確認送出',
@@ -1371,7 +1390,7 @@ async function storeLineImage(
   profile: Profile,
   messageId: string,
   meta: { siteId: string; photoType: string; batchId: string },
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   if (!admin) return { ok: false, error: '收圖失敗：伺服器尚未設定資料庫。' }
   if (!messageId) return { ok: false, error: '收圖失敗：缺少訊息編號。' }
 
@@ -1423,7 +1442,7 @@ async function storeLineImage(
       console.warn('[line-webhook] insert failed', insertError.message)
       return { ok: false, error: '收圖失敗：寫入資料庫失敗。草稿仍保留，可再傳一次。' }
     }
-    return { ok: true }
+    return { ok: true, path }
   } catch (err) {
     console.warn('[line-webhook] image threw', String(err).slice(0, 200))
     return { ok: false, error: '收圖失敗：系統例外，請稍後再試。' }
@@ -1932,43 +1951,115 @@ async function assignAttendanceSite(
   ]
 }
 
-// ----- Phase 2: purchase -----
+// ----- V1.0: field cash (expense / receipt) — flow_type remains "purchase" for menu/DB -----
 
-function promptPurchaseMode(): LineMessage[] {
+function promptCashKind(): LineMessage[] {
   return [
     flexMenu({
-      altText: '採購申請',
-      eyebrow: '採購申請',
-      title: '選擇採購類型',
-      body:
-        '一般：最終應付 ≥ NT$3,000 需核准\n緊急：單次 ≤ NT$5,000、每日 ≤ NT$10,000\n申請人不可自行核准',
+      altText: '支出／收款',
+      eyebrow: '支出／收款',
+      title: '選擇回報類型',
+      body: '寫入現場支出或收款回報（非舊採購單）。未達老闆設定門檻的小額支出可自動確認。',
       buttons: [
-        { label: '一般採購', data: 'a=pur_mode&m=normal', style: 'primary' },
-        { label: '緊急採購', data: 'a=pur_mode&m=emergency', style: 'secondary' },
+        { label: '支出回報', data: 'a=cash_kind&k=expense', style: 'primary' },
+        { label: '收款回報', data: 'a=cash_kind&k=receipt', style: 'secondary' },
         { label: '取消', data: 'a=cancel', style: 'secondary' },
       ],
     }),
   ]
 }
 
-async function selectPurchaseMode(
+async function selectCashKind(
   admin: Sb,
+  profile: Profile,
   draft: DraftRow,
-  mode: string,
+  kind: string,
 ): Promise<LineMessage[]> {
-  if (mode !== 'normal' && mode !== 'emergency') {
-    return [textMsg('類型無效。'), ...promptPurchaseMode()]
+  if (kind !== 'expense' && kind !== 'receipt') {
+    return [textMsg('類型無效。'), ...promptCashKind()]
   }
   await touchDraft(admin, draft.id, {
-    current_step: 'enter_title',
-    draft_payload: { mode },
+    current_step: 'select_site',
+    draft_payload: { kind, receiptPaths: [], receiptCount: 0 },
+  })
+  return promptCashSiteFor(admin, profile, {
+    ...draft,
+    current_step: 'select_site',
+    draft_payload: { kind, receiptPaths: [], receiptCount: 0 },
+  })
+}
+
+async function promptCashSiteFor(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  const sites = await listSitesForProfile(admin, profile)
+  if (sites.length === 0) {
+    return [
+      flexMenu({
+        altText: '沒有可選工地',
+        eyebrow: '支出／收款',
+        title: '沒有可選工地',
+        body: '請請老闆先在網站指派你可進入的工地。',
+        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
+  }
+  return siteCarousel({
+    altText: '選擇工地',
+    eyebrow: '支出／收款',
+    sites: sites.slice(0, 9),
+    actionPrefix: 'a=cash_site&id=',
+    extraButtons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+  })
+}
+
+async function selectCashSite(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+  siteId: string,
+): Promise<LineMessage[]> {
+  const sites = await listSitesForProfile(admin, profile)
+  const site = sites.find((s) => s.id === siteId)
+  if (!site) {
+    return [
+      textMsg('找不到工地或無權限。'),
+      ...(await promptCashSiteFor(admin, profile, draft)),
+    ]
+  }
+  const kind = String(draft.draft_payload?.kind || '')
+  const nextPayload = {
+    ...draft.draft_payload,
+    siteId: site.id,
+    siteName: site.name,
+  }
+  if (kind === 'expense') {
+    await touchDraft(admin, draft.id, {
+      current_step: 'enter_item',
+      draft_payload: nextPayload,
+    })
+    return [
+      flexMenu({
+        altText: '請輸入支出項目',
+        eyebrow: '支出回報',
+        title: '請輸入支出項目',
+        body: `工地：${site.name}\n直接以文字回覆項目名稱（例如：五金材料）`,
+        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
+  }
+  await touchDraft(admin, draft.id, {
+    current_step: 'enter_amount',
+    draft_payload: nextPayload,
   })
   return [
     flexMenu({
-      altText: '請輸入採購品名',
-      eyebrow: '採購申請',
-      title: mode === 'emergency' ? '緊急採購：輸入品名' : '一般採購：輸入品名',
-      body: '直接以文字回覆品名／說明（至少 2 字）',
+      altText: '請輸入收款金額',
+      eyebrow: '收款回報',
+      title: '請輸入金額',
+      body: `工地：${site.name}\n可選：先傳來源說明文字；或直接輸入數字金額（例如 5000）`,
       buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
     }),
   ]
@@ -1980,23 +2071,33 @@ async function handlePurchaseText(
   draft: DraftRow,
   text: string,
 ): Promise<LineMessage[]> {
-  const step = draft.current_step || 'select_mode'
+  const step = draft.current_step || 'select_kind'
   const payload = draft.draft_payload || {}
 
-  if (step === 'select_mode') {
-    if (/一般/.test(text)) return selectPurchaseMode(admin, draft, 'normal')
-    if (/緊急/.test(text)) return selectPurchaseMode(admin, draft, 'emergency')
-    return promptPurchaseMode()
+  if (step === 'select_kind' || step === 'select_mode') {
+    if (/支出/.test(text)) return selectCashKind(admin, profile, draft, 'expense')
+    if (/收款/.test(text)) return selectCashKind(admin, profile, draft, 'receipt')
+    return promptCashKind()
   }
 
-  if (step === 'enter_title') {
-    const title = text.trim()
-    if (title.length < 2) {
+  if (step === 'select_site') {
+    const num = Number(text)
+    if (Number.isInteger(num) && num >= 1) {
+      const sites = await listSitesForProfile(admin, profile)
+      const site = sites[num - 1]
+      if (site) return selectCashSite(admin, profile, draft, site.id)
+    }
+    return promptCashSiteFor(admin, profile, draft)
+  }
+
+  if (step === 'enter_item') {
+    const item = text.trim()
+    if (item.length < 2) {
       return [
         flexMenu({
-          altText: '品名太短',
-          eyebrow: '採購申請',
-          title: '品名太短',
+          altText: '項目太短',
+          eyebrow: '支出回報',
+          title: '項目太短',
           body: '請再輸入一次（至少 2 字）',
           buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
         }),
@@ -2004,155 +2105,178 @@ async function handlePurchaseText(
     }
     await touchDraft(admin, draft.id, {
       current_step: 'enter_amount',
-      draft_payload: { ...payload, title },
+      draft_payload: { ...payload, item },
     })
     return [
       flexMenu({
         altText: '請輸入金額',
-        eyebrow: '採購申請',
+        eyebrow: '支出回報',
         title: '請輸入金額',
-        body: `品名：${title}\n請以文字回覆數字（新台幣，例如 2800）`,
+        body: `項目：${item}\n請以文字回覆數字（新台幣，例如 800）`,
         buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
 
   if (step === 'enter_amount') {
-    const amount = Number(String(text).replace(/[,，元$NTD\s]/gi, ''))
-    if (!Number.isFinite(amount) || amount < 0) {
+    const asAmount = Number(String(text).replace(/[,，元$NTD\s]/gi, ''))
+    if (Number.isFinite(asAmount) && asAmount > 0) {
+      const amount = Math.round(asAmount * 100) / 100
+      await touchDraft(admin, draft.id, {
+        current_step: 'attach_receipt',
+        draft_payload: { ...payload, amount },
+      })
+      return promptAttachReceipt({
+        ...draft,
+        current_step: 'attach_receipt',
+        draft_payload: { ...payload, amount },
+      })
+    }
+    if (payload.kind === 'receipt' && text.trim().length >= 1) {
+      await touchDraft(admin, draft.id, {
+        current_step: 'enter_amount',
+        draft_payload: { ...payload, sourceNote: text.trim() },
+      })
       return [
         flexMenu({
-          altText: '金額無效',
-          eyebrow: '採購申請',
-          title: '金額無效',
-          body: '請輸入數字（例如 2800）',
+          altText: '請輸入收款金額',
+          eyebrow: '收款回報',
+          title: '請輸入金額',
+          body: `來源：${text.trim()}\n請以文字回覆數字（例如 5000）`,
           buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
         }),
       ]
     }
-    if (payload.mode === 'emergency' && amount > EMERGENCY_SINGLE_LIMIT_NTD) {
-      return [
-        flexMenu({
-          altText: '超過緊急單次上限',
-          eyebrow: '採購申請',
-          title: '超過緊急單次上限',
-          body: `單次上限 NT$${EMERGENCY_SINGLE_LIMIT_NTD.toLocaleString()}，請重新輸入金額`,
-          buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
-        }),
-      ]
-    }
-    await touchDraft(admin, draft.id, {
-      current_step: 'select_site',
-      draft_payload: { ...payload, goodsAmount: amount },
-    })
-    return promptPurchaseSite(admin, profile, {
-      ...draft,
-      draft_payload: { ...payload, goodsAmount: amount },
-      current_step: 'select_site',
-    })
+    return [
+      flexMenu({
+        altText: '金額無效',
+        eyebrow: '支出／收款',
+        title: '金額無效',
+        body: '請輸入大於 0 的數字（例如 800）',
+        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
   }
 
-  if (step === 'select_site') {
-    const num = Number(text)
-    if (Number.isInteger(num) && num >= 1) {
-      const sites = await listSites(admin, profile.organization_id)
-      const site = sites[num - 1]
-      if (site) return selectPurchaseSite(admin, profile, draft, site.id)
-    }
-    if (/跳過|不指定/.test(text)) return promptPurchaseConfirm(admin, draft)
-    return promptPurchaseSite(admin, profile, draft)
+  if (step === 'attach_receipt') {
+    if (/跳過|不用|無收據/.test(text)) return promptCashConfirm(admin, draft)
+    if (/確認|送出|是/.test(text)) return submitFieldCash(admin, profile, draft)
+    return promptAttachReceipt(draft)
   }
 
   if (step === 'confirm') {
-    if (/確認|送出|是/.test(text)) return submitPurchase(admin, profile, draft)
+    if (/確認|送出|是/.test(text)) return submitFieldCash(admin, profile, draft)
     if (/取消/.test(text)) {
       await finalizeDraft(admin, draft.id, 'cancelled')
       return [
         flexMenu({
-          altText: '已取消採購申請',
-          eyebrow: '採購申請',
+          altText: '已取消',
+          eyebrow: '支出／收款',
           title: '已取消',
-          body: '可再從圖文選單重新申請',
+          body: '可再從圖文選單重新回報',
         }),
       ]
     }
-    return promptPurchaseConfirm(admin, draft)
+    return promptCashConfirm(admin, draft)
   }
 
   return resumePurchase(admin, profile, draft)
 }
 
-async function promptPurchaseSite(
-  admin: Sb,
-  profile: Profile,
-  draft: DraftRow,
-): Promise<LineMessage[]> {
-  const sites = await listSites(admin, profile.organization_id)
-  return siteCarousel({
-    altText: '採購：選擇工地',
-    eyebrow: '採購申請',
-    sites: sites.slice(0, 9),
-    actionPrefix: 'a=pur_site&id=',
-    extraButtons: [
-      { label: '不指定工地', data: 'a=pur_site_skip', style: 'primary' },
-      { label: '取消', data: 'a=cancel', style: 'secondary' },
-    ],
-  })
+function promptAttachReceipt(draft: DraftRow): LineMessage[] {
+  const p = draft.draft_payload || {}
+  const count = Number(p.receiptCount ?? 0)
+  return [
+    flexMenu({
+      altText: '上傳收據照片（可選）',
+      eyebrow: p.kind === 'receipt' ? '收款回報' : '支出回報',
+      title: '上傳收據／憑證（可選）',
+      body: `金額：NT$${Number(p.amount || 0).toLocaleString()}\n已收：${count} 張\n可直接傳圖；或跳過後確認送出`,
+      buttons: [
+        { label: '跳過，去確認', data: 'a=cash_receipt_skip', style: 'primary' },
+        { label: '取消', data: 'a=cancel', style: 'secondary' },
+      ],
+    }),
+  ]
 }
 
-async function selectPurchaseSite(
-  admin: Sb,
+async function handleCashReceiptImage(
+  admin: Sb | null,
+  lineToken: string,
   profile: Profile,
   draft: DraftRow,
-  siteId: string,
+  messageId: string,
 ): Promise<LineMessage[]> {
-  const sites = await listSites(admin, profile.organization_id)
-  const site = sites.find((s) => s.id === siteId)
-  if (!site) {
+  const step = draft.current_step || ''
+  const payload = draft.draft_payload || {}
+  if (step !== 'attach_receipt' && step !== 'confirm') {
     return [
-      textMsg('找不到工地。'),
-      ...(await promptPurchaseSite(admin, profile, draft)),
+      textMsg('請先完成類型、工地與金額，再到「上傳收據」步驟再傳圖。'),
+      ...(await resumePurchase(admin!, profile, draft)),
     ]
   }
-  const next = {
-    ...draft,
-    draft_payload: {
-      ...draft.draft_payload,
-      siteId: site.id,
-      siteName: site.name,
-    },
+  if (!payload.siteId) {
+    return [textMsg('缺少工地，請重新開始。')]
   }
-  await touchDraft(admin, draft.id, {
-    current_step: 'confirm',
-    draft_payload: next.draft_payload,
+  const batchId = String(payload.batchId || crypto.randomUUID())
+  const result = await storeLineImage(admin, lineToken, profile, messageId, {
+    siteId: String(payload.siteId),
+    photoType: 'unclassified',
+    batchId,
   })
-  return promptPurchaseConfirm(admin, { ...next, current_step: 'confirm' })
+  if (!result.ok) return [textMsg(result.error)]
+
+  const paths = Array.isArray(payload.receiptPaths)
+    ? [...(payload.receiptPaths as string[])]
+    : []
+  paths.push(result.path)
+  const count = paths.length
+  await touchDraft(admin!, draft.id, {
+    current_step: 'attach_receipt',
+    draft_payload: {
+      ...payload,
+      batchId,
+      receiptPaths: paths,
+      receiptCount: count,
+      receiptPhotoPath: paths[0] ?? null,
+    },
+  })
+  return [
+    flexMenu({
+      altText: `已加入第 ${count} 張收據`,
+      eyebrow: '支出／收款',
+      title: `已加入第 ${count} 張收據`,
+      body: '可繼續傳圖，或跳過／確認送出',
+      buttons: [
+        { label: '去確認送出', data: 'a=cash_receipt_skip', style: 'primary' },
+        { label: '取消', data: 'a=cancel', style: 'secondary' },
+      ],
+    }),
+  ]
 }
 
-async function promptPurchaseConfirm(
+async function promptCashConfirm(
   admin: Sb,
   draft: DraftRow,
 ): Promise<LineMessage[]> {
   const p = draft.draft_payload || {}
-  const amount = Number(p.goodsAmount ?? 0)
-  const mode = String(p.mode || 'normal')
-  const needsApproval = mode === 'normal' && amount >= PURCHASE_PREAPPROVAL_NTD
   await touchDraft(admin, draft.id, {
     current_step: 'confirm',
     draft_payload: p,
   })
+  const kindLabel = p.kind === 'receipt' ? '收款' : '支出'
   return [
     flexMenu({
-      altText: '請確認採購',
-      eyebrow: '採購申請',
-      title: '請確認採購',
-      body: `類型：${mode === 'emergency' ? '緊急' : '一般'}\n品名：${
-        p.title || '—'
-      }\n金額：NT$${amount.toLocaleString()}\n工地：${p.siteName || '不指定'}\n${
-        needsApproval ? '送出後需老闆／管理員核准' : '可直接成立（免事前核准）'
-      }`,
+      altText: `請確認${kindLabel}`,
+      eyebrow: '支出／收款',
+      title: `請確認${kindLabel}`,
+      body: `類型：${kindLabel}\n工地：${p.siteName || '—'}\n${
+        p.kind === 'expense' ? `項目：${p.item || '—'}` : `來源：${p.sourceNote || '—'}`
+      }\n金額：NT$${Number(p.amount || 0).toLocaleString()}\n收據：${
+        Number(p.receiptCount ?? 0)
+      } 張`,
       buttons: [
-        { label: '確認送出', data: 'a=pur_confirm', style: 'primary' },
+        { label: '確認送出', data: 'a=cash_confirm', style: 'primary' },
         { label: '取消', data: 'a=cancel', style: 'secondary' },
       ],
     }),
@@ -2164,15 +2288,16 @@ async function resumePurchase(
   profile: Profile,
   draft: DraftRow,
 ): Promise<LineMessage[]> {
-  const step = draft.current_step || 'select_mode'
-  if (step === 'select_mode') return promptPurchaseMode()
-  if (step === 'enter_title') {
+  const step = draft.current_step || 'select_kind'
+  if (step === 'select_kind' || step === 'select_mode') return promptCashKind()
+  if (step === 'select_site') return promptCashSiteFor(admin, profile, draft)
+  if (step === 'enter_item') {
     return [
       flexMenu({
-        altText: '請輸入採購品名',
-        eyebrow: '採購申請',
-        title: '請輸入品名／說明',
-        body: '直接以文字回覆品名（至少 2 字）',
+        altText: '請輸入支出項目',
+        eyebrow: '支出回報',
+        title: '請輸入支出項目',
+        body: '直接以文字回覆項目名稱',
         buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
@@ -2181,169 +2306,181 @@ async function resumePurchase(
     return [
       flexMenu({
         altText: '請輸入金額',
-        eyebrow: '採購申請',
+        eyebrow: '支出／收款',
         title: '請輸入金額',
-        body: '直接以文字回覆數字（新台幣，例如 2800）',
+        body: '直接以文字回覆數字（新台幣）',
         buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
-  if (step === 'select_site') return promptPurchaseSite(admin, profile, draft)
-  return promptPurchaseConfirm(admin, draft)
+  if (step === 'attach_receipt') return promptAttachReceipt(draft)
+  return promptCashConfirm(admin, draft)
 }
 
-async function emergencyUsedToday(
+async function listSitesForProfile(
   admin: Sb,
-  userId: string,
-  businessDate: string,
-): Promise<number> {
+  profile: Profile,
+): Promise<Array<{ id: string; name: string }>> {
+  const all = await listSites(admin, profile.organization_id)
+  if (profile.role === 'boss' || profile.role === 'owner' || profile.role === 'admin') {
+    return all
+  }
   const { data, error } = await admin
-    .from('emergency_limit_events')
-    .select('amount_delta, event_type')
-    .eq('employee_id', userId)
-    .eq('business_date', businessDate)
+    .from('site_members')
+    .select('site_id')
+    .eq('user_id', profile.id)
+    .eq('organization_id', profile.organization_id)
   if (error) {
-    console.warn('[line-webhook] emergency used failed', error.message)
-    return 0
+    console.warn('[line-webhook] site_members failed', error.message)
+    return []
   }
-  let sum = 0
-  for (const row of data ?? []) {
-    sum += Number(row.amount_delta) || 0
-  }
-  return sum
+  const allowed = new Set((data ?? []).map((r) => String(r.site_id)))
+  return all.filter((s) => allowed.has(s.id))
 }
 
-function taipeiBusinessDate(): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Taipei',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date())
-}
-
-async function submitPurchase(
+async function submitFieldCash(
   admin: Sb,
   profile: Profile,
   draft: DraftRow,
 ): Promise<LineMessage[]> {
   const p = draft.draft_payload || {}
-  const mode = String(p.mode || '')
-  const title = String(p.title || '').trim()
-  const goodsAmount = Number(p.goodsAmount ?? NaN)
-  if (mode !== 'normal' && mode !== 'emergency') {
-    return [textMsg('採購類型缺失，請重新申請。')]
+  const kind = String(p.kind || '')
+  const siteId = String(p.siteId || '')
+  const siteName = String(p.siteName || '')
+  const amount = Number(p.amount ?? NaN)
+  if (kind !== 'expense' && kind !== 'receipt') {
+    return [textMsg('類型缺失，請重新開始。')]
   }
-  if (title.length < 2 || !Number.isFinite(goodsAmount) || goodsAmount < 0) {
-    return [textMsg('資料不完整，請重新申請。')]
-  }
-
-  const finalPayable = Math.round(goodsAmount * 100) / 100
-  const businessDate = taipeiBusinessDate()
-  const needsApproval = mode === 'normal' && finalPayable >= PURCHASE_PREAPPROVAL_NTD
-
-  if (mode === 'emergency') {
-    if (finalPayable > EMERGENCY_SINGLE_LIMIT_NTD) {
-      return [
-        textMsg(
-          `超過緊急單次上限 NT$${EMERGENCY_SINGLE_LIMIT_NTD.toLocaleString()}`,
-        ),
-      ]
-    }
-    const used = await emergencyUsedToday(admin, profile.id, businessDate)
-    if (used + finalPayable > EMERGENCY_DAILY_LIMIT_NTD) {
-      return [
-        textMsg(
-          `超過緊急每日上限（已用 NT$${used.toLocaleString()}／上限 NT$${EMERGENCY_DAILY_LIMIT_NTD.toLocaleString()}）`,
-        ),
-      ]
-    }
+  if (!siteId || !siteName) return [textMsg('請先選擇工地。')]
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return [textMsg('金額無效，請重新開始。')]
   }
 
-  const { data, error } = await admin
-    .from('purchases')
-    .insert({
-      organization_id: profile.organization_id,
-      user_id: profile.id,
-      site_id: p.siteId ? String(p.siteId) : null,
-      mode,
-      status: needsApproval ? 'pending_approval' : 'purchased',
-      title,
-      goods_amount: finalPayable,
-      discount: 0,
-      tax: 0,
-      shipping: 0,
-      other_buyer_fees: 0,
-      final_payable: finalPayable,
-      business_date: businessDate,
-    })
-    .select('id, status, final_payable, title')
-    .single()
+  const receiptPhotoPath = p.receiptPhotoPath
+    ? String(p.receiptPhotoPath)
+    : Array.isArray(p.receiptPaths) && p.receiptPaths[0]
+      ? String(p.receiptPaths[0])
+      : null
 
-  if (error) {
-    console.warn('[line-webhook] create purchase failed', error.message)
-    return [textMsg('建立採購失敗，草稿仍保留，請稍後再試「確認送出」。')]
+  let threshold = 3000
+  const { data: settings } = await admin
+    .from('org_spend_settings')
+    .select('report_review_threshold_ntd')
+    .eq('organization_id', profile.organization_id)
+    .maybeSingle()
+  if (settings?.report_review_threshold_ntd != null) {
+    threshold = Number(settings.report_review_threshold_ntd)
   }
 
-  if (mode === 'emergency') {
-    const { error: evErr } = await admin.from('emergency_limit_events').insert({
-      organization_id: profile.organization_id,
-      employee_id: profile.id,
-      business_date: businessDate,
-      event_type: 'RESERVE',
-      amount_delta: finalPayable,
-      purchase_id: data.id,
-      reason: 'LINE 緊急採購占額',
-      created_by: profile.id,
-    })
-    if (evErr) {
-      console.warn('[line-webhook] emergency reserve failed', evErr.message)
-      // purchase already created; still report partial success
-    }
-  }
+  const expensesUri = `${appBaseUrl()}/expenses`
 
-  if (needsApproval) {
-    const { data: approvers } = await admin
-      .from('profiles')
-      .select('id')
-      .eq('organization_id', profile.organization_id)
-      .in('role', ['boss', 'owner', 'admin'])
-      .neq('id', profile.id)
-
-    for (const a of approvers ?? []) {
-      await admin.from('notices').insert({
+  if (kind === 'expense') {
+    const item = String(p.item || '').trim()
+    if (item.length < 2) return [textMsg('支出項目缺失，請重新開始。')]
+    const needsReview = amount >= threshold
+    const now = new Date().toISOString()
+    const { data, error } = await admin
+      .from('expense_reports')
+      .insert({
         organization_id: profile.organization_id,
-        user_id: a.id,
-        kind: 'todo',
-        title: `採購待核准：${title}`,
-        detail: `最終應付 NT$${finalPayable.toLocaleString()}（LINE 申請）`,
-        status: 'open',
-        unread: true,
-        href: '/purchases',
+        site_id: siteId,
+        site_name: siteName,
+        item,
+        amount,
+        note: null,
+        receipt_photo_path: receiptPhotoPath,
+        status: needsReview ? 'pending_review' : 'confirmed',
+        reported_by: profile.id,
+        reported_by_name: profile.name || 'LINE',
+        reviewed_by: needsReview ? null : profile.id,
+        reviewed_at: needsReview ? null : now,
+        review_note: needsReview
+          ? null
+          : `小額免審（門檻 NT$${threshold.toLocaleString()}）`,
       })
+      .select('id, status, amount, item')
+      .single()
+    if (error) {
+      console.warn('[line-webhook] expense insert failed', error.message)
+      return [textMsg('建立支出回報失敗，請稍後再試「確認送出」。')]
     }
-  }
-
-  await finalizeDraft(admin, draft.id, 'completed')
-  const purchasesUri = `${appBaseUrl()}/purchases`
-  if (needsApproval) {
+    if (needsReview) {
+      const { data: bosses } = await admin
+        .from('profiles')
+        .select('id')
+        .eq('organization_id', profile.organization_id)
+        .in('role', ['boss', 'owner'])
+        .neq('id', profile.id)
+      for (const b of bosses ?? []) {
+        await admin.from('notices').insert({
+          organization_id: profile.organization_id,
+          user_id: b.id,
+          kind: 'todo',
+          title: `支出待審核：${item}`,
+          detail: `NT$${amount.toLocaleString()} · ${siteName}（LINE）`,
+          status: 'open',
+          unread: true,
+          href: '/expenses',
+        })
+      }
+    }
+    await finalizeDraft(admin, draft.id, 'completed')
     return [
       flexMenu({
-        altText: '已送出採購（待核准）',
-        eyebrow: '採購申請',
-        title: '已送出（待核准）',
-        body: `「${data.title}」\n金額 NT$${Number(data.final_payable).toLocaleString()}\n不可自行核准；老闆／管理員會在系統待辦看到`,
-        buttons: [{ label: '查看採購', uri: purchasesUri, style: 'primary' }],
+        altText: needsReview ? '已送出支出（待審核）' : '已建立支出',
+        eyebrow: '支出回報',
+        title: needsReview ? '已送出（待審核）' : '已建立（小額免審）',
+        body: `「${data.item}」\n金額 NT$${Number(data.amount).toLocaleString()}\n狀態：${data.status}`,
+        buttons: [{ label: '查看收支', uri: expensesUri, style: 'primary' }],
       }),
     ]
   }
+
+  const { data, error } = await admin
+    .from('cash_receipt_reports')
+    .insert({
+      organization_id: profile.organization_id,
+      site_id: siteId,
+      site_name: siteName,
+      amount,
+      source_note: p.sourceNote ? String(p.sourceNote) : null,
+      proof_photo_path: receiptPhotoPath,
+      status: 'pending_confirm',
+      reported_by: profile.id,
+      reported_by_name: profile.name || 'LINE',
+    })
+    .select('id, status, amount')
+    .single()
+  if (error) {
+    console.warn('[line-webhook] receipt insert failed', error.message)
+    return [textMsg('建立收款回報失敗，請稍後再試「確認送出」。')]
+  }
+  const { data: bosses } = await admin
+    .from('profiles')
+    .select('id')
+    .eq('organization_id', profile.organization_id)
+    .in('role', ['boss', 'owner'])
+    .neq('id', profile.id)
+  for (const b of bosses ?? []) {
+    await admin.from('notices').insert({
+      organization_id: profile.organization_id,
+      user_id: b.id,
+      kind: 'todo',
+      title: `收款待確認：NT$${amount.toLocaleString()}`,
+      detail: `${siteName}（LINE）`,
+      status: 'open',
+      unread: true,
+      href: '/expenses',
+    })
+  }
+  await finalizeDraft(admin, draft.id, 'completed')
   return [
     flexMenu({
-      altText: '已建立採購',
-      eyebrow: '採購申請',
-      title: '已建立採購',
-      body: `「${data.title}」\n金額 NT$${Number(data.final_payable).toLocaleString()}\n狀態：${data.status}`,
-      buttons: [{ label: '查看採購', uri: purchasesUri, style: 'primary' }],
+      altText: '已送出收款（待確認）',
+      eyebrow: '收款回報',
+      title: '已送出（待老闆確認）',
+      body: `金額 NT$${Number(data.amount).toLocaleString()}\n狀態：${data.status}`,
+      buttons: [{ label: '查看收支', uri: expensesUri, style: 'primary' }],
     }),
   ]
 }

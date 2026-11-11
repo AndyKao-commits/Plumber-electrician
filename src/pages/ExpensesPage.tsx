@@ -31,8 +31,10 @@ export function ExpensesPage() {
   const [item, setItem] = useState('')
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
+  const [receiptFiles, setReceiptFiles] = useState<File[]>([])
   const [receiptAmount, setReceiptAmount] = useState('')
   const [sourceNote, setSourceNote] = useState('')
+  const [proofFiles, setProofFiles] = useState<File[]>([])
 
   const selectedSite =
     siteId && sites.some((s) => s.id === siteId)
@@ -125,10 +127,12 @@ export function ExpensesPage() {
               item,
               amount: Number(amount) || 0,
               note,
+              receiptFiles,
             }).then(() => {
               setItem('')
               setAmount('')
               setNote('')
+              setReceiptFiles([])
             })
           }}
         >
@@ -176,6 +180,23 @@ export function ExpensesPage() {
               onChange={(e) => setNote(e.target.value)}
             />
           </div>
+          <div className="field">
+            <label htmlFor="exp-receipts">收據／憑證照片（可多選）</label>
+            <input
+              id="exp-receipts"
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={(e) =>
+                setReceiptFiles(Array.from(e.target.files ?? []))
+              }
+            />
+            {receiptFiles.length > 0 ? (
+              <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+                已選 {receiptFiles.length} 張（第一張寫入支出回報）
+              </p>
+            ) : null}
+          </div>
           {createExpenseError ? (
             <p style={{ color: 'var(--danger)', margin: 0 }}>
               {(createExpenseError as Error).message}
@@ -202,9 +223,11 @@ export function ExpensesPage() {
               siteId: selectedSite,
               amount: Number(receiptAmount) || 0,
               sourceNote,
+              proofFiles,
             }).then(() => {
               setReceiptAmount('')
               setSourceNote('')
+              setProofFiles([])
             })
           }}
         >
@@ -228,6 +251,16 @@ export function ExpensesPage() {
                 onChange={(e) => setSourceNote(e.target.value)}
               />
             </div>
+          </div>
+          <div className="field">
+            <label htmlFor="rc-proof">收款憑證照片（可多選，取第一張）</label>
+            <input
+              id="rc-proof"
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={(e) => setProofFiles(Array.from(e.target.files ?? []))}
+            />
           </div>
           {createReceiptError ? (
             <p style={{ color: 'var(--danger)', margin: 0 }}>
@@ -260,6 +293,7 @@ export function ExpensesPage() {
               <p style={{ margin: 0 }}>
                 {e.siteName} · {e.reportedByName} ·{' '}
                 {formatTaipei(e.reportedAt, 'MM/dd HH:mm')}
+                {e.receiptPhotoPath ? ' · 已附收據' : ''}
               </p>
               {isBoss && e.status === 'pending_review' ? (
                 <div className="row">
