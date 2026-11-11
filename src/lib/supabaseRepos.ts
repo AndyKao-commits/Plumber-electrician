@@ -910,6 +910,19 @@ export const supabaseRepos = {
     return (data ?? []).map((r) => String(r.site_id))
   },
 
+  async orgHasSiteAssignments(organizationId: string): Promise<boolean> {
+    const { count, error } = await sb()
+      .from('site_members')
+      .select('site_id', { count: 'exact', head: true })
+      .eq('organization_id', organizationId)
+    if (error) {
+      // Table missing / not applied yet → treat as not configured
+      console.warn('[site_members] count failed', error.message)
+      return false
+    }
+    return (count ?? 0) > 0
+  },
+
   async listSiteMemberIds(siteId: string): Promise<string[]> {
     const { data, error } = await sb()
       .from('site_members')
@@ -1020,11 +1033,15 @@ export const supabaseRepos = {
     if (error) throw new AppError(toUserMessage(error, '無法載入工地列表'))
     const sites = (data ?? []).map((row) => mapSite(row))
     if (!actor || actor.role === 'boss') return sites
-    const allowed = await this.listAllowedSiteIds(actor.id)
+    const [allowed, orgHasAssignments] = await Promise.all([
+      this.listAllowedSiteIds(actor.id),
+      this.orgHasSiteAssignments(actor.organizationId),
+    ])
     return filterSitesByAccess({
       role: actor.role,
       sites,
       allowedSiteIds: allowed,
+      orgHasAssignments,
     })
   },
 
@@ -1048,11 +1065,15 @@ export const supabaseRepos = {
     const site = mapSite(data)
     if (actor) assertSameOrganization(actor.organizationId, site.organizationId)
     if (actor && actor.role !== 'boss') {
-      const allowed = await this.listAllowedSiteIds(actor.id)
+      const [allowed, orgHasAssignments] = await Promise.all([
+        this.listAllowedSiteIds(actor.id),
+        this.orgHasSiteAssignments(actor.organizationId),
+      ])
       assertCanAccessSite({
         role: actor.role,
         siteId: site.id,
         allowedSiteIds: allowed,
+        orgHasAssignments,
       })
     }
     return site

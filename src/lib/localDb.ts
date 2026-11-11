@@ -803,10 +803,14 @@ export const localDb = {
       b.updatedAt.localeCompare(a.updatedAt),
     )
     if (!actor) return all
+    const members = read(KEYS.siteMembers, emptySiteMembers)
     return filterSitesByAccess({
       role: actor.role,
       sites: all,
-      allowedSiteIds: this.listAllowedSiteIds(actor.id),
+      allowedSiteIds: members
+        .filter((m) => m.userId === actor.id)
+        .map((m) => m.siteId),
+      orgHasAssignments: members.length > 0,
     })
   },
 
@@ -814,6 +818,10 @@ export const localDb = {
     return read(KEYS.siteMembers, emptySiteMembers)
       .filter((m) => m.userId === userId)
       .map((m) => m.siteId)
+  },
+
+  orgHasSiteAssignments(): boolean {
+    return read(KEYS.siteMembers, emptySiteMembers).length > 0
   },
 
   listSiteMembers(siteId: string): string[] {
