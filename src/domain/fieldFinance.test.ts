@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   MISC_SITE_LABEL,
   MISC_SITE_VALUE,
+  assertBossCancelFinance,
   assertBossFinalize,
+  assertCanCancelExpense,
+  assertCanCancelReceipt,
   computeCaseFinance,
   isCaseLinkedCash,
   resolveFieldCashTarget,
@@ -43,6 +46,15 @@ describe('V1.0 field finance', () => {
         reporterId: 'emp-1',
       }),
     ).not.toThrow()
+  })
+
+  it('boss may cancel confirmed finance; employees may not', () => {
+    expect(() => assertBossCancelFinance('employee')).toThrow(/僅老闆/)
+    expect(() => assertBossCancelFinance('boss')).not.toThrow()
+    expect(() => assertCanCancelExpense('confirmed')).not.toThrow()
+    expect(() => assertCanCancelExpense('cancelled')).toThrow(/已取消/)
+    expect(() => assertCanCancelReceipt('confirmed')).not.toThrow()
+    expect(() => assertCanCancelReceipt('cancelled')).toThrow(/已取消/)
   })
 })
 

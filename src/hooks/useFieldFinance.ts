@@ -119,6 +119,16 @@ export function useFieldFinance(userId: string | undefined) {
     onSuccess: invalidate,
   })
 
+  const cancelExpense = useMutation({
+    mutationFn: async (input: { id: string; note?: string | null }) => {
+      if (!user) throw new Error('尚未登入')
+      return formal
+        ? supabaseRepos.cancelExpenseReport(user, input)
+        : localDb.cancelExpenseReport(user, input)
+    },
+    onSuccess: invalidate,
+  })
+
   const createReceipt = useMutation({
     mutationFn: async (input: {
       siteId?: string | null
@@ -163,6 +173,16 @@ export function useFieldFinance(userId: string | undefined) {
       return formal
         ? supabaseRepos.confirmCashReceipt(user, input)
         : localDb.confirmCashReceipt(user, input)
+    },
+    onSuccess: invalidate,
+  })
+
+  const cancelReceipt = useMutation({
+    mutationFn: async (input: { id: string; note?: string | null }) => {
+      if (!user) throw new Error('尚未登入')
+      return formal
+        ? supabaseRepos.cancelCashReceipt(user, input)
+        : localDb.cancelCashReceipt(user, input)
     },
     onSuccess: invalidate,
   })
@@ -216,6 +236,16 @@ export function useFieldFinance(userId: string | undefined) {
     onSuccess: invalidate,
   })
 
+  const cancelAdvance = useMutation({
+    mutationFn: async (input: { id: string; note?: string | null }) => {
+      if (!user) throw new Error('尚未登入')
+      return formal
+        ? supabaseRepos.cancelEmployeeAdvance(user, input)
+        : localDb.cancelEmployeeAdvance(user, input)
+    },
+    onSuccess: invalidate,
+  })
+
   return {
     expenses: expensesQuery.data ?? [],
     receipts: receiptsQuery.data ?? [],
@@ -224,15 +254,18 @@ export function useFieldFinance(userId: string | undefined) {
     isCreatingExpense: createExpense.isPending,
     createExpenseError: createExpense.error,
     reviewExpense: reviewExpense.mutateAsync,
+    cancelExpense: cancelExpense.mutateAsync,
     createReceipt: createReceipt.mutateAsync,
     isCreatingReceipt: createReceipt.isPending,
     createReceiptError: createReceipt.error,
     confirmReceipt: confirmReceipt.mutateAsync,
+    cancelReceipt: cancelReceipt.mutateAsync,
     createAdvance: createAdvance.mutateAsync,
     isCreatingAdvance: createAdvance.isPending,
     createAdvanceError: createAdvance.error,
     settleAdvances: settleAdvances.mutateAsync,
     isSettlingAdvances: settleAdvances.isPending,
     settleAdvancesError: settleAdvances.error,
+    cancelAdvance: cancelAdvance.mutateAsync,
   }
 }

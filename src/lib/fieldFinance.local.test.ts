@@ -75,6 +75,54 @@ describe('V1.0 field finance local', () => {
     expect(rc.locationText).toBe('臨時會合點')
   })
 
+  it('boss can cancel confirmed expense and receipt; employee cannot', () => {
+    const b = boss()
+    const w = worker()
+    const site = localDb.getSites()[0]
+    const settings = localDb.getOrgSpendSettings()
+
+    const exp = localDb.createExpenseReport(w, {
+      siteId: site.id,
+      item: `可刪支出-${Date.now()}`,
+      amount: Math.max(1, settings.reportReviewThresholdNtd - 1),
+    })
+    expect(exp.status).toBe('confirmed')
+    expect(() => localDb.cancelExpenseReport(w, { id: exp.id })).toThrow(/僅老闆/)
+    localDb.cancelExpenseReport(b, { id: exp.id })
+    expect(
+      localDb.listExpenseReports().find((e) => e.id === exp.id)?.status,
+    ).toBe('cancelled')
+
+    const rc = localDb.createCashReceipt(w, {
+      siteId: site.id,
+      amount: 888,
+      sourceNote: '可刪收款',
+    })
+    localDb.confirmCashReceipt(b, { id: rc.id, decision: 'confirm' })
+    localDb.cancelCashReceipt(b, { id: rc.id })
+    expect(localDb.listCashReceipts().find((r) => r.id === rc.id)?.status).toBe(
+      'cancelled',
+    )
+
+    const adv = localDb.createEmployeeAdvance(w, {
+      siteId: site.id,
+      item: `可刪代墊-${Date.now()}`,
+      amount: 300,
+    })
+    const settled = localDb.batchSettleEmployeeAdvances(b, {
+      advanceIds: [adv.id],
+    })
+    localDb.cancelEmployeeAdvance(b, { id: adv.id })
+    expect(
+      localDb.listEmployeeAdvances().find((a) => a.id === adv.id)?.status,
+    ).toBe('cancelled')
+    expect(
+      localDb
+        .listExpenseReports()
+        .find((e) => e.id === settled.expense.id)?.status,
+    ).toBe('cancelled')
+  })
+
   it('boss can set daily purchase and emergency limits', () => {
     const b = boss()
     const before = localDb.getOrgSpendSettings()

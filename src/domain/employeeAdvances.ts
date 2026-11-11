@@ -27,6 +27,18 @@ export function assertCanSettleAdvances(input: {
   }
 }
 
+export function assertCanCancelAdvance(input: {
+  actorRole: string
+  status: EmployeeAdvanceStatus
+}): void {
+  if (input.actorRole !== 'boss') {
+    throw new Error('僅老闆可取消代墊')
+  }
+  if (input.status === 'cancelled') {
+    throw new Error('此代墊已取消')
+  }
+}
+
 export function sumAdvanceAmounts(
   rows: Array<{ id: string; amount: number; status: EmployeeAdvanceStatus }>,
   selectedIds: string[],

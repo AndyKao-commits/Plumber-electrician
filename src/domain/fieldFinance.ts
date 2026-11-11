@@ -118,6 +118,25 @@ export function assertCanConfirmReceipt(status: CashReceiptStatus): void {
   }
 }
 
+/** Boss may cancel mistaken entries, including already-confirmed ones. */
+export function assertBossCancelFinance(actorRole: UserRole): void {
+  if (actorRole !== 'boss') {
+    throw new Error('僅老闆可刪除／取消收支紀錄')
+  }
+}
+
+export function assertCanCancelExpense(status: ExpenseReportStatus): void {
+  if (status === 'cancelled') {
+    throw new Error('此支出已取消')
+  }
+}
+
+export function assertCanCancelReceipt(status: CashReceiptStatus): void {
+  if (status === 'cancelled') {
+    throw new Error('此收款已取消')
+  }
+}
+
 /**
  * Case balance (V1.0):
  * 有效合約 − 已確認支出 = 案件目前餘額

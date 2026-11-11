@@ -199,7 +199,10 @@ import {
   sumSupplierExposure,
 } from '@/domain/suppliers'
 import {
+  assertBossCancelFinance,
   assertBossFinalize,
+  assertCanCancelExpense,
+  assertCanCancelReceipt,
   assertCanConfirmReceipt,
   assertCanReviewExpense,
   assertExpenseItem,
@@ -209,6 +212,7 @@ import {
 } from '@/domain/fieldFinance'
 import {
   assertAdvanceItem,
+  assertCanCancelAdvance,
   assertCanSettleAdvances,
   buildSettleExpenseItem,
 } from '@/domain/employeeAdvances'
@@ -4472,6 +4476,48 @@ export const localDb = {
     }
   },
 
+  cancelEmployeeAdvance(
+    actor: { id: string; name: string; role: AppUser['role'] },
+    input: { id: string; note?: string | null },
+  ): EmployeeAdvance {
+    const all = read(KEYS.employeeAdvances, emptyEmployeeAdvances)
+    const idx = all.findIndex((a) => a.id === input.id)
+    if (idx < 0) throw new Error('找不到代墊')
+    const current = all[idx]
+    assertCanCancelAdvance({ actorRole: actor.role, status: current.status })
+
+    if (current.status === 'settled' && current.expenseReportId) {
+      const linked = this.listExpenseReports().find(
+        (e) => e.id === current.expenseReportId,
+      )
+      if (linked && linked.status !== 'cancelled') {
+        this.cancelExpenseReport(actor, {
+          id: linked.id,
+          note: input.note?.trim() || '取消代墊核銷連帶取消支出',
+        })
+      }
+    }
+
+    const updated: EmployeeAdvance = {
+      ...current,
+      status: 'cancelled',
+      note:
+        input.note?.trim() ||
+        current.note ||
+        (current.status === 'settled' ? '老闆取消已核銷代墊' : '老闆取消代墊'),
+    }
+    all[idx] = updated
+    write(KEYS.employeeAdvances, all)
+    this.appendAudit(actor, {
+      action: 'advance.cancel',
+      targetType: 'employee_advance',
+      targetId: updated.id,
+      before: current,
+      after: updated,
+    })
+    return updated
+  },
+
   createExpenseReport(
     actor: { id: string; name: string; role: AppUser['role'] },
     input: {
@@ -4577,6 +4623,37 @@ export const localDb = {
           : input.decision === 'return'
             ? 'expense.return'
             : 'expense.cancel',
+      targetType: 'expense_report',
+      targetId: updated.id,
+      before: current,
+      after: updated,
+    })
+    return updated
+  },
+
+  cancelExpenseReport(
+    actor: { id: string; name: string; role: AppUser['role'] },
+    input: { id: string; note?: string | null },
+  ): ExpenseReport {
+    assertBossCancelFinance(actor.role)
+    const all = read(KEYS.expenseReports, emptyExpenseReports)
+    const idx = all.findIndex((e) => e.id === input.id)
+    if (idx < 0) throw new Error('找不到支出回報')
+    const current = all[idx]
+    assertCanCancelExpense(current.status)
+    const updated: ExpenseReport = {
+      ...current,
+      status: 'cancelled',
+      reviewedBy: actor.id,
+      reviewedAt: new Date().toISOString(),
+      reviewNote:
+        input.note?.trim() ||
+        (current.status === 'confirmed' ? '老闆刪除已確認支出' : '老闆刪除支出'),
+    }
+    all[idx] = updated
+    write(KEYS.expenseReports, all)
+    this.appendAudit(actor, {
+      action: 'expense.cancel',
       targetType: 'expense_report',
       targetId: updated.id,
       before: current,
@@ -4691,6 +4768,37 @@ export const localDb = {
           : input.decision === 'return'
             ? 'receipt.return'
             : 'receipt.cancel',
+      targetType: 'cash_receipt',
+      targetId: updated.id,
+      before: current,
+      after: updated,
+    })
+    return updated
+  },
+
+  cancelCashReceipt(
+    actor: { id: string; name: string; role: AppUser['role'] },
+    input: { id: string; note?: string | null },
+  ): CashReceiptReport {
+    assertBossCancelFinance(actor.role)
+    const all = read(KEYS.cashReceipts, emptyCashReceipts)
+    const idx = all.findIndex((e) => e.id === input.id)
+    if (idx < 0) throw new Error('找不到收款回報')
+    const current = all[idx]
+    assertCanCancelReceipt(current.status)
+    const updated: CashReceiptReport = {
+      ...current,
+      status: 'cancelled',
+      confirmedBy: actor.id,
+      confirmedAt: new Date().toISOString(),
+      confirmNote:
+        input.note?.trim() ||
+        (current.status === 'confirmed' ? '老闆刪除已確認收款' : '老闆刪除收款'),
+    }
+    all[idx] = updated
+    write(KEYS.cashReceipts, all)
+    this.appendAudit(actor, {
+      action: 'receipt.cancel',
       targetType: 'cash_receipt',
       targetId: updated.id,
       before: current,
