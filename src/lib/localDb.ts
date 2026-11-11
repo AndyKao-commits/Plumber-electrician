@@ -72,6 +72,8 @@ import type {
   AppUser,
   AttendanceCorrection,
   AttendanceRecord,
+  LocationCheckin,
+  TeamPresence,
   BillingDocument,
   BillingDocumentItem,
   BillingMilestone,
@@ -213,6 +215,7 @@ const KEYS = {
   sites: 'eg.sites.v2',
   attendance: 'eg.attendance.v2',
   attendanceCorrections: 'eg.attendanceCorrections.v1',
+  locationCheckins: 'eg.locationCheckins.v1',
   purchases: 'eg.purchases.v2',
   notices: 'eg.notices.v1',
   shortcuts: 'eg.shortcuts.v2',
@@ -915,6 +918,74 @@ export const localDb = {
     const all = this.getAttendance().filter((a) => a.id !== record.id)
     all.unshift(record)
     write(KEYS.attendance, all)
+  },
+
+  getLocationCheckins(): LocationCheckin[] {
+    return read(KEYS.locationCheckins, [] as LocationCheckin[])
+  },
+
+  saveLocationCheckin(row: LocationCheckin) {
+    const all = this.getLocationCheckins().filter((c) => c.id !== row.id)
+    all.unshift(row)
+    write(KEYS.locationCheckins, all)
+  },
+
+  listLocationCheckinsForDay(userId: string, day: string): LocationCheckin[] {
+    return this.getLocationCheckins()
+      .filter((c) => {
+        if (c.userId !== userId) return false
+        return formatTaipei(c.recordedAt, 'yyyy-MM-dd') === day
+      })
+      .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
+  },
+
+  listTeamPresenceToday(): TeamPresence[] {
+    const day = formatTaipei(new Date(), 'yyyy-MM-dd')
+    const sites = this.getSites()
+    const users = this.getUsers()
+    const out: TeamPresence[] = []
+    for (const user of users) {
+      const shifts = this.getAttendance()
+        .filter(
+          (a) =>
+            a.userId === user.id &&
+            formatTaipei(a.clockInAt, 'yyyy-MM-dd') === day,
+        )
+        .sort((a, b) => b.clockInAt.localeCompare(a.clockInAt))
+      if (shifts.length === 0) continue
+      const shift = shifts[0]
+      const site = shift.siteId
+        ? sites.find((s) => s.id === shift.siteId)
+        : null
+      const locs = this.listLocationCheckinsForDay(user.id, day)
+      const lastLoc = locs.length ? locs[locs.length - 1] : null
+      let lastLocation: string | null = null
+      let lastLocationAt: string | null = null
+      if (lastLoc) {
+        lastLocationAt = lastLoc.recordedAt
+        lastLocation =
+          lastLoc.siteName ||
+          lastLoc.label ||
+          lastLoc.address ||
+          (lastLoc.latitude != null && lastLoc.longitude != null
+            ? `${lastLoc.latitude.toFixed(4)}, ${lastLoc.longitude.toFixed(4)}`
+            : null)
+      } else if (site) {
+        lastLocation = site.name
+        lastLocationAt = shift.clockInAt
+      }
+      out.push({
+        userId: user.id,
+        name: user.name,
+        clockedIn: shift.status === 'clocked_in',
+        siteName: site?.name ?? null,
+        lastLocation,
+        lastLocationAt,
+        clockInAt: shift.clockInAt,
+        clockOutAt: shift.clockOutAt ?? null,
+      })
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'))
   },
 
   getPurchases(): PurchaseRecord[] {

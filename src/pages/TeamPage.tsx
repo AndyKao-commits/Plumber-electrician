@@ -54,7 +54,7 @@ export function TeamPage() {
           <span className="badge steel">{dataModeLabel()}</span>
         </div>
         <p className="muted" style={{ margin: 0 }}>
-          僅顯示今日到班狀態與目前工地；不顯示他人完整打卡時間、GPS、備註或薪資。
+          只顯示今天有出勤的成員與「最後地點」（足跡／工地），不做複雜統計。
         </p>
       </section>
 
@@ -193,21 +193,54 @@ export function TeamPage() {
           </div>
         ) : null}
         {!isLoading && !error && members.length === 0 ? (
-          <div className="empty">尚無團隊成員</div>
+          <div className="empty">今天尚無出勤成員</div>
         ) : null}
         {members.map((member) => (
-          <div key={member.userId} className="site-link">
+          <div key={member.userId} className="site-link stack">
             <div className="row between">
               <h3 style={{ margin: 0 }}>{member.name}</h3>
               <span className={`badge ${member.clockedIn ? 'ok' : 'steel'}`}>
-                {member.clockedIn ? '已到班' : '未到班'}
+                {member.clockedIn ? '上班中' : '已下班'}
               </span>
             </div>
-            <p>
-              {member.clockedIn
-                ? member.siteName || '尚未選擇工地'
-                : '今天尚未上班打卡'}
-            </p>
+            {member.clockedIn ? (
+              <>
+                <p style={{ margin: 0 }}>
+                  最後地點：{member.lastLocation?.trim() || '尚未紀錄'}
+                </p>
+                <p className="muted" style={{ margin: 0 }}>
+                  {member.lastLocationAt
+                    ? `最後紀錄：${new Date(member.lastLocationAt).toLocaleTimeString(
+                        'zh-TW',
+                        { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit' },
+                      )}`
+                    : member.clockInAt
+                      ? `上班時間：${new Date(member.clockInAt).toLocaleTimeString(
+                          'zh-TW',
+                          {
+                            timeZone: 'Asia/Taipei',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          },
+                        )}`
+                      : '尚未紀錄'}
+                </p>
+              </>
+            ) : (
+              <>
+                <p style={{ margin: 0 }}>
+                  最後地點：{member.lastLocation?.trim() || '尚未紀錄'}
+                </p>
+                <p className="muted" style={{ margin: 0 }}>
+                  {member.clockOutAt
+                    ? `下班時間：${new Date(member.clockOutAt).toLocaleTimeString(
+                        'zh-TW',
+                        { timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit' },
+                      )}`
+                    : '已下班'}
+                </p>
+              </>
+            )}
           </div>
         ))}
       </section>

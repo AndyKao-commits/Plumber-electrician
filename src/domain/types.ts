@@ -933,8 +933,47 @@ export interface AppNotice {
 export interface TeamPresence {
   userId: string
   name: string
+  /** True when currently clocked_in */
   clockedIn: boolean
+  /** Assigned site while on shift (may be empty) */
   siteName?: string | null
+  /** 最後地點（足跡或工地名稱）；無則前端顯示「尚未紀錄」 */
+  lastLocation?: string | null
+  lastLocationAt?: string | null
+  clockInAt?: string | null
+  clockOutAt?: string | null
+}
+
+export type LocationCheckinSource = 'manual' | 'line_location' | 'line_site'
+
+export interface LocationCheckin {
+  id: string
+  organizationId: string
+  userId: string
+  recordedAt: string
+  source: LocationCheckinSource
+  siteId?: string | null
+  siteName?: string | null
+  label?: string | null
+  address?: string | null
+  latitude?: number | null
+  longitude?: number | null
+  note?: string | null
+  attendanceId?: string | null
+}
+
+export type AttendanceTimelineKind = 'clock_in' | 'location' | 'clock_out'
+
+export interface AttendanceTimelineEvent {
+  id: string
+  kind: AttendanceTimelineKind
+  at: string
+  title: string
+  placeLabel?: string | null
+  address?: string | null
+  note?: string | null
+  latitude?: number | null
+  longitude?: number | null
 }
 
 export interface PurchaseRuleSnapshot {

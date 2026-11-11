@@ -18,22 +18,7 @@ export function useTeam() {
     queryFn: async (): Promise<TeamPresence[]> => {
       try {
         if (formal) return await supabaseRepos.listTeamPresence()
-
-        // Demo: summary only (no GPS / notes / payroll).
-        const users = localDb.getUsers()
-        const sites = localDb.getSites()
-        return users.map((user) => {
-          const open = localDb.getOpenAttendance(user.id)
-          const site = open?.siteId
-            ? sites.find((s) => s.id === open.siteId)
-            : null
-          return {
-            userId: user.id,
-            name: user.name,
-            clockedIn: Boolean(open),
-            siteName: site?.name ?? null,
-          }
-        })
+        return localDb.listTeamPresenceToday()
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入今日團隊'))
       }

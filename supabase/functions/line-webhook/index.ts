@@ -2,7 +2,7 @@
  * LINE webhook — reply-only (DEC-007).
  * Phase 1: flow drafts + batch photo upload + todos Flex.
  * Phase 2: attendance clock/switch-site.
- * V1.0: 支出／收款 → expense_reports / cash_receipt_reports（非舊採購流）.
+ * V1.0: 記帳 → expense_reports / cash_receipt_reports；紀錄地點＝足跡.
  * No proactive push / broadcast / timeout reminders.
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
@@ -13,7 +13,15 @@ type LineEvent = {
   type?: string
   replyToken?: string
   source?: { type?: string; userId?: string }
-  message?: { type?: string; text?: string; id?: string }
+  message?: {
+    type?: string
+    text?: string
+    id?: string
+    title?: string
+    address?: string
+    latitude?: number
+    longitude?: number
+  }
   postback?: { data?: string }
 }
 
@@ -27,7 +35,7 @@ type Profile = {
   role: string | null
 }
 
-type FlowType = 'photo_upload' | 'todos' | 'attendance' | 'purchase'
+type FlowType = 'photo_upload' | 'todos' | 'attendance' | 'purchase' | 'location'
 type FlowStatus =
   | 'idle'
   | 'collecting'
@@ -43,7 +51,8 @@ function isFlowIntent(v: string | null | undefined): v is FlowType {
     v === 'photo_upload' ||
     v === 'todos' ||
     v === 'attendance' ||
-    v === 'purchase'
+    v === 'purchase' ||
+    v === 'location'
   )
 }
 
@@ -70,8 +79,8 @@ const FLOW_LABELS: Record<FlowType, string> = {
   photo_upload: '上傳照片',
   todos: '待辦事項',
   attendance: '出勤打卡',
-  /** V1.0：圖文選單「支出／收款」；複雜採購額度先不強調 */
-  purchase: '支出／收款',
+  purchase: '記帳',
+  location: '紀錄地點',
 }
 
 const PHOTO_TYPE_LABELS: Record<string, string> = {
@@ -164,7 +173,7 @@ async function handleEvent(
   if (event.type === 'follow') {
     return [
       textMsg(
-        '歡迎加入。請用下方圖文選單操作。\n綁定：工程管家「今日團隊」→ 用 LINE 綁定。\n上傳照片／待辦事項可直接從選單進入。',
+        '歡迎加入。請用下方圖文選單操作。\n綁定：工程管家「今日團隊」→ 用 LINE 綁定。\n上傳照片／出勤／紀錄地點／記帳／待辦／進入工地。',
       ),
     ]
   }
@@ -180,6 +189,15 @@ async function handleEvent(
 
   if (msgType === 'image') {
     return handleImageEvent(admin, lineToken, lineUserId, String(event.message?.id ?? ''))
+  }
+
+  if (msgType === 'location') {
+    return handleLocationMessage(admin, lineUserId, {
+      title: String(event.message?.title ?? '').trim(),
+      address: String(event.message?.address ?? '').trim(),
+      latitude: Number(event.message?.latitude),
+      longitude: Number(event.message?.longitude),
+    })
   }
 
   if (msgType !== 'text') return []
@@ -205,6 +223,17 @@ async function handleTextCommand(
   text: string,
 ): Promise<LineMessage[]> {
   const intent = parseMenuIntent(text)
+  if (intent === 'open_app') {
+    return [
+      flexMenu({
+        altText: '進入工程管家',
+        eyebrow: '進入工地',
+        title: '開啟工程管家',
+        body: '前往網站主頁查看出勤、收支與工地。',
+        buttons: [{ label: '開啟主頁', uri: appBaseUrl(), style: 'primary' }],
+      }),
+    ]
+  }
   const profile = await requireProfile(admin, lineUserId)
   if ('error' in profile) {
     if (intent) return [textMsg(profile.error)]
@@ -292,6 +321,9 @@ async function handleTextCommand(
   }
   if (gate.draft?.flow_type === 'purchase') {
     return handlePurchaseText(admin, profile, gate.draft, text)
+  }
+  if (gate.draft?.flow_type === 'location') {
+    return handleLocationText(admin, profile, gate.draft, text)
   }
 
   // Silent for unrelated chatter (rich menu handles entry)
@@ -395,6 +427,38 @@ async function handlePostback(
     ]
   }
 
+  if (action === 'loc_share') {
+    const draft =
+      gate.draft?.flow_type === 'location'
+        ? gate.draft
+        : await createDraft(admin, profile, 'location', 'await_location', {})
+    await touchDraft(admin, draft.id, { current_step: 'await_location' })
+    return [
+      flexMenu({
+        altText: '請分享目前位置',
+        eyebrow: '紀錄地點',
+        title: '分享目前位置',
+        body: '請用 LINE「分享位置」傳給我（不做背景定位）。',
+        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
+  }
+
+  if (action === 'loc_site') {
+    const draft =
+      gate.draft?.flow_type === 'location'
+        ? gate.draft
+        : await createDraft(admin, profile, 'location', 'select_site', {})
+    return promptLocationSites(admin, profile, draft)
+  }
+
+  if (action === 'loc_site_pick') {
+    if (!gate.draft || gate.draft.flow_type !== 'location') {
+      return [textMsg('請先點「紀錄地點」。')]
+    }
+    return saveLocationBySite(admin, profile, gate.draft, params.id || '')
+  }
+
   if (action === 'photo_cancel') {
     if (gate.draft) await finalizeDraft(admin, gate.draft.id, 'cancelled')
     return [
@@ -409,49 +473,49 @@ async function handlePostback(
 
   if (action === 'cash_kind') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「支出／收款」。')]
+      return [textMsg('請先點「記帳」。')]
     }
     return selectCashKind(admin, profile, gate.draft, params.k || '')
   }
 
   if (action === 'cash_site') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「支出／收款」。')]
+      return [textMsg('請先點「記帳」。')]
     }
     return selectCashSite(admin, profile, gate.draft, params.id || '')
   }
 
   if (action === 'cash_misc') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「支出／收款」。')]
+      return [textMsg('請先點「記帳」。')]
     }
     return selectCashMisc(admin, profile, gate.draft)
   }
 
   if (action === 'cash_loc_skip') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「支出／收款」。')]
+      return [textMsg('請先點「記帳」。')]
     }
     return skipCashLocation(admin, profile, gate.draft)
   }
 
   if (action === 'cash_receipt_skip') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「支出／收款」。')]
+      return [textMsg('請先點「記帳」。')]
     }
     return promptCashConfirm(admin, gate.draft)
   }
 
   if (action === 'cash_confirm') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「支出／收款」。')]
+      return [textMsg('請先點「記帳」。')]
     }
     return submitFieldCash(admin, profile, gate.draft)
   }
 
   // Legacy postback aliases from older rich menus
   if (action === 'pur_mode' || action === 'pur_site' || action === 'pur_site_skip' || action === 'pur_confirm') {
-    return [textMsg('採購申請已改為「支出／收款」。請從圖文選單重新開始。')]
+    return [textMsg('採購申請已改為「記帳」。請從圖文選單重新開始。')]
   }
 
   if (action === 'photo_site') {
@@ -584,6 +648,11 @@ async function startFlow(
     return promptCashKind()
   }
 
+  if (flowType === 'location') {
+    const draft = await createDraft(admin, profile, 'location', 'choose_method', {})
+    return promptLocationMethod(draft)
+  }
+
   const draft = await createDraft(admin, profile, 'photo_upload', 'select_site', {})
   return promptSelectSite(admin, profile, draft)
 }
@@ -610,6 +679,10 @@ async function resumeDraft(
 
   if (draft.flow_type === 'purchase') {
     return resumePurchase(admin, profile, draft)
+  }
+
+  if (draft.flow_type === 'location') {
+    return promptLocationMethod(draft)
   }
 
   const step = draft.current_step || 'select_site'
@@ -1239,6 +1312,17 @@ function summarizeDraft(draft: DraftRow): { filled: string; pending: string } {
       pending: pending.length ? pending.join('、') : '確認送出',
     }
   }
+  if (draft.flow_type === 'location') {
+    return {
+      filled: draft.current_step === 'await_location' ? '等待分享位置' : '選方式',
+      pending:
+        draft.current_step === 'select_site'
+          ? '選擇工地'
+          : draft.current_step === 'await_location'
+            ? '分享 LINE 位置'
+            : '選擇分享位置或工地',
+    }
+  }
   if (draft.flow_type !== 'photo_upload') {
     return { filled: '進行中', pending: '完成操作' }
   }
@@ -1472,15 +1556,20 @@ function classifyAge(lastActivityAt: string): 'fresh' | 'paused' | 'expired' {
   return 'expired'
 }
 
-function parseMenuIntent(text: string): FlowType | 'cancel' | 'resume' | null {
+function parseMenuIntent(
+  text: string,
+): FlowType | 'cancel' | 'resume' | 'open_app' | null {
   const t = text.trim()
   if (!t) return null
   if (/^(取消操作|取消流程|取消)$/.test(t)) return 'cancel'
   if (/^(繼續操作|繼續)$/.test(t)) return 'resume'
+  if (/進入工地|工程系統|工程管家主頁|^主頁$/.test(t)) return 'open_app'
   if (/上傳照片|傳送照片|傳照片|施工照片/.test(t)) return 'photo_upload'
   if (/待辦事項|我的待辦|^待辦$/.test(t)) return 'todos'
   if (/出勤打卡|上下班|上班打卡|下班打卡|切換工地/.test(t)) return 'attendance'
-  if (/支出|收款|採購申請|材料採購|^採購$/.test(t)) return 'purchase'
+  if (/紀錄地點|記錄地點|到點打卡|足跡/.test(t)) return 'location'
+  if (/^記帳$|支出|收款|採購申請|材料採購|^採購$|支出／收款|支出\/收款/.test(t))
+    return 'purchase'
   return null
 }
 
@@ -1716,6 +1805,186 @@ async function handleBind(
   return `綁定成功${name}！可用圖文選單操作上傳照片與待辦。`
 }
 
+// ----- Location footprints (到點打卡／足跡) -----
+
+async function promptLocationMethod(_draft: DraftRow): Promise<LineMessage[]> {
+  return [
+    flexMenu({
+      altText: '要如何紀錄目前位置？',
+      eyebrow: '紀錄地點',
+      title: '要如何紀錄目前位置？',
+      body: '外面跑動時可隨手留下足跡；不會自動上下班，也不做背景定位。',
+      buttons: [
+        { label: '分享目前位置', data: 'a=loc_share', style: 'primary' },
+        { label: '選擇工地', data: 'a=loc_site', style: 'secondary' },
+        { label: '取消', data: 'a=cancel', style: 'secondary' },
+      ],
+    }),
+  ]
+}
+
+async function handleLocationText(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+  text: string,
+): Promise<LineMessage[]> {
+  if (/分享|目前位置|定位/.test(text)) {
+    await touchDraft(admin, draft.id, { current_step: 'await_location' })
+    return [
+      flexMenu({
+        altText: '請分享目前位置',
+        eyebrow: '紀錄地點',
+        title: '分享目前位置',
+        body: '請用 LINE「分享位置」傳給我。',
+        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      }),
+    ]
+  }
+  if (/選擇工地|工地/.test(text)) {
+    return promptLocationSites(admin, profile, draft)
+  }
+  if (/取消/.test(text)) {
+    await finalizeDraft(admin, draft.id, 'cancelled')
+    return [textMsg('已取消地點紀錄。')]
+  }
+  return promptLocationMethod(draft)
+}
+
+async function handleLocationMessage(
+  admin: Sb | null,
+  lineUserId: string,
+  loc: {
+    title: string
+    address: string
+    latitude: number
+    longitude: number
+  },
+): Promise<LineMessage[]> {
+  const profile = await requireProfile(admin, lineUserId)
+  if ('error' in profile) return [textMsg(profile.error)]
+  if (!admin) return [textMsg('伺服器尚未設定資料庫。')]
+
+  const gate = await prepareActiveDraft(admin, profile)
+  let draft = gate.draft
+  if (!draft || draft.flow_type !== 'location') {
+    draft = await createDraft(admin, profile, 'location', 'await_location', {})
+  }
+
+  if (
+    !Number.isFinite(loc.latitude) ||
+    !Number.isFinite(loc.longitude)
+  ) {
+    return [
+      textMsg('讀不到有效座標，請改選工地或再分享一次位置。'),
+      ...(await promptLocationMethod(draft)),
+    ]
+  }
+
+  const open = await getOpenAttendance(admin, profile.id)
+  const label = loc.title || loc.address || '目前位置'
+  const now = new Date().toISOString()
+  const { error } = await admin.from('location_checkins').insert({
+    organization_id: profile.organization_id,
+    user_id: profile.id,
+    recorded_at: now,
+    source: 'line_location',
+    site_id: null,
+    label,
+    address: loc.address || null,
+    latitude: loc.latitude,
+    longitude: loc.longitude,
+    attendance_id: open?.id ?? null,
+  })
+  if (error) {
+    console.warn('[line-webhook] location insert failed', error.message)
+    return [textMsg('地點紀錄失敗，請稍後再試。')]
+  }
+
+  await finalizeDraft(admin, draft.id, 'completed')
+  return [
+    flexMenu({
+      altText: '地點紀錄完成',
+      eyebrow: '紀錄地點',
+      title: '地點紀錄完成',
+      body: `時間：${formatTaipei(now)}\n位置／工地：${label}`,
+    }),
+  ]
+}
+
+async function promptLocationSites(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  const sites = await listSites(admin, profile.organization_id)
+  await touchDraft(admin, draft.id, {
+    current_step: 'select_site',
+    draft_payload: { ...(draft.draft_payload || {}) },
+  })
+  if (sites.length === 0) {
+    return [
+      flexMenu({
+        altText: '沒有可用工地',
+        eyebrow: '紀錄地點',
+        title: '沒有可用工地',
+        body: '請改用「分享目前位置」，或先到網站建立工地。',
+        buttons: [
+          { label: '分享目前位置', data: 'a=loc_share', style: 'primary' },
+          { label: '取消', data: 'a=cancel', style: 'secondary' },
+        ],
+      }),
+    ]
+  }
+  return siteCarousel({
+    altText: '請選擇工地',
+    eyebrow: '紀錄地點',
+    sites,
+    actionPrefix: 'a=loc_site_pick&id=',
+    extraButtons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+  })
+}
+
+async function saveLocationBySite(
+  admin: Sb,
+  profile: Profile,
+  draft: DraftRow,
+  siteId: string,
+): Promise<LineMessage[]> {
+  const sites = await listSites(admin, profile.organization_id)
+  const site = sites.find((s) => s.id === siteId)
+  if (!site) return [textMsg('找不到該工地，請重新選擇。')]
+
+  const open = await getOpenAttendance(admin, profile.id)
+  const now = new Date().toISOString()
+  const { error } = await admin.from('location_checkins').insert({
+    organization_id: profile.organization_id,
+    user_id: profile.id,
+    recorded_at: now,
+    source: 'line_site',
+    site_id: site.id,
+    label: site.name,
+    address: null,
+    latitude: null,
+    longitude: null,
+    attendance_id: open?.id ?? null,
+  })
+  if (error) {
+    console.warn('[line-webhook] location site insert failed', error.message)
+    return [textMsg('地點紀錄失敗，請稍後再試。')]
+  }
+
+  await finalizeDraft(admin, draft.id, 'completed')
+  return [
+    flexMenu({
+      altText: '地點紀錄完成',
+      eyebrow: '紀錄地點',
+      title: '地點紀錄完成',
+      body: `時間：${formatTaipei(now)}\n位置／工地：${site.name}`,
+    }),
+  ]
+}
+
 // ----- Phase 2: attendance -----
 
 async function getOpenAttendance(
@@ -1848,10 +2117,10 @@ async function clockInLine(
 
   return [
     flexMenu({
-      altText: '已上班',
+      altText: '上班打卡完成',
       eyebrow: '出勤打卡',
-      title: '已上班',
-      body: `時間：${formatTaipei(String(data.clock_in_at))}\n可補登工地，或稍後再切換。`,
+      title: '上班打卡完成',
+      body: `時間：${formatTaipei(String(data.clock_in_at))}\n目前尚未指定工地，可稍後紀錄。`,
       buttons: [
         { label: '補登工地', data: 'a=att_site', style: 'primary' },
         { label: '結束', data: 'a=att_done', style: 'secondary' },
@@ -1885,10 +2154,10 @@ async function clockOutLine(
   await finalizeDraft(admin, draft.id, 'completed')
   return [
     flexMenu({
-      altText: '已下班',
+      altText: '下班打卡完成',
       eyebrow: '出勤打卡',
-      title: '已下班',
-      body: `時間：${formatTaipei(now)}`,
+      title: '下班打卡完成',
+      body: `時間：${formatTaipei(now)}\n今天的出勤紀錄已保存。`,
     }),
   ]
 }
@@ -1970,8 +2239,8 @@ async function assignAttendanceSite(
 function promptCashKind(): LineMessage[] {
   return [
     flexMenu({
-      altText: '支出／收款',
-      eyebrow: '支出／收款',
+      altText: '記帳',
+      eyebrow: '記帳',
       title: '選擇回報類型',
       body: '寫入現場支出或收款回報（非舊採購單）。未達老闆設定門檻的小額支出可自動確認。',
       buttons: [
@@ -2018,7 +2287,7 @@ async function promptCashSiteFor(
     return [
       flexMenu({
         altText: '選擇歸屬',
-        eyebrow: '支出／收款',
+        eyebrow: '記帳',
         title: '沒有可選工地',
         body: '可改走雜項（加油、買飯、飲料、臨時支援），或請老闆在網站指派工地權限。',
         buttons: [
@@ -2030,7 +2299,7 @@ async function promptCashSiteFor(
   }
   return siteCarousel({
     altText: '選擇工地或雜項',
-    eyebrow: '支出／收款',
+    eyebrow: '記帳',
     sites: sites.slice(0, 9),
     actionPrefix: 'a=cash_site&id=',
     extraButtons: [
@@ -2318,7 +2587,7 @@ async function handlePurchaseText(
     return [
       flexMenu({
         altText: '金額無效',
-        eyebrow: '支出／收款',
+        eyebrow: '記帳',
         title: '金額無效',
         body: '請輸入大於 0 的數字（例如 800）',
         buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
@@ -2339,7 +2608,7 @@ async function handlePurchaseText(
       return [
         flexMenu({
           altText: '已取消',
-          eyebrow: '支出／收款',
+          eyebrow: '記帳',
           title: '已取消',
           body: '可再從圖文選單重新回報',
         }),
@@ -2412,7 +2681,7 @@ async function handleCashReceiptImage(
   return [
     flexMenu({
       altText: `已加入第 ${count} 張收據`,
-      eyebrow: '支出／收款',
+      eyebrow: '記帳',
       title: `已加入第 ${count} 張收據`,
       body: '可繼續傳圖，或跳過／確認送出',
       buttons: [
@@ -2437,7 +2706,7 @@ async function promptCashConfirm(
   return [
     flexMenu({
       altText: `請確認${kindLabel}`,
-      eyebrow: '支出／收款',
+      eyebrow: '記帳',
       title: `請確認${kindLabel}`,
       body: `類型：${kindLabel}\n歸屬：${p.siteName || '—'}${locLine}\n${
         p.kind === 'expense' ? `項目：${p.item || '—'}` : `來源：${p.sourceNote || '—'}`
@@ -2478,7 +2747,7 @@ async function resumePurchase(
     return [
       flexMenu({
         altText: '請輸入金額',
-        eyebrow: '支出／收款',
+        eyebrow: '記帳',
         title: '請輸入金額',
         body: '直接以文字回覆數字（新台幣）',
         buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],

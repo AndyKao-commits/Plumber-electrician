@@ -147,6 +147,7 @@ import type {
   AppUser,
   AttendanceCorrection,
   AttendanceRecord,
+  LocationCheckin,
   DailyLog,
   DailyLogSummary,
   DailyLogVersion,
@@ -783,6 +784,28 @@ function mapAttendance(row: Record<string, unknown>): AttendanceRecord {
     latitude: (row.latitude as number | null) ?? null,
     longitude: (row.longitude as number | null) ?? null,
     note: (row.note as string | null) ?? null,
+  }
+}
+
+function mapLocationCheckin(
+  row: Record<string, unknown>,
+  siteNames: Map<string, string>,
+): LocationCheckin {
+  const siteId = (row.site_id as string | null) ?? null
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    userId: String(row.user_id),
+    recordedAt: String(row.recorded_at),
+    source: row.source as LocationCheckin['source'],
+    siteId,
+    siteName: siteId ? siteNames.get(siteId) ?? null : null,
+    label: (row.label as string | null) ?? null,
+    address: (row.address as string | null) ?? null,
+    latitude: (row.latitude as number | null) ?? null,
+    longitude: (row.longitude as number | null) ?? null,
+    note: (row.note as string | null) ?? null,
+    attendanceId: (row.attendance_id as string | null) ?? null,
   }
 }
 
@@ -4293,25 +4316,75 @@ export const supabaseRepos = {
     if (error) throw new AppError(toUserMessage(error, '無法完成待辦'))
   },
 
-  /** Team summary only — no GPS, notes, payroll, or clock detail times for others. */
+  /**
+   * Today’s team: only members with attendance today.
+   * Shows 最後地點 (footprint or site), not full GPS for peers.
+   */
   async listTeamPresence(): Promise<TeamPresence[]> {
+    const day = taipeiDateString()
+    const dayStart = `${day}T00:00:00+08:00`
+    const dayEnd = `${day}T23:59:59.999+08:00`
+
+    const { data: shifts, error: attError } = await sb()
+      .from('attendance')
+      .select('id, user_id, status, clock_in_at, clock_out_at, site_id')
+      .gte('clock_in_at', dayStart)
+      .lte('clock_in_at', dayEnd)
+      .order('clock_in_at', { ascending: false })
+    if (attError) throw new AppError(toUserMessage(attError, '無法載入到班狀態'))
+
+    if (!shifts?.length) return []
+
+    const latestByUser = new Map<string, (typeof shifts)[number]>()
+    for (const row of shifts) {
+      const uid = String(row.user_id)
+      if (!latestByUser.has(uid)) latestByUser.set(uid, row)
+    }
+
+    const userIds = [...latestByUser.keys()]
     const { data: profiles, error: profileError } = await sb()
       .from('profiles')
       .select('id, name')
-      .order('name', { ascending: true })
+      .in('id', userIds)
     if (profileError) throw new AppError(toUserMessage(profileError, '無法載入團隊'))
+    const nameById = new Map(
+      (profiles ?? []).map((p) => [String(p.id), String(p.name)]),
+    )
 
-    const { data: opens, error: attError } = await sb()
-      .from('attendance')
-      .select('user_id, site_id')
-      .eq('status', 'clocked_in')
-    if (attError) throw new AppError(toUserMessage(attError, '無法載入到班狀態'))
+    const { data: checkins, error: locError } = await sb()
+      .from('location_checkins')
+      .select(
+        'user_id, recorded_at, label, address, site_id, latitude, longitude',
+      )
+      .in('user_id', userIds)
+      .gte('recorded_at', dayStart)
+      .lte('recorded_at', dayEnd)
+      .order('recorded_at', { ascending: false })
+    if (locError) throw new AppError(toUserMessage(locError, '無法載入地點紀錄'))
+
+    const latestLocByUser = new Map<
+      string,
+      {
+        user_id: unknown
+        recorded_at: unknown
+        label: unknown
+        address: unknown
+        site_id: unknown
+        latitude: unknown
+        longitude: unknown
+      }
+    >()
+    for (const row of checkins ?? []) {
+      const uid = String(row.user_id)
+      if (!latestLocByUser.has(uid)) latestLocByUser.set(uid, row)
+    }
 
     const siteIds = [
       ...new Set(
-        (opens ?? [])
-          .map((o) => o.site_id as string | null)
-          .filter((id): id is string => Boolean(id)),
+        [
+          ...[...latestByUser.values()].map((s) => s.site_id as string | null),
+          ...[...latestLocByUser.values()].map((c) => c.site_id as string | null),
+        ].filter((id): id is string => Boolean(id)),
       ),
     ]
     let siteNames = new Map<string, string>()
@@ -4324,20 +4397,121 @@ export const supabaseRepos = {
       siteNames = new Map((sites ?? []).map((s) => [String(s.id), String(s.name)]))
     }
 
-    const openByUser = new Map(
-      (opens ?? []).map((o) => [String(o.user_id), o.site_id as string | null]),
-    )
+    return userIds
+      .map((uid) => {
+        const shift = latestByUser.get(uid)!
+        const clockedIn = String(shift.status) === 'clocked_in'
+        const siteId = shift.site_id as string | null
+        const siteName = siteId ? siteNames.get(siteId) ?? null : null
+        const loc = latestLocByUser.get(uid)
+        let lastLocation: string | null = null
+        let lastLocationAt: string | null = null
+        if (loc) {
+          lastLocationAt = String(loc.recorded_at)
+          if (loc.site_id) {
+            lastLocation = siteNames.get(String(loc.site_id)) ?? null
+          }
+          lastLocation =
+            lastLocation ||
+            (loc.label as string | null) ||
+            (loc.address as string | null) ||
+            (loc.latitude != null && loc.longitude != null
+              ? `${Number(loc.latitude).toFixed(4)}, ${Number(loc.longitude).toFixed(4)}`
+              : null)
+        } else if (siteName) {
+          lastLocation = siteName
+          lastLocationAt = String(shift.clock_in_at)
+        }
 
-    return (profiles ?? []).map((p) => {
-      const siteId = openByUser.get(String(p.id))
-      const clockedIn = openByUser.has(String(p.id))
-      return {
-        userId: String(p.id),
-        name: String(p.name),
-        clockedIn,
-        siteName: siteId ? siteNames.get(siteId) ?? null : null,
-      }
-    })
+        return {
+          userId: uid,
+          name: nameById.get(uid) ?? '未知',
+          clockedIn,
+          siteName,
+          lastLocation,
+          lastLocationAt,
+          clockInAt: String(shift.clock_in_at),
+          clockOutAt: (shift.clock_out_at as string | null) ?? null,
+        } satisfies TeamPresence
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'))
+  },
+
+  async listLocationCheckins(input: {
+    userId: string
+    day?: string
+    attendanceId?: string | null
+  }): Promise<LocationCheckin[]> {
+    const uid = requireUuid(input.userId, '使用者')
+    let q = sb()
+      .from('location_checkins')
+      .select(
+        'id, organization_id, user_id, recorded_at, source, site_id, label, address, latitude, longitude, note, attendance_id',
+      )
+      .eq('user_id', uid)
+      .order('recorded_at', { ascending: true })
+      .limit(200)
+
+    if (input.attendanceId) {
+      q = q.eq('attendance_id', requireUuid(input.attendanceId, '出勤'))
+    } else if (input.day) {
+      const dayStart = `${input.day}T00:00:00+08:00`
+      const dayEnd = `${input.day}T23:59:59.999+08:00`
+      q = q.gte('recorded_at', dayStart).lte('recorded_at', dayEnd)
+    }
+
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入地點紀錄'))
+
+    const siteIds = [
+      ...new Set(
+        (data ?? [])
+          .map((r) => r.site_id as string | null)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ]
+    let siteNames = new Map<string, string>()
+    if (siteIds.length > 0) {
+      const { data: sites } = await sb().from('sites').select('id, name').in('id', siteIds)
+      siteNames = new Map((sites ?? []).map((s) => [String(s.id), String(s.name)]))
+    }
+
+    return (data ?? []).map((row) => mapLocationCheckin(row, siteNames))
+  },
+
+  async createLocationCheckin(
+    actor: AppUser,
+    input: {
+      siteId?: string | null
+      label?: string | null
+      address?: string | null
+      latitude?: number | null
+      longitude?: number | null
+      note?: string | null
+    },
+  ): Promise<LocationCheckin> {
+    const open = await this.getOpenAttendance(actor.id)
+    const { data, error } = await sb()
+      .from('location_checkins')
+      .insert({
+        organization_id: actor.organizationId,
+        user_id: actor.id,
+        recorded_at: new Date().toISOString(),
+        source: 'manual',
+        site_id: input.siteId || null,
+        label: input.label?.trim() || null,
+        address: input.address?.trim() || null,
+        latitude: input.latitude ?? null,
+        longitude: input.longitude ?? null,
+        note: input.note?.trim() || null,
+        attendance_id: open?.id ?? null,
+      })
+      .select(
+        'id, organization_id, user_id, recorded_at, source, site_id, label, address, latitude, longitude, note, attendance_id',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立地點紀錄'))
+    return mapLocationCheckin(data, new Map())
   },
 
   async listPhotoUploads(siteId?: string | null): Promise<PhotoUpload[]> {

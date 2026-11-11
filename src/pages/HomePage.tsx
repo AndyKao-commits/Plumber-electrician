@@ -9,7 +9,7 @@ import { useUser } from '@/hooks/useUser'
 import { isFormalMode } from '@/lib/dataMode'
 import { formatTaipei } from '@/lib/time'
 import { supabaseRepos } from '@/lib/supabaseRepos'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export function HomePage() {
   const { user } = useUser()
@@ -17,6 +17,12 @@ export function HomePage() {
   const { todos, unreadCount } = useNotices(user?.id)
   const queryClient = useQueryClient()
   const warrantyChecked = useRef(false)
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
 
   useEffect(() => {
     if (!user || !isFormalMode() || warrantyChecked.current) return
@@ -55,17 +61,24 @@ export function HomePage() {
     (r) => r.reportedBy === user?.id && r.status === 'pending_confirm',
   ).length
 
+  const currentSiteName = openShift?.siteId
+    ? sites.find((s) => s.id === openShift.siteId)?.name ?? '未知工地'
+    : null
+
   return (
     <div className="stack fade-up">
       <section className="panel hero-panel stack">
         <div className="row between">
           <div>
             <div className="badge">V1.0</div>
-            <h2 style={{ margin: '10px 0 4px', fontSize: '1.7rem' }}>
-              你好，{user?.name}
+            <p className="muted" style={{ margin: '10px 0 0', fontSize: '0.9rem' }}>
+              目前時間
+            </p>
+            <h2 style={{ margin: '4px 0', fontSize: '2.4rem', letterSpacing: '0.02em' }}>
+              {formatTaipei(now, 'HH:mm')}
             </h2>
             <p className="muted" style={{ margin: 0 }}>
-              {PRODUCT.tagline} · {formatTaipei(new Date(), 'M月d日 EEEE')}
+              {formatTaipei(now, 'yyyy 年 M 月 d 日 EEEE')}
             </p>
           </div>
           <Link to="/notifications" className="badge steel">
@@ -73,12 +86,25 @@ export function HomePage() {
           </Link>
         </div>
 
-        {openShift ? (
-          <div className="row">
-            <span className="pulse-dot" aria-hidden />
-            <span>上班中</span>
-          </div>
-        ) : null}
+        <div className="site-link stack">
+          <strong style={{ margin: 0 }}>
+            目前狀態：{openShift ? '上班中' : '未上班'}
+          </strong>
+          {openShift ? (
+            <>
+              <p style={{ margin: 0 }}>
+                上班時間：{formatTaipei(openShift.clockInAt, 'HH:mm')}
+              </p>
+              <p className="muted" style={{ margin: 0 }}>
+                目前工地：{currentSiteName ?? '尚未指定'}
+              </p>
+            </>
+          ) : (
+            <p className="muted" style={{ margin: 0 }}>
+              {PRODUCT.tagline}
+            </p>
+          )}
+        </div>
 
         {openShift ? (
           <button
@@ -144,9 +170,9 @@ export function HomePage() {
               <p>待辦</p>
               <h3>{todos.length}</h3>
             </Link>
-            <Link className="site-link" to="/sites">
-              <p>工地／案件</p>
-              <h3>{sites.length}</h3>
+            <Link className="site-link" to="/team">
+              <p>今日團隊</p>
+              <h3>查看</h3>
             </Link>
           </div>
         </section>

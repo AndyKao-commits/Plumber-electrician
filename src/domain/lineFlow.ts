@@ -4,8 +4,10 @@ export const LINE_FLOW_TYPES = [
   'photo_upload',
   'todos',
   'attendance',
-  /** V1.0 圖文選單「支出／收款」→ expense_reports / cash_receipt_reports */
+  /** V1.0 圖文選單「記帳」→ expense_reports / cash_receipt_reports */
   'purchase',
+  /** 到點打卡／足跡 */
+  'location',
 ] as const
 export type LineFlowType = (typeof LINE_FLOW_TYPES)[number]
 
@@ -49,7 +51,8 @@ export const FLOW_TYPE_LABELS: Record<LineFlowType, string> = {
   photo_upload: '上傳照片',
   todos: '待辦事項',
   attendance: '出勤打卡',
-  purchase: '支出／收款',
+  purchase: '記帳',
+  location: '紀錄地點',
 }
 
 export type FieldCashKind = 'expense' | 'receipt'
@@ -89,15 +92,18 @@ export function isFlowStartIntent(value: string): value is LineFlowType {
 
 export function parseMenuIntent(
   text: string,
-): LineFlowType | 'cancel' | 'resume' | null {
+): LineFlowType | 'cancel' | 'resume' | 'open_app' | null {
   const t = text.trim()
   if (!t) return null
   if (/^(取消操作|取消流程|取消)$/.test(t)) return 'cancel'
   if (/^(繼續操作|繼續)$/.test(t)) return 'resume'
+  if (/進入工地|工程系統|工程管家主頁|^主頁$/.test(t)) return 'open_app'
   if (/上傳照片|傳送照片|傳照片|施工照片/.test(t)) return 'photo_upload'
   if (/待辦事項|我的待辦|^待辦$/.test(t)) return 'todos'
   if (/出勤打卡|上下班|上班打卡|下班打卡|切換工地/.test(t)) return 'attendance'
-  if (/支出|收款|採購申請|材料採購|^採購$/.test(t)) return 'purchase'
+  if (/紀錄地點|記錄地點|到點打卡|足跡/.test(t)) return 'location'
+  if (/^記帳$|支出|收款|採購申請|材料採購|^採購$|支出／收款|支出\/收款/.test(t))
+    return 'purchase'
   return null
 }
 
