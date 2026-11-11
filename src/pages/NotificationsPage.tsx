@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom'
-import { FEATURE_FLAGS } from '@/domain/rules'
 import { useNotices } from '@/hooks/useNotices'
 import { useUser } from '@/hooks/useUser'
 import { formatTaipei } from '@/lib/time'
@@ -12,11 +11,6 @@ export function NotificationsPage() {
     <div className="stack fade-up">
       <section className="panel stack">
         <strong>通知中心</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          {FEATURE_FLAGS.inAppNotificationsOnly
-            ? '全面停用系統主動 LINE 推播。通知與待辦只在系統內顯示。'
-            : '通知可能透過 LINE 推播。'}
-        </p>
       </section>
 
       <section className="stack">

@@ -219,9 +219,6 @@ export function SiteDetailPage() {
       {isBoss && siteId ? (
         <section className="panel stack">
           <strong>有權限工地成員</strong>
-          <p className="muted" style={{ margin: 0 }}>
-            員工僅能看到被指派的工地；未指派則列表為空。
-          </p>
           {(orgUsersQuery.data ?? directory)
             .filter((u) => u.role === 'employee')
             .map((u) => {
@@ -429,9 +426,6 @@ export function SiteDetailPage() {
       {formal ? (
         <section className="panel stack">
           <strong>缺失／複驗</strong>
-          <p className="muted" style={{ margin: 0 }}>
-            流程：待改善 → 已改善 → 複驗 → 結案。安全缺失須複驗後才能結案。
-          </p>
           <form
             className="stack"
             onSubmit={(e: FormEvent) => {

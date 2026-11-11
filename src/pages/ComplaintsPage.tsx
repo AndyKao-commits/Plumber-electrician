@@ -3,10 +3,8 @@ import { COMPLAINT_STATUS_LABELS } from '@/domain/complaints'
 import type { ComplaintStatus } from '@/domain/types'
 import { useComplaints } from '@/hooks/useComplaints'
 import { useRepairs } from '@/hooks/useRepairs'
-import { useUser } from '@/hooks/useUser'
 
 export function ComplaintsPage() {
-  const { user } = useUser()
   const { repairs } = useRepairs()
   const {
     complaints,
@@ -67,11 +65,7 @@ export function ComplaintsPage() {
       <section className="panel stack">
         <div className="row between">
           <div>
-            <strong>客訴（COM-001）</strong>
-            <p className="muted" style={{ margin: '4px 0 0' }}>
-              可不關聯工程建立；重複維修只關聯不合併。
-              {user ? `（${user.role}）` : ''}
-            </p>
+            <strong>客訴</strong>
           </div>
           <button
             type="button"
@@ -169,9 +163,6 @@ export function ComplaintsPage() {
 
       <section className="panel stack">
         <strong>重複維修關聯</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          只建立關聯紀錄，不合併、不刪除原始案件。
-        </p>
         <form className="stack" onSubmit={(e) => void onLink(e)}>
           <div className="grid-2">
             <div className="field">

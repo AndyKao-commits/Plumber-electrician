@@ -18,10 +18,6 @@ export function OfflineQueuePage() {
     <div className="stack fade-up">
       <section className="panel stack">
         <strong>離線佇列</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          允許離線暫存：施工回報、待辦、出勤（待驗證）。採購核准、庫存入庫、報價發布必須連線。
-          恢復網路後會自動同步；同操作識別碼重送會去重（INT-10）。
-        </p>
         <div className="row between">
           <span className={`badge ${online ? 'ok' : ''}`}>
             {online ? '已連線' : '離線'}

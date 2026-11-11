@@ -3,7 +3,6 @@ import { FEATURE_FLAGS, PRODUCT, ROLES } from '@/domain/rules'
 import { useNotices } from '@/hooks/useNotices'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { useUser } from '@/hooks/useUser'
-import { dataModeLabel } from '@/lib/dataMode'
 
 export function AppShell() {
   const { user, logout } = useUser()
@@ -16,11 +15,11 @@ export function AppShell() {
       <header className="topbar">
         <div className="brand">
           <strong>{PRODUCT.name}</strong>
-          <span>
-            {user ? `${user.name} · ${ROLES[user.role].label}` : PRODUCT.tagline}
-            {' · '}
-            {dataModeLabel()}
-          </span>
+          {user ? (
+            <span>
+              {user.name} · {ROLES[user.role].label}
+            </span>
+          ) : null}
         </div>
         {user ? (
           <div className="row">
@@ -52,7 +51,7 @@ export function AppShell() {
             </strong>
             <p className="muted" style={{ margin: '2px 0 0', fontSize: 13 }}>
               {!online
-                ? 'V1.0 建議連線操作；草稿僅輔助。'
+                ? '請連線後再同步草稿。'
                 : `${pendingCount} 筆將在連線時自動同步。`}
             </p>
           </div>

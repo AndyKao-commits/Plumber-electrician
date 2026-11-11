@@ -28,9 +28,6 @@ export function SitesPage() {
         <div className="row between">
           <div>
             <strong>工地／案件</strong>
-            <p className="muted" style={{ margin: '4px 0 0' }}>
-              現場中心：日誌、照片、回報、成員權限。
-            </p>
           </div>
           <button
             type="button"

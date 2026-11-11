@@ -414,10 +414,7 @@ export function QuoteDetailPage() {
       </section>
 
       <section className="panel stack" id="export-panel">
-        <strong>匯出（主要操作）</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          每次匯出會建立不可覆寫的版本快照；凍結僅保護歷史版本。
-        </p>
+        <strong>匯出</strong>
         {canExport ? (
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
             <button
@@ -511,7 +508,7 @@ export function QuoteDetailPage() {
         ) : null}
         {versions.length > 0 ? (
           <div className="stack">
-            <strong>歷史版本（不可覆寫）</strong>
+            <strong>歷史版本</strong>
             {versions.map((v) => {
               const vGate = user
                 ? canSoftDeleteQuoteVersion(user.role, quote, v)
@@ -904,11 +901,11 @@ export function QuoteDetailPage() {
         </p>
         {quote.workflowStatus === 'accepted' ? (
           <p className="muted" style={{ margin: 0 }}>
-            已計入有效合約金額（追加減另計，僅已接受才加減）
+            已計入有效合約
           </p>
         ) : (
           <p className="muted" style={{ margin: 0 }}>
-            目前狀態不計入有效合約金額
+            尚未計入有效合約
           </p>
         )}
       </section>

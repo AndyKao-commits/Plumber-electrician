@@ -40,10 +40,7 @@ export function PettyCashPage() {
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <strong>零用金補充（PET-001）</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          申請 → Owner 核准 → 撥款入帳為三個獨立事件；核准不等於已撥款。
-        </p>
+        <strong>零用金補充</strong>
       </section>
 
       <section className="panel stack">

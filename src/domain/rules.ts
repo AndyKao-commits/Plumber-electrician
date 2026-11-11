@@ -11,7 +11,7 @@ import { applyInboundMovingAverage } from './inventoryCost'
 /** Confirmed product rules from planning conversations. */
 export const PRODUCT = {
   name: '工程管家',
-  tagline: '水電現場＋老闆審核（V1.0）',
+  tagline: '工程現場管理',
   version: '1.0',
   sourceConversations: [
     'https://chatgpt.com/share/6af27b2e-31d8-83ee-9de3-c8287529caeb',
@@ -109,7 +109,7 @@ export const MORE_MENU = [
         id: 'notices',
         label: '通知中心',
         path: '/notifications',
-        description: '站內通知（不推 LINE）',
+        description: '站內通知與待辦',
       },
       {
         id: 'photos',

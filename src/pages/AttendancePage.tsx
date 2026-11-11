@@ -7,7 +7,6 @@ import {
   formatWorkDuration,
   summarizeAttendanceDay,
 } from '@/domain/attendanceTimeline'
-import { FEATURE_FLAGS } from '@/domain/rules'
 import { useAttendance } from '@/hooks/useAttendance'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
@@ -122,11 +121,6 @@ export function AttendancePage() {
     <div className="stack fade-up">
       <section className="panel stack">
         <strong>出勤打卡</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          {FEATURE_FLAGS.autoDeductBreak
-            ? '系統會自動扣除休息時間。'
-            : '不自動扣除休息時間；工時依實際上下班計算。'}
-        </p>
 
         {openShift ? (
           <>
@@ -198,9 +192,6 @@ export function AttendancePage() {
       {canApproveCorrections && pendingCorrections.length > 0 ? (
         <section className="panel stack">
           <strong>待核准補打卡</strong>
-          <p className="muted" style={{ margin: 0 }}>
-            核准後寫入有效工時；原始打卡紀錄保留不改。
-          </p>
           {pendingCorrections.map((c) => (
             <div key={c.id} className="site-link stack">
               <div className="row between">
@@ -279,9 +270,6 @@ export function AttendancePage() {
 
       <section className="panel stack">
         <strong>補打卡申請</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          員工申請後需老闆／管理員確認才生效；原始出勤事件不會被改寫。
-        </p>
         <form className="stack" onSubmit={(e) => void onSubmitCorrection(e)}>
           <div className="field">
             <label htmlFor="link-attendance">對應出勤（可選）</label>

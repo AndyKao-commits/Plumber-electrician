@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useTeam } from '@/hooks/useTeam'
 import { useUser } from '@/hooks/useUser'
-import { dataModeLabel } from '@/lib/dataMode'
 import { isLineLoginConfigured, startLineBindLogin } from '@/lib/lineLogin'
 
 export function TeamPage() {
@@ -49,22 +48,12 @@ export function TeamPage() {
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <div className="row between">
-          <strong>今日團隊</strong>
-          <span className="badge steel">{dataModeLabel()}</span>
-        </div>
-        <p className="muted" style={{ margin: 0 }}>
-          只顯示今天有出勤的成員與「最後地點」（足跡／工地），不做複雜統計。
-        </p>
+        <strong>今日團隊</strong>
       </section>
 
       {isFormalMode ? (
         <section className="panel stack">
           <strong>個人 LINE 綁定</strong>
-          <p className="muted" style={{ margin: 0 }}>
-            登入仍用 Email／密碼。綁定 LINE 後，圖文選單操作可對應到你的系統帳號。
-            傳訊給官方帳號不會再刷功能選單（請用圖文選單）。
-          </p>
 
           {user?.lineUserId ? (
             <div className="site-link stack">
@@ -97,13 +86,9 @@ export function TeamPage() {
               </button>
               {!lineLoginReady ? (
                 <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-                  尚未設定 `VITE_LINE_LOGIN_CHANNEL_ID`（Vercel 環境變數）。可先用下方備援綁定碼。
+                  尚未設定 LINE Login，可先用下方備援綁定碼。
                 </p>
-              ) : (
-                <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-                  會開啟 LINE 授權頁；授權後只寫入綁定，不會改系統登入方式。
-                </p>
-              )}
+              ) : null}
               {lineLoginError ? (
                 <p style={{ color: 'var(--danger)', margin: 0 }}>{lineLoginError}</p>
               ) : null}

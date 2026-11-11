@@ -3,10 +3,7 @@ import { Link } from 'react-router-dom'
 import { customersSharingSite } from '@/domain/crm'
 import { useCustomerContacts, useCustomers } from '@/hooks/useCustomers'
 import { useSites } from '@/hooks/useSites'
-import { useUser } from '@/hooks/useUser'
-
 export function CustomersPage() {
-  const { user } = useUser()
   const { sites } = useSites()
   const {
     customers,
@@ -102,11 +99,7 @@ export function CustomersPage() {
       <section className="panel stack">
         <div className="row between">
           <div>
-            <strong>客戶主檔（CRM-001）</strong>
-            <p className="muted" style={{ margin: '4px 0 0' }}>
-              只需名稱可建立；一地址可關聯多客戶。
-              {user ? `（${user.role}）` : ''}
-            </p>
+            <strong>客戶主檔</strong>
           </div>
           <button
             type="button"

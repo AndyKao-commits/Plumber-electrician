@@ -78,13 +78,6 @@ export function PurchasesPage() {
     <div className="stack fade-up">
       <section className="panel stack">
         <strong>材料採購</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          核准基準＝最終應付金額。一般 ≥ NT$
-          {DEFAULT_PURCHASE_RULES.preApprovalThresholdNtd.toLocaleString()}；緊急單次 ≤{' '}
-          {DEFAULT_PURCHASE_RULES.emergencySingleLimitNtd.toLocaleString()}、每日 ≤{' '}
-          {DEFAULT_PURCHASE_RULES.emergencyDailyLimitNtd?.toLocaleString()}。
-          緊急占額以不可變事件記在原業務日（REV-04）；禁止自我核准（REV-07）。
-        </p>
         <div className="site-link">
           <p>今日已用緊急額度</p>
           <h3>

@@ -2,7 +2,6 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useOrgSpendSettings } from '@/hooks/useOrgSpendSettings'
 import { useUser } from '@/hooks/useUser'
-import { dataModeLabel } from '@/lib/dataMode'
 
 export function SettingsPage() {
   const { user } = useUser()
@@ -58,15 +57,7 @@ export function SettingsPage() {
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <div className="row between">
-          <div>
-            <strong>額度設定</strong>
-            <p className="muted" style={{ margin: '4px 0 0' }}>
-              現場支出超過多少需老闆審核，以及每日／緊急上限。
-            </p>
-          </div>
-          <span className="badge steel">{dataModeLabel()}</span>
-        </div>
+        <strong>額度設定</strong>
       </section>
 
       {isLoading ? <div className="empty">載入中…</div> : null}

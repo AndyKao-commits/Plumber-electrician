@@ -112,14 +112,11 @@ export function QuotesPage() {
     <div className="stack fade-up">
       <section className="panel stack">
         <strong>報價案件</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          以案件為中心：編輯細項 → 匯出 → 客戶接受後計入合約；追加減僅「已接受」才加減合約金額。
-        </p>
         <div className="site-link">
-          <p>有效合約金額（已接受報價 ± 已接受追加減）</p>
+          <p>有效合約金額</p>
           <h3>NT${contractTotal.toLocaleString()}</h3>
           <p className="muted" style={{ margin: '6px 0 0' }}>
-            已開立請款 NT${billedTotal.toLocaleString()}（≠ 收款）
+            已開立請款 NT${billedTotal.toLocaleString()}
           </p>
         </div>
         {canCreate ? (

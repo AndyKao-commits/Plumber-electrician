@@ -135,10 +135,7 @@ export function ChangeOrdersPanel({
 
   return (
     <section className="panel stack">
-      <strong>追加減（FIN-002）</strong>
-      <p className="muted" style={{ margin: 0 }}>
-        僅「客戶已接受」的追加／追減會調整有效合約。草稿與未接受不計入。
-      </p>
+      <strong>追加減</strong>
       {quote.workflowStatus === 'accepted' ? (
         <p style={{ margin: 0 }}>
           本案件合約影響（已接受追加減）：

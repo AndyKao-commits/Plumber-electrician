@@ -125,10 +125,7 @@ export function InventoryPage() {
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <strong>材料主檔與庫存（INV-001／002）</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          SKU／序號組織內唯一；單位依材料換算。可用量＝現存 − 預留；調撥≠耗用。
-        </p>
+        <strong>材料主檔與庫存</strong>
       </section>
 
       <section className="panel stack">
@@ -501,7 +498,7 @@ export function InventoryPage() {
       </section>
 
       <section className="panel stack">
-        <strong>庫位調撥（≠耗用）</strong>
+        <strong>庫位調撥</strong>
         <form
           className="stack"
           onSubmit={(e) => {

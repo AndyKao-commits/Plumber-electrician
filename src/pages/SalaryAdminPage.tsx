@@ -101,9 +101,6 @@ export function SalaryAdminPage() {
     <div className="stack fade-up">
       <section className="panel stack">
         <strong>薪資管理</strong>
-        <p className="muted" style={{ margin: 0 }}>
-          設定個別薪資、登錄獎勵／加班／扣款，確認後再標記支付。已確認項目更正須填原因。
-        </p>
         <div className="grid-2">
           <div className="field">
             <label htmlFor="sa-year">年</label>

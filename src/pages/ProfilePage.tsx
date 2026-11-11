@@ -5,7 +5,6 @@ import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
 import { supabaseRepos } from '@/lib/supabaseRepos'
-import { dataModeLabel } from '@/lib/dataMode'
 
 export function ProfilePage() {
   const { user } = useUser()
@@ -95,15 +94,7 @@ export function ProfilePage() {
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <div className="row between">
-          <div>
-            <strong>個人資料</strong>
-            <p className="muted" style={{ margin: '4px 0 0' }}>
-              員工可修改姓名、暱稱、生日、工種與備註。到職日首次填寫後鎖定，僅老闆可再改。
-            </p>
-          </div>
-          <span className="badge steel">{dataModeLabel()}</span>
-        </div>
+        <strong>個人資料</strong>
       </section>
 
       <form className="panel stack" onSubmit={(e) => void onSubmit(e)}>
