@@ -98,6 +98,11 @@ import {
   assertRequestDisbursable,
   assertTopUpAmount,
 } from '@/domain/pettyCash'
+import {
+  assertSupplierName,
+  assertWithinCreditLimit,
+  sumSupplierExposure,
+} from '@/domain/suppliers'
 import { roundMoney } from '@/domain/money'
 import {
   assertCanMarkChangeOrderAccept,
@@ -144,6 +149,7 @@ import type {
   PettyCashDisbursement,
   PettyCashLedgerEntry,
   PettyCashTopUpRequest,
+  Supplier,
   StockBalance,
   StockLocation,
   StockMovement,
@@ -741,6 +747,7 @@ function mapPurchase(row: Record<string, unknown>): PurchaseRecord {
     organizationId: String(row.organization_id),
     userId: String(row.user_id),
     siteId: (row.site_id as string | null) ?? null,
+    supplierId: (row.supplier_id as string | null) ?? null,
     mode: row.mode as PurchaseMode,
     status: row.status as PurchaseRecord['status'],
     title: String(row.title),
@@ -758,6 +765,7 @@ function mapPurchase(row: Record<string, unknown>): PurchaseRecord {
     inboundMaterialId: (row.inbound_material_id as string | null) ?? null,
     inboundQty: row.inbound_qty == null ? null : Number(row.inbound_qty),
     inboundAt: (row.inbound_at as string | null) ?? null,
+    paidAt: (row.paid_at as string | null) ?? null,
   }
 }
 
@@ -1042,7 +1050,7 @@ export const supabaseRepos = {
     let query = sb()
       .from('purchases')
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
       )
       .order('created_at', { ascending: false })
 
@@ -1062,7 +1070,7 @@ export const supabaseRepos = {
     const { data, error } = await sb()
       .from('purchases')
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
       )
       .eq('status', 'pending_approval')
       .order('created_at', { ascending: false })
@@ -1159,7 +1167,7 @@ export const supabaseRepos = {
         business_date: businessDate,
       })
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法建立採購'))
@@ -1199,7 +1207,7 @@ export const supabaseRepos = {
     const { data: current, error: loadError } = await sb()
       .from('purchases')
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
       )
       .eq('id', pid)
       .maybeSingle()
@@ -1223,7 +1231,7 @@ export const supabaseRepos = {
       })
       .eq('id', pid)
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '核准失敗'))
@@ -1248,7 +1256,7 @@ export const supabaseRepos = {
     const { data: current, error: loadError } = await sb()
       .from('purchases')
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
       )
       .eq('id', pid)
       .maybeSingle()
@@ -1276,7 +1284,7 @@ export const supabaseRepos = {
       })
       .eq('id', pid)
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '駁回失敗'))
@@ -1315,7 +1323,7 @@ export const supabaseRepos = {
     const { data: current, error: loadError } = await sb()
       .from('purchases')
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
       )
       .eq('id', pid)
       .maybeSingle()
@@ -1339,7 +1347,7 @@ export const supabaseRepos = {
       })
       .eq('id', pid)
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '取消失敗'))
@@ -4107,6 +4115,119 @@ export const supabaseRepos = {
     if (error) throw new AppError(toUserMessage(error, '無法新增待辦'))
   },
 
+  async listSuppliers(): Promise<Supplier[]> {
+    const { data, error } = await sb()
+      .from('suppliers')
+      .select(
+        'id, organization_id, name, credit_limit, payment_terms_days, notes, created_at, updated_at',
+      )
+      .order('name', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入供應商'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      name: String(row.name),
+      creditLimit:
+        row.credit_limit == null ? null : Number(row.credit_limit),
+      paymentTermsDays: Number(row.payment_terms_days),
+      notes: (row.notes as string | null) ?? null,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    }))
+  },
+
+  async createSupplier(
+    actor: AppUser,
+    input: {
+      name: string
+      creditLimit?: number | null
+      paymentTermsDays?: number
+      notes?: string | null
+    },
+  ): Promise<Supplier> {
+    void actor
+    const { data, error } = await sb()
+      .from('suppliers')
+      .insert({
+        name: assertSupplierName(input.name),
+        credit_limit:
+          input.creditLimit == null || Number(input.creditLimit) <= 0
+            ? null
+            : roundMoney(Number(input.creditLimit)),
+        payment_terms_days: Math.max(0, Number(input.paymentTermsDays) || 30),
+        notes: input.notes?.trim() || null,
+      })
+      .select(
+        'id, organization_id, name, credit_limit, payment_terms_days, notes, created_at, updated_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立供應商'))
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      name: String(data.name),
+      creditLimit: data.credit_limit == null ? null : Number(data.credit_limit),
+      paymentTermsDays: Number(data.payment_terms_days),
+      notes: (data.notes as string | null) ?? null,
+      createdAt: String(data.created_at),
+      updatedAt: String(data.updated_at),
+    }
+  },
+
+  async linkPurchaseSupplier(
+    actor: AppUser,
+    input: { purchaseId: string; supplierId: string },
+  ): Promise<PurchaseRecord> {
+    const purchaseId = requireUuid(input.purchaseId, '採購')
+    const supplierId = requireUuid(input.supplierId, '供應商')
+    const suppliers = await this.listSuppliers()
+    const supplier = suppliers.find((s) => s.id === supplierId)
+    if (!supplier) throw new AppError('找不到供應商')
+    const purchases = await this.listPurchases(actor)
+    const purchase = purchases.find((p) => p.id === purchaseId)
+    if (!purchase) throw new AppError('找不到採購')
+    const related = purchases.filter((p) => p.supplierId === supplierId)
+    const exposure = sumSupplierExposure(related)
+    const nextAmount =
+      purchase.supplierId === supplierId ? 0 : purchase.finalPayable
+    assertWithinCreditLimit({
+      creditLimit: supplier.creditLimit,
+      exposure: exposure.exposure,
+      nextAmount,
+    })
+    const { data, error } = await sb()
+      .from('purchases')
+      .update({ supplier_id: supplierId })
+      .eq('id', purchaseId)
+      .select(
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法關聯供應商'))
+    return mapPurchase(data as Record<string, unknown>)
+  },
+
+  async markPurchasePaid(
+    actor: AppUser,
+    purchaseId: string,
+  ): Promise<PurchaseRecord> {
+    const pid = requireUuid(purchaseId, '採購')
+    const purchase = (await this.listPurchases(actor)).find((p) => p.id === pid)
+    if (!purchase) throw new AppError('找不到採購')
+    if (!purchase.inboundAt) throw new AppError('僅已收貨應付可標記付款')
+    if (purchase.paidAt) throw new AppError('此採購已標記付款')
+    const { data, error } = await sb()
+      .from('purchases')
+      .update({ paid_at: new Date().toISOString() })
+      .eq('id', pid)
+      .select(
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法標記付款'))
+    return mapPurchase(data as Record<string, unknown>)
+  },
+
   async listPettyCashAccounts(): Promise<PettyCashAccount[]> {
     const { data, error } = await sb()
       .from('petty_cash_accounts')
@@ -4445,7 +4566,7 @@ export const supabaseRepos = {
     const { data: current, error: loadError } = await sb()
       .from('purchases')
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
       )
       .eq('id', pid)
       .maybeSingle()
@@ -4480,7 +4601,7 @@ export const supabaseRepos = {
       })
       .eq('id', pid)
       .select(
-        'id, organization_id, user_id, site_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at',
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '入庫標記失敗'))
