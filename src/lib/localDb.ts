@@ -102,6 +102,7 @@ import type {
   SupplierExposure,
   StockBalance,
   ExpenseReport,
+  EmployeeAdvance,
   CashReceiptReport,
   AuditLogEntry,
   StockLocation,
@@ -191,6 +192,11 @@ import {
   computeCaseFinance,
   resolveFieldCashTarget,
 } from '@/domain/fieldFinance'
+import {
+  assertAdvanceItem,
+  assertCanSettleAdvances,
+  buildSettleExpenseItem,
+} from '@/domain/employeeAdvances'
 import { buildAuditEntry, type AuditAction } from '@/domain/auditLog'
 import {
   assertSpendSettingsInput,
@@ -261,6 +267,7 @@ const KEYS = {
   suppliers: 'eg.suppliers.v1',
   expenseReports: 'eg.expenseReports.v1',
   cashReceipts: 'eg.cashReceipts.v1',
+  employeeAdvances: 'eg.employeeAdvances.v1',
   auditLogs: 'eg.auditLogs.v1',
   orgSpendSettings: 'eg.orgSpendSettings.v1',
   siteMembers: 'eg.siteMembers.v1',
@@ -330,6 +337,7 @@ const emptyPettyCashLedger: PettyCashLedgerEntry[] = []
 const emptySuppliers: Supplier[] = []
 const emptyExpenseReports: ExpenseReport[] = []
 const emptyCashReceipts: CashReceiptReport[] = []
+const emptyEmployeeAdvances: EmployeeAdvance[] = []
 const emptyAuditLogs: AuditLogEntry[] = []
 
 function write<T>(key: string, value: T) {
@@ -749,6 +757,7 @@ function seedIfNeeded() {
     },
   ])
   write(KEYS.expenseReports, emptyExpenseReports)
+  write(KEYS.employeeAdvances, emptyEmployeeAdvances)
   write(KEYS.cashReceipts, emptyCashReceipts)
   write(KEYS.auditLogs, emptyAuditLogs)
   write(KEYS.orgSpendSettings, defaultOrgSpendSettings(ORG_ID))
@@ -888,10 +897,23 @@ export const localDb = {
       input.name != null
         ? normalizeProfileName(input.name)
         : users[idx].name
+    const existingHired = users[idx].hiredAt ?? null
+    let nextHired = existingHired
+    if (input.hiredAt !== undefined) {
+      if (existingHired && actor.role !== 'boss') {
+        if (fields.hiredAt !== existingHired) {
+          throw new Error('到職日已鎖定，僅老闆可修改')
+        }
+        nextHired = existingHired
+      } else {
+        nextHired = fields.hiredAt
+      }
+    }
     const updated: AppUser = {
       ...users[idx],
       ...fields,
       name: nextName,
+      hiredAt: nextHired,
       accountStatus: nextStatus,
     }
     users[idx] = updated
@@ -3910,6 +3932,120 @@ export const localDb = {
       all = all.filter((e) => e.reportedBy === filter.reportedBy)
     }
     return all.sort((a, b) => b.reportedAt.localeCompare(a.reportedAt))
+  },
+
+  listEmployeeAdvances(filter?: {
+    status?: EmployeeAdvance['status']
+    employeeId?: string
+  }): EmployeeAdvance[] {
+    let all = read(KEYS.employeeAdvances, emptyEmployeeAdvances)
+    if (filter?.status) all = all.filter((e) => e.status === filter.status)
+    if (filter?.employeeId) {
+      all = all.filter((e) => e.employeeId === filter.employeeId)
+    }
+    return all.sort((a, b) => b.reportedAt.localeCompare(a.reportedAt))
+  },
+
+  createEmployeeAdvance(
+    actor: { id: string; name: string; role: AppUser['role'] },
+    input: {
+      siteId?: string | null
+      item: string
+      amount: number
+      note?: string | null
+      locationText?: string | null
+      receiptPhotoPath?: string | null
+      misc?: boolean
+    },
+  ): EmployeeAdvance {
+    let target = resolveFieldCashTarget({
+      siteId: input.siteId,
+      locationText: input.locationText,
+      misc: input.misc,
+    })
+    if (!target.isMisc) {
+      const site = this.getSites(actor).find((s) => s.id === target.siteId)
+      if (!site) throw new Error('找不到工地／案件')
+      target = { ...target, siteId: site.id, siteName: site.name }
+    }
+    const row: EmployeeAdvance = {
+      id: `adv-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      employeeId: actor.id,
+      employeeName: actor.name,
+      siteId: target.siteId,
+      siteName: target.siteName,
+      locationText: target.locationText,
+      item: assertAdvanceItem(input.item),
+      amount: assertPositiveMoney(input.amount, '代墊金額'),
+      note: input.note?.trim() || null,
+      receiptPhotoPath: input.receiptPhotoPath?.trim() || null,
+      status: 'open',
+      reportedAt: new Date().toISOString(),
+      settledAt: null,
+      settledBy: null,
+      expenseReportId: null,
+    }
+    const all = read(KEYS.employeeAdvances, emptyEmployeeAdvances)
+    all.unshift(row)
+    write(KEYS.employeeAdvances, all)
+    return row
+  },
+
+  batchSettleEmployeeAdvances(
+    actor: { id: string; name: string; role: AppUser['role'] },
+    input: { advanceIds: string[]; note?: string | null },
+  ): { expense: ExpenseReport; advances: EmployeeAdvance[] } {
+    assertCanSettleAdvances({
+      actorRole: actor.role,
+      selectedIds: input.advanceIds,
+    })
+    const all = read(KEYS.employeeAdvances, emptyEmployeeAdvances)
+    const selected = all.filter(
+      (a) => input.advanceIds.includes(a.id) && a.status === 'open',
+    )
+    if (selected.length === 0) throw new Error('沒有可核銷的代墊')
+    const total = selected.reduce((s, a) => s + a.amount, 0)
+    const names = [...new Set(selected.map((a) => a.employeeName))].join('、')
+    const expense = this.createExpenseReport(actor, {
+      misc: true,
+      item: buildSettleExpenseItem(selected.length),
+      amount: total,
+      note:
+        input.note?.trim() ||
+        `核銷 ${selected.length} 筆代墊（${names}）`,
+    })
+    // Force confirmed for settle even if threshold would leave pending
+    const expenses = read(KEYS.expenseReports, emptyExpenseReports)
+    const expIdx = expenses.findIndex((e) => e.id === expense.id)
+    if (expIdx >= 0) {
+      expenses[expIdx] = {
+        ...expenses[expIdx],
+        status: 'confirmed',
+        reviewedBy: actor.id,
+        reviewedAt: new Date().toISOString(),
+        reviewNote: '代墊批量核銷',
+        siteName: '代墊核銷',
+      }
+      write(KEYS.expenseReports, expenses)
+    }
+    const now = new Date().toISOString()
+    const next = all.map((a) =>
+      selected.some((s) => s.id === a.id)
+        ? {
+            ...a,
+            status: 'settled' as const,
+            settledAt: now,
+            settledBy: actor.id,
+            expenseReportId: expense.id,
+          }
+        : a,
+    )
+    write(KEYS.employeeAdvances, next)
+    return {
+      expense: expenses[expIdx] ?? expense,
+      advances: next.filter((a) => selected.some((s) => s.id === a.id)),
+    }
   },
 
   createExpenseReport(

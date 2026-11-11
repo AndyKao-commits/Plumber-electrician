@@ -125,6 +125,11 @@ import {
   assertPositiveMoney,
   resolveFieldCashTarget,
 } from '@/domain/fieldFinance'
+import {
+  assertAdvanceItem,
+  assertCanSettleAdvances,
+  buildSettleExpenseItem,
+} from '@/domain/employeeAdvances'
 import { type AuditAction } from '@/domain/auditLog'
 import { roundMoney } from '@/domain/money'
 import {
@@ -180,6 +185,7 @@ import type {
   Supplier,
   StockBalance,
   ExpenseReport,
+  EmployeeAdvance,
   CashReceiptReport,
   AuditLogEntry,
   StockLocation,
@@ -810,6 +816,27 @@ function mapLocationCheckin(
   }
 }
 
+function mapEmployeeAdvance(row: Record<string, unknown>): EmployeeAdvance {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    employeeId: String(row.employee_id),
+    employeeName: String(row.employee_name),
+    siteId: row.site_id ? String(row.site_id) : null,
+    siteName: String(row.site_name),
+    locationText: (row.location_text as string | null) ?? null,
+    item: String(row.item),
+    amount: Number(row.amount),
+    note: (row.note as string | null) ?? null,
+    receiptPhotoPath: (row.receipt_photo_path as string | null) ?? null,
+    status: row.status as EmployeeAdvance['status'],
+    reportedAt: String(row.reported_at),
+    settledAt: (row.settled_at as string | null) ?? null,
+    settledBy: (row.settled_by as string | null) ?? null,
+    expenseReportId: (row.expense_report_id as string | null) ?? null,
+  }
+}
+
 const ATTENDANCE_CORRECTION_COLS =
   'id, organization_id, user_id, attendance_id, proposed_clock_in_at, proposed_clock_out_at, proposed_site_id, reason, status, original_clock_in_at, original_clock_out_at, original_site_id, effective_clock_in_at, effective_clock_out_at, effective_site_id, reviewed_by, reviewed_at, review_note, created_at'
 
@@ -1041,11 +1068,32 @@ export const supabaseRepos = {
       nickname: fields.nickname,
       birth_date: fields.birthDate,
       job_title: fields.jobTitle,
-      hired_at: fields.hiredAt,
       profile_notes: fields.notes,
     }
     if (input.name != null) {
       payload.name = normalizeProfileName(input.name)
+    }
+    // 到職日：員工僅能首次填寫；之後僅老闆可改
+    if (input.hiredAt !== undefined) {
+      let existingHired: string | null = null
+      if (tid === actor.id) {
+        existingHired = actor.hiredAt ?? null
+      } else {
+        const { data: hiredRow } = await sb()
+          .from('profiles')
+          .select('hired_at')
+          .eq('id', tid)
+          .maybeSingle()
+        existingHired = (hiredRow?.hired_at as string | null) ?? null
+      }
+      const nextHired = fields.hiredAt
+      if (existingHired && actor.role !== 'boss') {
+        if (nextHired !== existingHired) {
+          throw new AppError('到職日已鎖定，僅老闆可修改')
+        }
+      } else {
+        payload.hired_at = nextHired
+      }
     }
     if (input.accountStatus != null) {
       if (actor.role !== 'boss') throw new AppError('僅老闆可停用帳號')
@@ -5197,6 +5245,165 @@ export const supabaseRepos = {
       after: row,
     })
     return row
+  },
+
+  async listEmployeeAdvances(actor: AppUser): Promise<EmployeeAdvance[]> {
+    let q = sb()
+      .from('employee_advances')
+      .select(
+        'id, organization_id, employee_id, employee_name, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_at, settled_at, settled_by, expense_report_id',
+      )
+      .order('reported_at', { ascending: false })
+      .limit(200)
+    if (actor.role !== 'boss') {
+      q = q.eq('employee_id', actor.id)
+    }
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入代墊'))
+    return (data ?? []).map((row) => mapEmployeeAdvance(row))
+  },
+
+  async createEmployeeAdvance(
+    actor: AppUser,
+    input: {
+      siteId?: string | null
+      item: string
+      amount: number
+      note?: string | null
+      locationText?: string | null
+      receiptPhotoPath?: string | null
+      misc?: boolean
+    },
+  ): Promise<EmployeeAdvance> {
+    let target = resolveFieldCashTarget({
+      siteId: input.siteId,
+      locationText: input.locationText,
+      misc: input.misc,
+    })
+    if (!target.isMisc) {
+      const siteId = requireUuid(target.siteId, '工地')
+      const sites = await this.listSites(actor)
+      const site = sites.find((s) => s.id === siteId)
+      if (!site) throw new AppError('找不到工地／案件')
+      target = { ...target, siteId: site.id, siteName: site.name }
+    }
+    const amount = assertPositiveMoney(input.amount, '代墊金額')
+    const { data, error } = await sb()
+      .from('employee_advances')
+      .insert({
+        employee_id: actor.id,
+        employee_name: actor.name,
+        site_id: target.siteId,
+        site_name: target.siteName,
+        location_text: target.locationText,
+        item: assertAdvanceItem(input.item),
+        amount,
+        note: input.note?.trim() || null,
+        receipt_photo_path: input.receiptPhotoPath?.trim() || null,
+        status: 'open',
+      })
+      .select(
+        'id, organization_id, employee_id, employee_name, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_at, settled_at, settled_by, expense_report_id',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登記代墊'))
+    const row = mapEmployeeAdvance(data)
+    await this.appendAuditLog(actor, {
+      action: 'advance.create',
+      targetType: 'employee_advance',
+      targetId: row.id,
+      after: row,
+    })
+    return row
+  },
+
+  async batchSettleEmployeeAdvances(
+    actor: AppUser,
+    input: { advanceIds: string[]; note?: string | null },
+  ): Promise<{ expense: ExpenseReport; advances: EmployeeAdvance[] }> {
+    assertCanSettleAdvances({
+      actorRole: actor.role,
+      selectedIds: input.advanceIds,
+    })
+    const ids = input.advanceIds.map((id) => requireUuid(id, '代墊'))
+    const all = await this.listEmployeeAdvances(actor)
+    const selected = all.filter((a) => ids.includes(a.id) && a.status === 'open')
+    if (selected.length === 0) throw new AppError('沒有可核銷的代墊')
+    const total = selected.reduce((s, a) => s + a.amount, 0)
+    const names = [...new Set(selected.map((a) => a.employeeName))].join('、')
+    const now = new Date().toISOString()
+    const { data: expData, error: expError } = await sb()
+      .from('expense_reports')
+      .insert({
+        site_id: null,
+        site_name: '代墊核銷',
+        location_text: null,
+        item: buildSettleExpenseItem(selected.length),
+        amount: total,
+        note:
+          input.note?.trim() ||
+          `核銷 ${selected.length} 筆代墊（${names}）`,
+        receipt_photo_path: null,
+        status: 'confirmed',
+        reported_by: actor.id,
+        reported_by_name: actor.name,
+        reviewed_by: actor.id,
+        reviewed_at: now,
+        review_note: '代墊批量核銷',
+      })
+      .select(
+        'id, organization_id, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
+      )
+      .single()
+    if (expError) {
+      throw new AppError(toUserMessage(expError, '無法建立核銷支出'))
+    }
+    const expense: ExpenseReport = {
+      id: String(expData.id),
+      organizationId: String(expData.organization_id),
+      siteId: expData.site_id ? String(expData.site_id) : null,
+      siteName: String(expData.site_name),
+      locationText: (expData.location_text as string | null) ?? null,
+      item: String(expData.item),
+      amount: Number(expData.amount),
+      note: (expData.note as string | null) ?? null,
+      receiptPhotoPath: (expData.receipt_photo_path as string | null) ?? null,
+      status: expData.status as ExpenseReport['status'],
+      reportedBy: String(expData.reported_by),
+      reportedByName: String(expData.reported_by_name),
+      reportedAt: String(expData.reported_at),
+      reviewedBy: (expData.reviewed_by as string | null) ?? null,
+      reviewedAt: (expData.reviewed_at as string | null) ?? null,
+      reviewNote: (expData.review_note as string | null) ?? null,
+    }
+
+    const { error: updError } = await sb()
+      .from('employee_advances')
+      .update({
+        status: 'settled',
+        settled_at: now,
+        settled_by: actor.id,
+        expense_report_id: expense.id,
+      })
+      .in(
+        'id',
+        selected.map((a) => a.id),
+      )
+      .eq('status', 'open')
+    if (updError) {
+      throw new AppError(toUserMessage(updError, '代墊核銷狀態更新失敗'))
+    }
+
+    const advances = (await this.listEmployeeAdvances(actor)).filter((a) =>
+      selected.some((s) => s.id === a.id),
+    )
+    await this.appendAuditLog(actor, {
+      action: 'advance.settle',
+      targetType: 'employee_advance',
+      targetId: expense.id,
+      after: { expenseId: expense.id, advanceIds: selected.map((a) => a.id), total },
+    })
+    return { expense, advances }
   },
 
   async listCashReceipts(actor: AppUser): Promise<CashReceiptReport[]> {

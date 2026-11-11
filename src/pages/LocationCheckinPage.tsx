@@ -4,6 +4,7 @@ import { useUser } from '@/hooks/useUser'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
+import { reverseGeocode } from '@/lib/reverseGeocode'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { formatTaipei } from '@/lib/time'
 
@@ -14,6 +15,7 @@ type Result = {
   latitude: number
   longitude: number
   label: string
+  address: string | null
 }
 
 function readGps(): Promise<GeolocationPosition> {
@@ -64,10 +66,13 @@ export function LocationCheckinPage() {
         setPhase('saving')
         const latitude = pos.coords.latitude
         const longitude = pos.coords.longitude
-        const label = '目前位置（網站 GPS）'
+        const geo = await reverseGeocode(latitude, longitude)
+        const address = geo?.address ?? null
+        const label = geo?.label || address || '目前位置（網站 GPS）'
         const saved = formal
           ? await supabaseRepos.createLocationCheckin(user!, {
               label,
+              address,
               latitude,
               longitude,
               source: 'web_gps',
@@ -82,7 +87,7 @@ export function LocationCheckinPage() {
                 source: 'web_gps' as const,
                 siteId: null,
                 label,
-                address: null,
+                address,
                 latitude,
                 longitude,
                 note: null,
@@ -97,6 +102,7 @@ export function LocationCheckinPage() {
           latitude,
           longitude,
           label: saved.label || label,
+          address: saved.address ?? address,
         })
         setPhase('done')
       } catch (err) {
@@ -119,7 +125,7 @@ export function LocationCheckinPage() {
       <section className="panel stack">
         <strong>紀錄地點</strong>
         <p className="muted" style={{ margin: 0 }}>
-          由 LINE 開啟：自動取得 GPS 並寫入足跡，不影響上下班。網站顯示完成即可，LINE
+          由 LINE 開啟：自動取得 GPS 並寫入足跡（優先顯示地址），不影響上下班。網站顯示完成即可，LINE
           不用再點完成。
         </p>
       </section>
@@ -138,7 +144,7 @@ export function LocationCheckinPage() {
           <>
             <h2 style={{ margin: 0 }}>寫入中…</h2>
             <p className="muted" style={{ margin: 0 }}>
-              正在儲存地點紀錄。
+              正在查地址並儲存地點紀錄。
             </p>
           </>
         ) : null}
@@ -150,10 +156,19 @@ export function LocationCheckinPage() {
             <p style={{ margin: 0 }}>
               時間：{formatTaipei(result.recordedAt, 'yyyy/MM/dd HH:mm')}
             </p>
-            <p style={{ margin: 0 }}>位置：{result.label}</p>
-            <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-              GPS：{result.latitude.toFixed(5)}, {result.longitude.toFixed(5)}
+            <p style={{ margin: 0 }}>
+              地址：{result.address?.trim() || result.label}
             </p>
+            {!result.address ? (
+              <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
+                暫無法解析地址，已存座標：{result.latitude.toFixed(5)},{' '}
+                {result.longitude.toFixed(5)}
+              </p>
+            ) : (
+              <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+                座標：{result.latitude.toFixed(5)}, {result.longitude.toFixed(5)}
+              </p>
+            )}
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <Link className="btn btn-steel" to="/">
                 回首頁

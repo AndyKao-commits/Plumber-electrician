@@ -13,8 +13,8 @@ export function locationPlaceLabel(row: {
   longitude?: number | null
 }): string {
   if (row.siteName?.trim()) return row.siteName.trim()
-  if (row.label?.trim()) return row.label.trim()
   if (row.address?.trim()) return row.address.trim()
+  if (row.label?.trim()) return row.label.trim()
   if (row.latitude != null && row.longitude != null) {
     return `${row.latitude.toFixed(5)}, ${row.longitude.toFixed(5)}`
   }

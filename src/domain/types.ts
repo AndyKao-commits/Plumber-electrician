@@ -84,6 +84,28 @@ export interface ExpenseReport {
   reviewNote?: string | null
 }
 
+/** Employee advance (代墊) awaiting boss settlement into expense. */
+export type EmployeeAdvanceStatus = 'open' | 'settled' | 'cancelled'
+
+export interface EmployeeAdvance {
+  id: string
+  organizationId: string
+  employeeId: string
+  employeeName: string
+  siteId: string | null
+  siteName: string
+  locationText?: string | null
+  item: string
+  amount: number
+  note?: string | null
+  receiptPhotoPath?: string | null
+  status: EmployeeAdvanceStatus
+  reportedAt: string
+  settledAt?: string | null
+  settledBy?: string | null
+  expenseReportId?: string | null
+}
+
 /** V1.0 cash receipt report (awaiting boss confirm). */
 export interface CashReceiptReport {
   id: string
