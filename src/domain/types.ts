@@ -2,6 +2,68 @@ export type UserRole = 'boss' | 'employee'
 
 export type PayType = 'monthly' | 'daily' | 'hourly'
 
+export type SalaryEntryCategory =
+  | 'base'
+  | 'overtime'
+  | 'sales_bonus'
+  | 'case_bonus'
+  | 'other_bonus'
+  | 'deduction'
+  | 'adjustment'
+
+export type SalaryEntryStatus =
+  | 'draft'
+  | 'pending'
+  | 'confirmed'
+  | 'paid'
+  | 'cancelled'
+
+export interface EmployeePaySetting {
+  id: string
+  organizationId: string
+  userId: string
+  payType: PayType
+  baseAmount: number
+  effectiveFrom: string
+  note?: string | null
+  updatedBy?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SalaryEntry {
+  id: string
+  organizationId: string
+  userId: string
+  userName: string
+  periodYear: number
+  periodMonth: number
+  entryDate: string
+  category: SalaryEntryCategory
+  amount: number
+  title: string
+  note?: string | null
+  siteId?: string | null
+  siteName?: string | null
+  status: SalaryEntryStatus
+  createdBy: string
+  confirmedBy?: string | null
+  confirmedAt?: string | null
+  paidBy?: string | null
+  paidAt?: string | null
+  cancelledBy?: string | null
+  cancelledAt?: string | null
+  cancelReason?: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SalaryMonthSummary {
+  confirmedTotal: number
+  pendingTotal: number
+  paidTotal: number
+}
+
 export type JobType = 'project' | 'repair' | 'purchase' | 'office' | 'other'
 
 export type ProjectKind = 'formal' | 'repair'

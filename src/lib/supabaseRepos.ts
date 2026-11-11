@@ -130,6 +130,16 @@ import {
   assertCanSettleAdvances,
   buildSettleExpenseItem,
 } from '@/domain/employeeAdvances'
+import {
+  assertBossSalaryAction,
+  assertCorrectionReason,
+  assertPayType,
+  assertSalaryAmount,
+  assertSalaryCategory,
+  canConfirmSalaryEntry,
+  canMarkSalaryPaid,
+  periodFromDate,
+} from '@/domain/salary'
 import { type AuditAction } from '@/domain/auditLog'
 import { roundMoney } from '@/domain/money'
 import {
@@ -186,8 +196,13 @@ import type {
   StockBalance,
   ExpenseReport,
   EmployeeAdvance,
+  EmployeePaySetting,
+  SalaryEntry,
+  SalaryEntryCategory,
+  SalaryEntryStatus,
   CashReceiptReport,
   AuditLogEntry,
+  PayType,
   StockLocation,
   StockMovement,
   StockReservation,
@@ -837,6 +852,50 @@ function mapEmployeeAdvance(row: Record<string, unknown>): EmployeeAdvance {
   }
 }
 
+function mapPaySetting(row: Record<string, unknown>): EmployeePaySetting {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    userId: String(row.user_id),
+    payType: row.pay_type as PayType,
+    baseAmount: Number(row.base_amount),
+    effectiveFrom: String(row.effective_from).slice(0, 10),
+    note: (row.note as string | null) ?? null,
+    updatedBy: (row.updated_by as string | null) ?? null,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  }
+}
+
+function mapSalaryEntry(row: Record<string, unknown>): SalaryEntry {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    userId: String(row.user_id),
+    userName: String(row.user_name),
+    periodYear: Number(row.period_year),
+    periodMonth: Number(row.period_month),
+    entryDate: String(row.entry_date).slice(0, 10),
+    category: row.category as SalaryEntry['category'],
+    amount: Number(row.amount),
+    title: String(row.title),
+    note: (row.note as string | null) ?? null,
+    siteId: row.site_id ? String(row.site_id) : null,
+    siteName: (row.site_name as string | null) ?? null,
+    status: row.status as SalaryEntry['status'],
+    createdBy: String(row.created_by),
+    confirmedBy: (row.confirmed_by as string | null) ?? null,
+    confirmedAt: (row.confirmed_at as string | null) ?? null,
+    paidBy: (row.paid_by as string | null) ?? null,
+    paidAt: (row.paid_at as string | null) ?? null,
+    cancelledBy: (row.cancelled_by as string | null) ?? null,
+    cancelledAt: (row.cancelled_at as string | null) ?? null,
+    cancelReason: (row.cancel_reason as string | null) ?? null,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  }
+}
+
 const ATTENDANCE_CORRECTION_COLS =
   'id, organization_id, user_id, attendance_id, proposed_clock_in_at, proposed_clock_out_at, proposed_site_id, reason, status, original_clock_in_at, original_clock_out_at, original_site_id, effective_clock_in_at, effective_clock_out_at, effective_site_id, reviewed_by, reviewed_at, review_note, created_at'
 
@@ -1314,6 +1373,338 @@ export const supabaseRepos = {
       .limit(50)
     if (error) throw new AppError(toUserMessage(error, '無法讀取出勤紀錄'))
     return (data ?? []).map((row) => mapAttendance(row))
+  },
+
+  async listAttendanceForMonth(
+    actor: AppUser,
+    input: { userId: string; year: number; month: number },
+  ): Promise<AttendanceRecord[]> {
+    const uid = requireUuid(input.userId, '使用者')
+    if (actor.role !== 'boss' && actor.id !== uid) {
+      throw new AppError('只能查看自己的出勤')
+    }
+    const mm = String(input.month).padStart(2, '0')
+    const start = `${input.year}-${mm}-01T00:00:00+08:00`
+    const endMonth = input.month === 12 ? 1 : input.month + 1
+    const endYear = input.month === 12 ? input.year + 1 : input.year
+    const end = `${endYear}-${String(endMonth).padStart(2, '0')}-01T00:00:00+08:00`
+    const { data, error } = await sb()
+      .from('attendance')
+      .select(
+        'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
+      )
+      .eq('user_id', uid)
+      .gte('clock_in_at', start)
+      .lt('clock_in_at', end)
+      .order('clock_in_at', { ascending: true })
+      .limit(200)
+    if (error) throw new AppError(toUserMessage(error, '無法讀取出勤紀錄'))
+    return (data ?? []).map((row) => mapAttendance(row))
+  },
+
+  async getEmployeePaySetting(
+    actor: AppUser,
+    userId: string,
+  ): Promise<EmployeePaySetting | null> {
+    const uid = requireUuid(userId, '使用者')
+    if (actor.role !== 'boss' && actor.id !== uid) {
+      throw new AppError('只能查看自己的薪資設定')
+    }
+    const { data, error } = await sb()
+      .from('employee_pay_settings')
+      .select(
+        'id, organization_id, user_id, pay_type, base_amount, effective_from, note, updated_by, created_at, updated_at',
+      )
+      .eq('user_id', uid)
+      .order('effective_from', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (error) throw new AppError(toUserMessage(error, '無法讀取薪資設定'))
+    return data ? mapPaySetting(data) : null
+  },
+
+  async upsertEmployeePaySetting(
+    actor: AppUser,
+    input: {
+      userId: string
+      payType: PayType
+      baseAmount: number
+      effectiveFrom: string
+      note?: string | null
+    },
+  ): Promise<EmployeePaySetting> {
+    assertBossSalaryAction(actor.role)
+    const uid = requireUuid(input.userId, '使用者')
+    const payType = assertPayType(input.payType)
+    const baseAmount = Math.round(Number(input.baseAmount))
+    if (!Number.isFinite(baseAmount) || baseAmount < 0) {
+      throw new AppError('基本薪資需為 0 以上整數')
+    }
+    const effectiveFrom = input.effectiveFrom.slice(0, 10)
+    const now = new Date().toISOString()
+    const { data: existing } = await sb()
+      .from('employee_pay_settings')
+      .select('id')
+      .eq('user_id', uid)
+      .eq('effective_from', effectiveFrom)
+      .maybeSingle()
+
+    const payload = {
+      user_id: uid,
+      pay_type: payType,
+      base_amount: baseAmount,
+      effective_from: effectiveFrom,
+      note: input.note?.trim() || null,
+      updated_by: actor.id,
+      updated_at: now,
+    }
+
+    const query = existing?.id
+      ? sb()
+          .from('employee_pay_settings')
+          .update(payload)
+          .eq('id', existing.id)
+          .select(
+            'id, organization_id, user_id, pay_type, base_amount, effective_from, note, updated_by, created_at, updated_at',
+          )
+          .single()
+      : sb()
+          .from('employee_pay_settings')
+          .insert(payload)
+          .select(
+            'id, organization_id, user_id, pay_type, base_amount, effective_from, note, updated_by, created_at, updated_at',
+          )
+          .single()
+
+    const { data, error } = await query
+    if (error) throw new AppError(toUserMessage(error, '無法儲存薪資設定'))
+    const row = mapPaySetting(data)
+    await this.appendAuditLog(actor, {
+      action: 'salary.setting',
+      targetType: 'employee_pay_settings',
+      targetId: row.id,
+      after: row,
+    })
+    // keep profiles.pay_type in sync for display
+    await sb().from('profiles').update({ pay_type: payType }).eq('id', uid)
+    return row
+  },
+
+  async listSalaryEntries(
+    actor: AppUser,
+    input: { year: number; month: number; userId?: string },
+  ): Promise<SalaryEntry[]> {
+    let q = sb()
+      .from('salary_entries')
+      .select(
+        'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at',
+      )
+      .eq('period_year', input.year)
+      .eq('period_month', input.month)
+      .order('entry_date', { ascending: true })
+      .limit(500)
+    if (input.userId) {
+      const uid = requireUuid(input.userId, '使用者')
+      if (actor.role !== 'boss' && actor.id !== uid) {
+        throw new AppError('只能查看自己的薪資')
+      }
+      q = q.eq('user_id', uid)
+    } else if (actor.role !== 'boss') {
+      q = q.eq('user_id', actor.id)
+    }
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入薪資明細'))
+    return (data ?? []).map((row) => mapSalaryEntry(row))
+  },
+
+  async createSalaryEntry(
+    actor: AppUser,
+    input: {
+      userId: string
+      userName: string
+      entryDate: string
+      category: SalaryEntryCategory
+      amount: number
+      title: string
+      note?: string | null
+      siteId?: string | null
+      siteName?: string | null
+      status?: SalaryEntryStatus
+    },
+  ): Promise<SalaryEntry> {
+    assertBossSalaryAction(actor.role)
+    const uid = requireUuid(input.userId, '使用者')
+    const category = assertSalaryCategory(input.category)
+    const amount = assertSalaryAmount(input.amount, category)
+    const entryDate = input.entryDate.slice(0, 10)
+    const { year, month } = periodFromDate(entryDate)
+    const title = input.title.trim()
+    if (!title) throw new AppError('請填項目名稱')
+    const status = input.status ?? 'pending'
+    const { data, error } = await sb()
+      .from('salary_entries')
+      .insert({
+        user_id: uid,
+        user_name: input.userName.trim() || '員工',
+        period_year: year,
+        period_month: month,
+        entry_date: entryDate,
+        category,
+        amount,
+        title,
+        note: input.note?.trim() || null,
+        site_id: input.siteId || null,
+        site_name: input.siteName?.trim() || null,
+        status,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法新增薪資項目'))
+    const row = mapSalaryEntry(data)
+    await this.appendAuditLog(actor, {
+      action: 'salary.entry.create',
+      targetType: 'salary_entry',
+      targetId: row.id,
+      after: row,
+    })
+    return row
+  },
+
+  async updateSalaryEntryStatus(
+    actor: AppUser,
+    input: {
+      id: string
+      status: 'confirmed' | 'paid' | 'cancelled' | 'pending'
+      reason?: string | null
+    },
+  ): Promise<SalaryEntry> {
+    assertBossSalaryAction(actor.role)
+    const id = requireUuid(input.id, '薪資項目')
+    const { data: current, error: loadError } = await sb()
+      .from('salary_entries')
+      .select(
+        'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at',
+      )
+      .eq('id', id)
+      .single()
+    if (loadError || !current) {
+      throw new AppError(toUserMessage(loadError, '找不到薪資項目'))
+    }
+    const before = mapSalaryEntry(current)
+    const now = new Date().toISOString()
+    const patch: Record<string, unknown> = {
+      status: input.status,
+      updated_at: now,
+    }
+    if (input.status === 'confirmed') {
+      if (!canConfirmSalaryEntry(before.status)) {
+        throw new AppError('此狀態不可確認')
+      }
+      patch.confirmed_by = actor.id
+      patch.confirmed_at = now
+    } else if (input.status === 'paid') {
+      if (!canMarkSalaryPaid(before.status)) {
+        throw new AppError('僅已確認項目可標記支付')
+      }
+      patch.paid_by = actor.id
+      patch.paid_at = now
+    } else if (input.status === 'cancelled') {
+      patch.cancelled_by = actor.id
+      patch.cancelled_at = now
+      patch.cancel_reason = input.reason?.trim() || null
+    } else if (input.status === 'pending') {
+      if (before.status === 'confirmed' || before.status === 'paid') {
+        throw new AppError('已確認／已支付不可直接退回；請用更正')
+      }
+    }
+    const { data, error } = await sb()
+      .from('salary_entries')
+      .update(patch)
+      .eq('id', id)
+      .select(
+        'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新薪資狀態'))
+    const row = mapSalaryEntry(data)
+    await this.appendAuditLog(actor, {
+      action: `salary.entry.${input.status}`,
+      targetType: 'salary_entry',
+      targetId: row.id,
+      before,
+      after: row,
+    })
+    return row
+  },
+
+  async correctSalaryEntry(
+    actor: AppUser,
+    input: {
+      id: string
+      amount: number
+      title?: string
+      note?: string | null
+      reason: string
+    },
+  ): Promise<SalaryEntry> {
+    assertBossSalaryAction(actor.role)
+    const id = requireUuid(input.id, '薪資項目')
+    const reason = assertCorrectionReason(input.reason)
+    const { data: current, error: loadError } = await sb()
+      .from('salary_entries')
+      .select(
+        'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at',
+      )
+      .eq('id', id)
+      .single()
+    if (loadError || !current) {
+      throw new AppError(toUserMessage(loadError, '找不到薪資項目'))
+    }
+    const before = mapSalaryEntry(current)
+    if (before.status !== 'confirmed' && before.status !== 'paid') {
+      throw new AppError('僅已確認／已支付項目需走更正流程')
+    }
+    const amount = assertSalaryAmount(input.amount, before.category)
+    const patch = {
+      amount,
+      title: input.title?.trim() || before.title,
+      note: input.note !== undefined ? input.note?.trim() || null : before.note,
+      updated_at: new Date().toISOString(),
+    }
+    const { data, error } = await sb()
+      .from('salary_entries')
+      .update(patch)
+      .eq('id', id)
+      .select(
+        'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更正薪資'))
+    const after = mapSalaryEntry(data)
+    const { error: corrError } = await sb()
+      .from('salary_entry_corrections')
+      .insert({
+        salary_entry_id: id,
+        before_json: JSON.stringify(before),
+        after_json: JSON.stringify(after),
+        reason,
+        corrected_by: actor.id,
+      })
+    if (corrError) {
+      throw new AppError(toUserMessage(corrError, '更正紀錄寫入失敗'))
+    }
+    await this.appendAuditLog(actor, {
+      action: 'salary.entry.correct',
+      targetType: 'salary_entry',
+      targetId: id,
+      before,
+      after,
+      message: reason,
+    })
+    return after
   },
 
   async clockIn(input: {
