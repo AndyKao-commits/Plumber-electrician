@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { clearPostLoginRedirect } from '@/components/RequireAuth'
 import type { AppUser } from '@/domain/types'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
@@ -67,11 +68,14 @@ export function useUser() {
 
   const logoutMutation = useMutation({
     mutationFn: async () => {
+      clearPostLoginRedirect()
       if (formal) await supabaseRepos.signOut()
       localDb.setSessionUserId(null)
-      queryClient.clear()
     },
-    onSuccess: () => queryClient.setQueryData(userKeys.me(), null),
+    onSuccess: () => {
+      queryClient.clear()
+      queryClient.setQueryData(userKeys.me(), null)
+    },
   })
 
   const bindLineMutation = useMutation({
