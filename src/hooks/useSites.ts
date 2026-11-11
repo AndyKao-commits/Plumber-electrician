@@ -116,6 +116,13 @@ export function useSites() {
     },
   })
 
+  async function getSiteDeleteImpact(siteId: string) {
+    if (!user) throw new Error('尚未登入')
+    return formal
+      ? supabaseRepos.getSiteDeleteImpact(user, siteId)
+      : localDb.getSiteDeleteImpact(siteId)
+  }
+
   return {
     sites: listQuery.data ?? [],
     isLoading: listQuery.isLoading,
@@ -131,6 +138,7 @@ export function useSites() {
     deleteSite: deleteMutation.mutateAsync,
     isDeletingSite: deleteMutation.isPending,
     deleteSiteError: deleteMutation.error,
+    getSiteDeleteImpact,
   }
 }
 

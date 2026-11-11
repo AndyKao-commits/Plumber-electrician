@@ -194,6 +194,7 @@ button {
   appearance: none;
   border: 2px solid transparent;
   border-radius: 14px;
+  min-height: 48px;
   padding: 14px 18px;
   font-weight: 800;
   letter-spacing: 0.03em;
@@ -203,6 +204,13 @@ button {
     background 160ms ease,
     border-color 160ms ease,
     box-shadow 160ms ease;
+}
+
+.btn-secondary {
+  background: #fff;
+  border-color: color-mix(in srgb, var(--steel) 35%, var(--line));
+  color: var(--steel);
+  box-shadow: none;
 }
 
 .btn:active {

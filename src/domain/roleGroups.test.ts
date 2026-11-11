@@ -7,10 +7,11 @@ import {
 
 describe('roleGroups', () => {
   it('maps finance template to member + finance flag', () => {
-    expect(templateToAccessFields('finance')).toEqual({
-      accessTemplate: 'member',
-      financeAuthorized: true,
-    })
+    const fields = templateToAccessFields('finance')
+    expect(fields.accessTemplate).toBe('member')
+    expect(fields.financeAuthorized).toBe(true)
+    expect(fields.features.expenses).toBe(true)
+    expect(fields.features.site_delete).toBe(false)
   })
 
   it('permissionRoleOf prefers accessTemplate for employees', () => {

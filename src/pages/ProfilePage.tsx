@@ -36,6 +36,7 @@ export function ProfilePage() {
   const [bindExpiresAt, setBindExpiresAt] = useState<string | null>(null)
   const [showFallback, setShowFallback] = useState(false)
   const [lineLoginError, setLineLoginError] = useState<string | null>(null)
+  const [lineFlash, setLineFlash] = useState<string | null>(null)
   const lineUserId = lineDraft ?? user?.lineUserId ?? ''
   const lineLoginReady = isLineLoginConfigured()
 
@@ -108,14 +109,24 @@ export function ProfilePage() {
 
   async function onBindLine(event: FormEvent) {
     event.preventDefault()
-    const next = await bindLineUserId(lineUserId.trim() || null)
-    setLineDraft(next.lineUserId ?? '')
+    setLineFlash(null)
+    try {
+      const next = await bindLineUserId(lineUserId.trim() || null)
+      setLineDraft(next.lineUserId ?? '')
+      setLineFlash(next.lineUserId ? 'LINE 綁定已儲存' : '已解除 LINE 綁定')
+      await refetch()
+    } catch (err) {
+      setLineFlash(null)
+      setLineLoginError(err instanceof Error ? err.message : '綁定失敗')
+    }
   }
 
   async function onCreateBindCode() {
+    setLineFlash(null)
     const result = await createLineBindCode()
     setBindCode(result.code)
     setBindExpiresAt(result.expiresAt)
+    setLineFlash('綁定碼已產生，請在 LINE 傳送')
   }
 
   function onLineLoginBind() {
@@ -145,6 +156,9 @@ export function ProfilePage() {
       {formal ? (
         <section className="panel stack">
           <strong>個人 LINE 綁定</strong>
+          {lineFlash ? (
+            <p style={{ color: 'var(--ok)', margin: 0 }}>{lineFlash}</p>
+          ) : null}
           {user.lineUserId ? (
             <div className="site-link stack">
               <strong style={{ margin: 0 }}>已綁定</strong>
@@ -158,10 +172,21 @@ export function ProfilePage() {
                 onClick={() => {
                   setLineDraft('')
                   setBindCode(null)
-                  void bindLineUserId(null).then(() => setLineDraft(null))
+                  setLineFlash(null)
+                  void bindLineUserId(null)
+                    .then(() => {
+                      setLineDraft(null)
+                      setLineFlash('已解除 LINE 綁定')
+                      return refetch()
+                    })
+                    .catch((err) =>
+                      setLineLoginError(
+                        err instanceof Error ? err.message : '解除失敗',
+                      ),
+                    )
                 }}
               >
-                解除綁定
+                {isBindingLine ? '處理中…' : '解除綁定'}
               </button>
             </div>
           ) : (

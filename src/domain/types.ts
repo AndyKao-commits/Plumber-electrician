@@ -111,8 +111,15 @@ export interface AppUser {
   financeAuthorized?: boolean
   /** Boss-assigned display name for identity group */
   roleGroupName?: string | null
+  roleGroupId?: string | null
   /** Spec-role template used for permission checks (employees) */
   accessTemplate?: 'owner' | 'admin' | 'member' | null
+  /** Features inherited from role group (optional cache) */
+  features?: Partial<import('@/domain/featureAccess').FeatureMap> | null
+  /** Per-user overrides on top of role group */
+  permissionOverrides?: Partial<
+    import('@/domain/featureAccess').FeatureMap
+  > | null
   createdAt: string
 }
 

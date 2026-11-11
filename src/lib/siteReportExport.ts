@@ -5,6 +5,7 @@ import type {
   DailyLog,
   Quotation,
   QuotationItem,
+  SiteDefect,
   SiteProject,
 } from '@/domain/types'
 import {
@@ -27,8 +28,11 @@ export type SiteReportInput = {
   site: SiteProject
   logs: DailyLog[]
   reports: ConstructionReport[]
+  defects: SiteDefect[]
   acceptedQuotes: AcceptedQuoteBundle[]
   photos: SitePhotoPdfItem[]
+  rangeStart: string
+  rangeEnd: string
 }
 
 export { downloadBlob }
@@ -61,8 +65,48 @@ function statusLabel(status: SiteProject['status']): string {
   }
 }
 
+function inRange(isoOrDate: string, start: string, end: string): boolean {
+  const day = isoOrDate.slice(0, 10)
+  return day >= start && day <= end
+}
+
+export function filterSiteReportInput(
+  input: SiteReportInput,
+): SiteReportInput {
+  const { rangeStart, rangeEnd } = input
+  return {
+    ...input,
+    logs: input.logs.filter((l) => inRange(l.logDate, rangeStart, rangeEnd)),
+    reports: input.reports.filter((r) =>
+      inRange(r.createdAt, rangeStart, rangeEnd),
+    ),
+    defects: input.defects.filter((d) =>
+      inRange(d.createdAt, rangeStart, rangeEnd),
+    ),
+    photos: input.photos.filter((p) =>
+      inRange(p.createdAt, rangeStart, rangeEnd),
+    ),
+    acceptedQuotes: input.acceptedQuotes,
+  }
+}
+
+export function assertSiteReportHasContent(input: SiteReportInput): void {
+  const filtered = filterSiteReportInput(input)
+  const has =
+    filtered.logs.length > 0 ||
+    filtered.reports.length > 0 ||
+    filtered.defects.length > 0 ||
+    filtered.photos.length > 0 ||
+    filtered.acceptedQuotes.length > 0
+  if (!has) {
+    throw new Error(
+      '選定區間沒有可匯出的日誌、回報、缺失、照片或已接受報價。請調整日期或先補資料。',
+    )
+  }
+}
+
 function coverHtml(input: SiteReportInput, generatedAt: string): string {
-  const { site, logs, reports, acceptedQuotes, photos } = input
+  const { site, logs, reports, defects, acceptedQuotes, photos } = input
   const publishedLogs = logs.filter((l) => l.status === 'published').length
   return `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8" /><style>${PDF_SHEET_STYLE}</style></head><body>
 <div class="pdf-sheet">
@@ -72,12 +116,14 @@ function coverHtml(input: SiteReportInput, generatedAt: string): string {
   <p>客戶：${escapeHtml(site.customerName || '—')}</p>
   <p>地址：${escapeHtml(site.address || '—')}</p>
   <p>保固到期：${escapeHtml(site.warrantyUntil || '未設定')}</p>
+  <p>報告區間：${escapeHtml(input.rangeStart)} ～ ${escapeHtml(input.rangeEnd)}</p>
   <p class="muted">匯出時間（台北）：${escapeHtml(generatedAt)}</p>
   <h2>資料摘要</h2>
   <table>
     <tr><th>項目</th><th>數量</th></tr>
     <tr><td>施工日誌</td><td>${logs.length}（已發布 ${publishedLogs}）</td></tr>
     <tr><td>施工回報</td><td>${reports.length}</td></tr>
+    <tr><td>缺失紀錄</td><td>${defects.length}</td></tr>
     <tr><td>已接受報價</td><td>${acceptedQuotes.length}</td></tr>
     <tr><td>本報告照片</td><td>${photos.length}（上限 ${SITE_REPORT_PHOTO_LIMIT}）</td></tr>
   </table>
@@ -87,10 +133,7 @@ function coverHtml(input: SiteReportInput, generatedAt: string): string {
 }
 
 function chunkTextPages(title: string, blocks: string[]): string[] {
-  if (blocks.length === 0) {
-    return [`<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8" /><style>${PDF_SHEET_STYLE}</style></head><body>
-<div class="pdf-sheet"><h2>${escapeHtml(title)}</h2><p class="muted">尚無資料</p></div></body></html>`]
-  }
+  if (blocks.length === 0) return []
   const pages: string[] = []
   const perPage = 8
   for (let i = 0; i < blocks.length; i += perPage) {
@@ -128,11 +171,22 @@ function logsAndReportsHtml(input: SiteReportInput): string[] {
   ]
 }
 
+function defectsHtml(defects: SiteDefect[]): string[] {
+  const blocks = [...defects]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map((d) => {
+      const when = new Date(d.createdAt).toLocaleString('zh-TW', {
+        timeZone: 'Asia/Taipei',
+      })
+      return `<h3>${escapeHtml(d.title)} · ${escapeHtml(d.status)}</h3>
+<p class="muted">${escapeHtml(when)} · ${d.severity === 'safety' ? '安全缺失' : '一般缺失'}</p>
+<p>${escapeHtml((d.detail || '').trim() || '（無說明）').replace(/\n/g, '<br/>')}</p>`
+    })
+  return chunkTextPages('缺失紀錄', blocks)
+}
+
 function quotesHtml(bundles: AcceptedQuoteBundle[]): string[] {
-  if (bundles.length === 0) {
-    return [`<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8" /><style>${PDF_SHEET_STYLE}</style></head><body>
-<div class="pdf-sheet"><h2>已接受報價</h2><p class="muted">尚無已接受報價</p></div></body></html>`]
-  }
+  if (bundles.length === 0) return []
   return bundles.map((b) => {
     const q = b.quote
     const rows =
@@ -197,15 +251,18 @@ function photoPageHtml(
 export async function generateSiteReportPdfBlob(
   input: SiteReportInput,
 ): Promise<Blob> {
-  const photos = input.photos.slice(0, SITE_REPORT_PHOTO_LIMIT)
+  const filtered = filterSiteReportInput(input)
+  assertSiteReportHasContent(filtered)
+  const photos = filtered.photos.slice(0, SITE_REPORT_PHOTO_LIMIT)
   const generatedAt = new Date().toLocaleString('zh-TW', {
     timeZone: 'Asia/Taipei',
   })
   const pages = [
-    coverHtml({ ...input, photos }, generatedAt),
-    ...logsAndReportsHtml(input),
-    ...quotesHtml(input.acceptedQuotes),
-    ...photos.map((p, i) => photoPageHtml(input.site.name, p, i, photos.length)),
+    coverHtml({ ...filtered, photos }, generatedAt),
+    ...logsAndReportsHtml(filtered),
+    ...defectsHtml(filtered.defects),
+    ...quotesHtml(filtered.acceptedQuotes),
+    ...photos.map((p, i) => photoPageHtml(filtered.site.name, p, i, photos.length)),
   ]
   return htmlPagesToPdfBlob(pages)
 }

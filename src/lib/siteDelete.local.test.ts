@@ -18,7 +18,7 @@ describe('site delete local', () => {
     })
     expect(localDb.getSite(id)?.name).toBe('待刪案件')
 
-    expect(() => localDb.deleteSite(employee, id)).toThrow(/僅老闆/)
+    expect(() => localDb.deleteSite(employee, id)).toThrow(/無權使用/)
     localDb.deleteSite(boss, id)
     expect(localDb.getSite(id)).toBeNull()
   })

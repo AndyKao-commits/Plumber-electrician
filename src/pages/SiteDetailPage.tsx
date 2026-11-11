@@ -1,7 +1,10 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { hasFeature } from '@/domain/featureAccess'
 import { SITE_STATUS_LABELS } from '@/domain/siteStatus'
 import type { DefectSeverity } from '@/domain/types'
+import { EXPENSE_STATUS_LABELS, RECEIPT_STATUS_LABELS } from '@/domain/fieldFinance'
+import { useFieldFinance } from '@/hooks/useFieldFinance'
 import { useAttendance } from '@/hooks/useAttendance'
 import { useDailyLogs } from '@/hooks/useDailyLogs'
 import { useDefects } from '@/hooks/useDefects'
@@ -24,6 +27,7 @@ import {
   siteReportPdfFilename,
 } from '@/lib/siteReportExport'
 import { supabaseRepos } from '@/lib/supabaseRepos'
+import { taipeiDateString } from '@/lib/time'
 export function SiteDetailPage() {
   const { siteId } = useParams()
   const navigate = useNavigate()
@@ -35,8 +39,11 @@ export function SiteDetailPage() {
     isUpdatingStatus,
     deleteSite,
     isDeletingSite,
+    getSiteDeleteImpact,
   } = useSites()
   const { user, directory } = useUser()
+  const { expenses, receipts } = useFieldFinance(user?.id)
+  const canDeleteSite = hasFeature(user, 'site_delete')
   const queryClient = useQueryClient()
   const { openShift, assignSite, isAssigningSite } = useAttendance(user?.id)
   const formal = isFormalMode()
@@ -67,6 +74,8 @@ export function SiteDetailPage() {
   const [logDrafts, setLogDrafts] = useState<Record<string, string>>({})
   const [exportingReport, setExportingReport] = useState(false)
   const [reportPhotoIds, setReportPhotoIds] = useState<Record<string, boolean>>({})
+  const [reportFrom, setReportFrom] = useState('')
+  const [reportTo, setReportTo] = useState('')
 
   const quotesQuery = useQuery({
     queryKey: ['quotes', 'site', siteId],
@@ -81,6 +90,34 @@ export function SiteDetailPage() {
     () => photos.filter((p) => p.siteId === siteId && p.status === 'linked'),
     [photos, siteId],
   )
+  const relatedExpenses = useMemo(
+    () => expenses.filter((e) => e.siteId === siteId),
+    [expenses, siteId],
+  )
+  const relatedReceipts = useMemo(
+    () => receipts.filter((r) => r.siteId === siteId),
+    [receipts, siteId],
+  )
+  const expensePending = relatedExpenses
+    .filter((e) => e.status === 'pending_review')
+    .reduce((s, e) => s + Number(e.amount || 0), 0)
+  const expenseConfirmed = relatedExpenses
+    .filter((e) => e.status === 'confirmed')
+    .reduce((s, e) => s + Number(e.amount || 0), 0)
+  const receiptPending = relatedReceipts
+    .filter((r) => r.status === 'pending_confirm')
+    .reduce((s, r) => s + Number(r.amount || 0), 0)
+  const receiptConfirmed = relatedReceipts
+    .filter((r) => r.status === 'confirmed')
+    .reduce((s, r) => s + Number(r.amount || 0), 0)
+
+  useEffect(() => {
+    if (!site) return
+    if (!reportFrom) {
+      setReportFrom((site.createdAt || '').slice(0, 10) || taipeiDateString())
+    }
+    if (!reportTo) setReportTo(taipeiDateString())
+  }, [site, reportFrom, reportTo])
   const sitePhotos = useMemo(() => allSitePhotos.slice(0, 8), [allSitePhotos])
   const [exportingPdf, setExportingPdf] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -273,22 +310,35 @@ export function SiteDetailPage() {
             </div>
           </div>
         ) : null}
-        {isBoss ? (
+        {canDeleteSite ? (
           <button
             type="button"
             className="btn btn-danger"
             disabled={isDeletingSite}
             onClick={() => {
-              if (
-                !window.confirm(
-                  '確定刪除整個案件？照片會一併刪除，且無法復原。',
-                )
-              ) {
-                return
-              }
-              void deleteSite(site.id)
-                .then(() => navigate('/sites'))
-                .catch((e) => window.alert((e as Error).message))
+              void (async () => {
+                try {
+                  const impact = await getSiteDeleteImpact(site.id)
+                  if (impact.blocked) {
+                    window.alert(
+                      `${impact.blockReason || '不可刪除'}\n\n可改按「結案」封存案件。`,
+                    )
+                    return
+                  }
+                  const lines = [
+                    `將刪除案件「${impact.siteName}」`,
+                    '',
+                    ...impact.handlingLines,
+                    '',
+                    '此操作無法復原。確定繼續？',
+                  ]
+                  if (!window.confirm(lines.join('\n'))) return
+                  await deleteSite(site.id)
+                  navigate('/sites')
+                } catch (e) {
+                  window.alert((e as Error).message)
+                }
+              })()
             }}
           >
             {isDeletingSite ? '刪除中…' : '刪除整個案件'}
@@ -355,6 +405,7 @@ export function SiteDetailPage() {
                     site,
                     logs,
                     reports,
+                    defects,
                     acceptedQuotes,
                     photos: selectedReportPhotos.map((p) => ({
                       previewUrl: p.previewUrl!,
@@ -362,6 +413,8 @@ export function SiteDetailPage() {
                       createdAt: p.createdAt,
                       uploaderName: p.uploaderName,
                     })),
+                    rangeStart: reportFrom || (site.createdAt || '').slice(0, 10),
+                    rangeEnd: reportTo || taipeiDateString(),
                   })
                   downloadBlob(blob, siteReportPdfFilename(site.name))
                 } catch (e) {
@@ -375,11 +428,72 @@ export function SiteDetailPage() {
             {exportingReport ? '匯出報告中…' : '匯出施工報告'}
           </button>
         </div>
-        {!formal ? (
+        {formal ? (
+          <div className="grid-2">
+            <div className="field">
+              <label htmlFor="report-from">報告起始日</label>
+              <input
+                id="report-from"
+                type="date"
+                value={reportFrom}
+                onChange={(e) => setReportFrom(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="report-to">報告結束日</label>
+              <input
+                id="report-to"
+                type="date"
+                value={reportTo}
+                onChange={(e) => setReportTo(e.target.value)}
+              />
+            </div>
+          </div>
+        ) : (
           <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-            施工報告匯出需正式模式（含日誌／回報／已接受報價／勾選照片）。
+            施工報告匯出需正式模式（含日誌／回報／缺失／照片）。若無資料不會產生空白 PDF。
           </p>
-        ) : null}
+        )}
+      </section>
+
+      <section className="panel stack">
+        <div className="row between">
+          <strong>相關支出／收款</strong>
+          <Link className="btn btn-ghost" to="/expenses">
+            到收支管理
+          </Link>
+        </div>
+        <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
+          顯示財務資料中標記此工地的紀錄（非複本）。待審支出 NT$
+          {expensePending.toLocaleString()} · 已確認 NT$
+          {expenseConfirmed.toLocaleString()}；待確認收款 NT$
+          {receiptPending.toLocaleString()} · 已確認 NT$
+          {receiptConfirmed.toLocaleString()}
+        </p>
+        {relatedExpenses.length === 0 && relatedReceipts.length === 0 ? (
+          <p className="muted" style={{ margin: 0 }}>尚無標記此工地的收支</p>
+        ) : (
+          <>
+            {relatedExpenses.slice(0, 8).map((e) => (
+              <div key={e.id} className="site-link">
+                <strong style={{ margin: 0 }}>{e.item}</strong>
+                <p className="muted" style={{ margin: 0 }}>
+                  支出 · NT${Number(e.amount).toLocaleString()} ·{' '}
+                  {EXPENSE_STATUS_LABELS[e.status]}
+                </p>
+              </div>
+            ))}
+            {relatedReceipts.slice(0, 8).map((r) => (
+              <div key={r.id} className="site-link">
+                <strong style={{ margin: 0 }}>{r.sourceNote || '收款'}</strong>
+                <p className="muted" style={{ margin: 0 }}>
+                  收款 · NT${Number(r.amount).toLocaleString()} ·{' '}
+                  {RECEIPT_STATUS_LABELS[r.status]}
+                </p>
+              </div>
+            ))}
+          </>
+        )}
       </section>
 
       <section className="panel stack">
