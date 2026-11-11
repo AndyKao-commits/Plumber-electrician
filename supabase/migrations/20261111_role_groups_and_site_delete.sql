@@ -52,6 +52,10 @@ create trigger trg_set_org_org_role_groups
 create or replace function public.protect_profile_privileged_columns()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
+  if current_setting('app.allow_privileged_profile_update', true) = 'on' then
+    return new;
+  end if;
+
   if new.id is distinct from old.id
      or new.organization_id is distinct from old.organization_id
      or new.role is distinct from old.role
@@ -102,6 +106,8 @@ begin
   if v_row.role::text in ('boss', 'owner') then
     raise exception '不可變更老闆帳號的身分組';
   end if;
+
+  perform set_config('app.allow_privileged_profile_update', 'on', true);
 
   update public.profiles
   set
@@ -223,6 +229,8 @@ begin
     raise exception '不可變更老闆帳號的身分組';
   end if;
 
+  perform set_config('app.allow_privileged_profile_update', 'on', true);
+
   update public.profiles
   set
     role_group_name = nullif(trim(p_role_group_name), ''),
@@ -244,6 +252,10 @@ grant execute on function public.boss_set_member_access(uuid, text, text, boolea
 create or replace function public.protect_profile_privileged_columns()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
+  if current_setting('app.allow_privileged_profile_update', true) = 'on' then
+    return new;
+  end if;
+
   if new.id is distinct from old.id
      or new.organization_id is distinct from old.organization_id
      or new.role is distinct from old.role
