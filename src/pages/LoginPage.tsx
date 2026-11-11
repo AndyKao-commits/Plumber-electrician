@@ -1,5 +1,9 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
+import {
+  clearPostLoginRedirect,
+  peekPostLoginRedirect,
+} from '@/components/RequireAuth'
 import { PRODUCT, ROLES } from '@/domain/rules'
 import { useUser } from '@/hooks/useUser'
 import { isSupabaseConfigured, supabaseUrl } from '@/lib/supabase'
@@ -29,15 +33,20 @@ export function LoginPage() {
   const [organizationName, setOrganizationName] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const location = useLocation()
-  const redirectTo =
+  const fromState =
     typeof (location.state as { from?: unknown } | null)?.from === 'string'
       ? String((location.state as { from: string }).from)
-      : '/'
+      : null
 
   if (!isLoading && user) {
     const pendingLineBind =
       typeof sessionStorage !== 'undefined' &&
       Boolean(sessionStorage.getItem('line_bind_pending_user_id'))
+    const redirectTo =
+      (fromState && fromState !== '/login' ? fromState : null) ||
+      peekPostLoginRedirect() ||
+      '/'
+    clearPostLoginRedirect()
     return (
       <Navigate
         to={pendingLineBind ? '/line-bind-callback' : redirectTo || '/'}

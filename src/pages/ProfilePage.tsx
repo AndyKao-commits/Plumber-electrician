@@ -97,7 +97,7 @@ export function ProfilePage() {
           <div>
             <strong>個人資料</strong>
             <p className="muted" style={{ margin: '4px 0 0' }}>
-              暱稱、生日、工種、到職日；老闆可停用帳號。
+              員工可自行修改姓名、暱稱、生日、工種、到職日與備註；老闆可停用帳號。
             </p>
           </div>
           <span className="badge steel">{dataModeLabel()}</span>
