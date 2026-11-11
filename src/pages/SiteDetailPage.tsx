@@ -87,7 +87,10 @@ export function SiteDetailPage() {
   })
 
   const allSitePhotos = useMemo(
-    () => photos.filter((p) => p.siteId === siteId && p.status === 'linked'),
+    () =>
+      photos
+        .filter((p) => p.siteId === siteId && p.status === 'linked' && p.previewUrl)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [photos, siteId],
   )
   const relatedExpenses = useMemo(
@@ -121,24 +124,37 @@ export function SiteDetailPage() {
   const sitePhotos = useMemo(() => allSitePhotos.slice(0, 8), [allSitePhotos])
   const [exportingPdf, setExportingPdf] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [photoSelectReady, setPhotoSelectReady] = useState(false)
+
+  useEffect(() => {
+    if (photoSelectReady || allSitePhotos.length === 0) return
+    const next: Record<string, boolean> = {}
+    for (const p of allSitePhotos.slice(0, SITE_REPORT_PHOTO_LIMIT)) {
+      next[p.id] = true
+    }
+    setReportPhotoIds(next)
+    setPhotoSelectReady(true)
+  }, [allSitePhotos, photoSelectReady])
+
   const selectedReportPhotos = useMemo(
-    () => allSitePhotos.filter((p) => reportPhotoIds[p.id] && p.previewUrl),
+    () =>
+      allSitePhotos
+        .filter((p) => reportPhotoIds[p.id] && p.previewUrl)
+        .slice(0, SITE_REPORT_PHOTO_LIMIT),
     [allSitePhotos, reportPhotoIds],
   )
   const selectedReportCount = selectedReportPhotos.length
-  function toggleReportPhoto(photoId: string) {
+
+  function toggleReportPhoto(id: string) {
     setReportPhotoIds((prev) => {
-      const next = { ...prev }
-      if (next[photoId]) {
-        delete next[photoId]
-        return next
-      }
-      if (Object.keys(next).length >= SITE_REPORT_PHOTO_LIMIT) {
-        window.alert(`施工報告最多選 ${SITE_REPORT_PHOTO_LIMIT} 張照片`)
+      const on = Boolean(prev[id])
+      if (on) return { ...prev, [id]: false }
+      const current = Object.values(prev).filter(Boolean).length
+      if (current >= SITE_REPORT_PHOTO_LIMIT) {
+        window.alert(`報告照片最多 ${SITE_REPORT_PHOTO_LIMIT} 張`)
         return prev
       }
-      next[photoId] = true
-      return next
+      return { ...prev, [id]: true }
     })
   }
 
@@ -556,6 +572,76 @@ export function SiteDetailPage() {
                       display: 'block',
                       outline: reportPhotoIds[photo.id]
                         ? '2px solid var(--amber)'
+                        : 'none',
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          </>
+        )}
+      </section>
+
+      <section className="panel stack">
+        <strong>
+          施工報告照片（已選 {selectedReportCount}/{SITE_REPORT_PHOTO_LIMIT}）
+        </strong>
+        {allSitePhotos.length === 0 ? (
+          <p className="muted" style={{ margin: 0 }}>
+            尚無照片可納入報告
+          </p>
+        ) : (
+          <>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  const next: Record<string, boolean> = {}
+                  for (const p of allSitePhotos.slice(0, SITE_REPORT_PHOTO_LIMIT)) {
+                    next[p.id] = true
+                  }
+                  setReportPhotoIds(next)
+                }}
+              >
+                選最近 {Math.min(SITE_REPORT_PHOTO_LIMIT, allSitePhotos.length)} 張
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setReportPhotoIds({})}
+              >
+                清空選取
+              </button>
+            </div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              {allSitePhotos.slice(0, 80).map((photo) => (
+                <label
+                  key={photo.id}
+                  style={{
+                    position: 'relative',
+                    display: 'block',
+                    width: 88,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(reportPhotoIds[photo.id])}
+                    onChange={() => toggleReportPhoto(photo.id)}
+                    style={{ position: 'absolute', top: 6, left: 6, zIndex: 1 }}
+                  />
+                  <img
+                    src={photo.previewUrl!}
+                    alt=""
+                    style={{
+                      width: 88,
+                      height: 88,
+                      objectFit: 'cover',
+                      borderRadius: 8,
+                      display: 'block',
+                      outline: reportPhotoIds[photo.id]
+                        ? '2px solid var(--steel, #1f3a5f)'
                         : 'none',
                     }}
                   />
