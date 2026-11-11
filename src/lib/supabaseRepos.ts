@@ -1595,24 +1595,15 @@ export const supabaseRepos = {
       p_permission_overrides: input.permissionOverrides ?? null,
     })
     if (error) {
-      // Older RPC without override args
-      const legacy = await sb().rpc('boss_set_member_access', {
-        p_target_user_id: tid,
-        p_role_group_name: input.roleGroupName,
-        p_access_template: input.accessTemplate,
-        p_finance_authorized: input.financeAuthorized,
-      })
-      if (legacy.error) {
-        throw new AppError(toUserMessage(legacy.error, '無法設定權限'))
+      const msg = error.message || ''
+      if (/boss_set_member_access|schema cache|Could not find the function/i.test(msg)) {
+        throw new AppError(
+          '後端尚未安裝權限設定函式。請在 Supabase 執行 migration：20261111_boss_set_member_access_apply.sql 後再試。',
+        )
       }
-      const mapped = mapUser(legacy.data as Parameters<typeof mapUser>[0])
-      return {
-        ...mapped,
-        features: input.features ?? mapped.features,
-        permissionOverrides:
-          input.permissionOverrides ?? mapped.permissionOverrides,
-      }
+      throw new AppError(toUserMessage(error, '無法設定權限'))
     }
+    if (!data) throw new AppError('無法設定權限')
     const mapped = mapUser(data as Parameters<typeof mapUser>[0])
     await this.appendAuditLog(actor, {
       action: 'permission.update',
