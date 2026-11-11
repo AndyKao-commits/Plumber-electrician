@@ -56,16 +56,6 @@ export function SiteDetailPage() {
     [logs],
   )
 
-  const purchasesQuery = useQuery({
-    queryKey: ['purchases', 'site', siteId],
-    enabled: formal && Boolean(user && siteId),
-    queryFn: async () => {
-      if (!user) return []
-      const all = await supabaseRepos.listPurchases(user)
-      return all.filter((p) => p.siteId === siteId).slice(0, 8)
-    },
-  })
-
   const quotesQuery = useQuery({
     queryKey: ['quotes', 'site', siteId],
     enabled: formal && Boolean(siteId),
@@ -217,14 +207,11 @@ export function SiteDetailPage() {
           <Link className="btn btn-steel" to={`/reports?siteId=${site.id}`}>
             施工回報
           </Link>
-          <Link className="btn btn-ghost" to={`/photos`}>
+          <Link className="btn btn-ghost" to={`/photos?siteId=${site.id}`}>
             施工照片
           </Link>
-          <Link className="btn btn-ghost" to={`/purchases`}>
-            材料採購
-          </Link>
-          <Link className="btn btn-ghost" to={`/quotes`}>
-            報價
+          <Link className="btn btn-ghost" to={`/expenses`}>
+            支出／收款
           </Link>
         </div>
       </section>
@@ -424,37 +411,20 @@ export function SiteDetailPage() {
         )}
       </section>
 
-      <section className="panel stack">
-        <div className="row between">
-          <strong>採購</strong>
-          <Link to="/purchases">前往</Link>
-        </div>
-        {(purchasesQuery.data ?? []).length === 0 ? (
-          <p className="muted" style={{ margin: 0 }}>尚無採購紀錄</p>
-        ) : (
-          (purchasesQuery.data ?? []).map((p) => (
-            <p key={p.id} style={{ margin: 0 }}>
-              {p.title || '採購'} · {p.status} · NT${Number(p.finalPayable ?? 0).toLocaleString()}
-            </p>
-          ))
-        )}
-      </section>
-
-      <section className="panel stack">
-        <div className="row between">
-          <strong>報價</strong>
-          <Link to="/quotes">前往</Link>
-        </div>
-        {(quotesQuery.data ?? []).length === 0 ? (
-          <p className="muted" style={{ margin: 0 }}>尚無報價</p>
-        ) : (
-          (quotesQuery.data ?? []).map((q) => (
-            <p key={q.id} style={{ margin: 0 }}>
-              {q.title} · {q.status}
-            </p>
-          ))
-        )}
-      </section>
+      {(quotesQuery.data ?? []).length > 0 ? (
+        <section className="panel stack">
+          <div className="row between">
+            <strong>相關報價</strong>
+            <Link to="/quotes">全部</Link>
+          </div>
+          {(quotesQuery.data ?? []).slice(0, 3).map((q) => (
+            <Link key={q.id} className="site-link" to={`/quotes/${q.id}`}>
+              <h3>{q.title}</h3>
+              <p>{q.workflowStatus || q.status}</p>
+            </Link>
+          ))}
+        </section>
+      ) : null}
 
       {formal ? (
         <section className="panel stack">

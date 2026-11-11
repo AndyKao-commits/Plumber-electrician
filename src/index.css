@@ -339,8 +339,8 @@ button {
   transform: translateX(-50%);
   width: min(690px, calc(100% - 24px));
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
   padding: 8px;
   border-radius: 18px;
   background: rgba(247, 248, 250, 0.92);
@@ -351,9 +351,9 @@ button {
 
 .bottom-nav a {
   text-align: center;
-  padding: 10px 8px;
+  padding: 10px 4px;
   border-radius: 12px;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
   font-weight: 700;
   color: var(--ink-muted);
 }

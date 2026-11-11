@@ -4305,22 +4305,13 @@ getOrgSpendSettings(): OrgSpendSettings {
   },
 
   getShortcutIds(): string[] {
-    const defaults = [
+    // V1.0: home no longer hosts a shortcut grid; More page owns secondary links.
+    const defaults = ['photos', 'quotes', 'todos', 'team', 'profile']
+    const stored = read(KEYS.shortcuts, defaults)
+    const blocked = new Set([
       'sites',
       'cash',
       'clock',
-      'photos',
-      'quotes',
-      'todos',
-      'team',
-      'audit',
-      'settings',
-      'profile',
-      'notices',
-    ]
-    const stored = read(KEYS.shortcuts, defaults)
-    // Migrate away from advanced ERP shortcut ids in V1.0
-    const blocked = new Set([
       'purchase',
       'inventory',
       'petty',
@@ -4330,15 +4321,14 @@ getOrgSpendSettings(): OrgSpendSettings {
       'customers',
       'repairs',
       'reports',
+      'audit',
+      'settings',
+      'notices',
     ])
     const filtered = stored.filter((id) => !blocked.has(id))
-    const merged = [
-      ...new Set([
-        ...filtered,
-        ...defaults.filter((d) => !filtered.includes(d)),
-      ]),
-    ]
-    return merged.length ? merged : defaults
+    return [...new Set([...filtered, ...defaults])].filter(
+      (id) => !blocked.has(id),
+    )
   },
 
   createAssignedTodo(

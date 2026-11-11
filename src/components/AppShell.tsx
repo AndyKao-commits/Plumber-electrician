@@ -84,7 +84,7 @@ export function AppShell() {
           <NavLink to="/sites">工地</NavLink>
           <NavLink to="/expenses">收支</NavLink>
           <NavLink to="/attendance">出勤</NavLink>
-          <NavLink to="/todos">待辦</NavLink>
+          <NavLink to="/more">更多</NavLink>
         </nav>
       ) : null}
     </div>

@@ -47,7 +47,7 @@ export function SettingsPage() {
         <section className="panel stack">
           <strong>額度設定</strong>
           <p className="muted" style={{ margin: 0 }}>
-            僅老闆可調整每日採購、緊急金額上限與零用金回報查核門檻。
+            僅老闆可調整支出審核門檻與每日上限。
           </p>
           <Link to="/">回首頁</Link>
         </section>
@@ -62,7 +62,7 @@ export function SettingsPage() {
           <div>
             <strong>額度設定</strong>
             <p className="muted" style={{ margin: '4px 0 0' }}>
-              每日採購上限、緊急採購額度，以及現場支出／零用金超過多少需回報查核。
+              現場支出超過多少需老闆審核，以及每日／緊急上限。
             </p>
           </div>
           <span className="badge steel">{dataModeLabel()}</span>

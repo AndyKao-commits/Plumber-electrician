@@ -81,19 +81,101 @@ export const BACKUP_TARGETS = {
   rtoHours: 4,
 } as const
 
-/** V1.0 primary shortcuts — excess ERP entries removed from home. */
+/**
+ * V1.0 information architecture
+ * Bottom nav: 首頁 / 工地 / 收支 / 出勤 / 更多
+ * Hidden for good: inventory stocktake, suppliers, petty cash ERP, analytics CRM packs.
+ */
 export const HOME_SHORTCUTS = [
-  { id: 'sites', label: '工地／案件', path: '/sites' },
-  { id: 'cash', label: '支出／收款', path: '/expenses' },
-  { id: 'clock', label: '出勤打卡', path: '/attendance' },
   { id: 'photos', label: '施工照片', path: '/photos' },
   { id: 'quotes', label: '報價', path: '/quotes' },
   { id: 'todos', label: '待辦', path: '/todos' },
   { id: 'team', label: '今日團隊', path: '/team' },
-  { id: 'audit', label: '操作紀錄', path: '/audit' },
-  { id: 'settings', label: '額度設定', path: '/settings' },
   { id: 'profile', label: '個人資料', path: '/profile' },
-  { id: 'notices', label: '通知中心', path: '/notifications' },
+] as const
+
+export const MORE_MENU = [
+  {
+    id: 'work',
+    label: '工作',
+    items: [
+      {
+        id: 'todos',
+        label: '待辦',
+        path: '/todos',
+        description: '今日事項與完成狀態',
+      },
+      {
+        id: 'notices',
+        label: '通知中心',
+        path: '/notifications',
+        description: '站內通知（不推 LINE）',
+      },
+      {
+        id: 'photos',
+        label: '施工照片',
+        path: '/photos',
+        description: '全工地照片歸檔',
+      },
+      {
+        id: 'quotes',
+        label: '報價',
+        path: '/quotes',
+        description: '案件報價與匯出',
+      },
+      {
+        id: 'team',
+        label: '今日團隊',
+        path: '/team',
+        description: '到班狀態與 LINE 綁定',
+      },
+      {
+        id: 'reports',
+        label: '施工回報',
+        path: '/reports',
+        description: '文字回報列表',
+      },
+    ],
+  },
+  {
+    id: 'account',
+    label: '帳號與管理',
+    items: [
+      {
+        id: 'profile',
+        label: '個人資料',
+        path: '/profile',
+        description: '暱稱、工種、到職資訊',
+      },
+      {
+        id: 'settings',
+        label: '額度設定',
+        path: '/settings',
+        description: '審核門檻與每日上限',
+        bossOnly: true,
+      },
+      {
+        id: 'audit',
+        label: '操作紀錄',
+        path: '/audit',
+        description: '敏感操作稽核',
+        bossOnly: true,
+      },
+    ],
+  },
+] as const
+
+/** Routes kept for deep links / LINE but not shown in V1 menus. */
+export const ADVANCED_ERP_PATHS = [
+  '/inventory',
+  '/petty-cash',
+  '/suppliers',
+  '/analytics',
+  '/customers',
+  '/repairs',
+  '/complaints',
+  '/purchases',
+  '/offline-queue',
 ] as const
 
 export type FinalPayableInput = {

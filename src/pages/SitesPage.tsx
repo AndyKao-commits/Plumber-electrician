@@ -2,10 +2,8 @@ import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import type { ProjectKind } from '@/domain/types'
 import { useSites } from '@/hooks/useSites'
-import { useUser } from '@/hooks/useUser'
 
 export function SitesPage() {
-  const { user } = useUser()
   const { sites, createSite, isCreating, isLoading } = useSites()
   const [name, setName] = useState('')
   const [kind, setKind] = useState<ProjectKind>('formal')
@@ -29,9 +27,9 @@ export function SitesPage() {
       <section className="panel stack">
         <div className="row between">
           <div>
-            <strong>工地列表</strong>
+            <strong>工地／案件</strong>
             <p className="muted" style={{ margin: '4px 0 0' }}>
-              每個工地獨立頁面，全員可查看施工與支出紀錄。
+              現場中心：日誌、照片、回報、成員權限。
             </p>
           </div>
           <button
@@ -88,8 +86,7 @@ export function SitesPage() {
               {isCreating ? '建立中…' : '建立工地'}
             </button>
             <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-              全員工程操作權限相同；敏感財務與他人薪資仍受保護
-              {user ? `（目前身分：${user.role}）` : ''}。
+              建立後可在詳情指派師傅、彙整日誌與上傳照片。
             </p>
           </form>
         ) : null}
