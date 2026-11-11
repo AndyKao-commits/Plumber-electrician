@@ -617,6 +617,26 @@ export interface MaterialStock {
   updatedAt: string
 }
 
+/**
+ * REP-002: formal material usage (shared ledger). Deducts once; snapshots unit cost.
+ * Free/warranty repairs still record cost here.
+ */
+export interface MaterialUsage {
+  id: string
+  organizationId: string
+  materialId: string
+  materialName: string
+  qty: number
+  unitCost: number
+  totalCost: number
+  repairCaseId?: string | null
+  siteId?: string | null
+  note?: string | null
+  clientOperationId: string
+  postedAt: string
+  createdBy: string
+}
+
 export interface AppNotice {
   id: string
   organizationId: string

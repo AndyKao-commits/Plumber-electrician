@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type {
   RepairCaseStatus,
+  TaxMode,
   WarrantyAssessmentClassification,
 } from '@/domain/types'
 import { isFormalMode } from '@/lib/dataMode'
@@ -15,6 +16,7 @@ export const repairKeys = {
   visits: (id: string) => ['repair-visits', id] as const,
   warranties: ['warranties'] as const,
   assessments: (id: string) => ['warranty-assessments', id] as const,
+  usages: (id: string) => ['material-usages', id] as const,
 }
 
 export function useRepairs() {
@@ -166,6 +168,55 @@ export function useRepairs() {
     },
   })
 
+  const postUsage = useMutation({
+    mutationFn: async (input: {
+      materialId: string
+      qty: number
+      repairCaseId: string
+      note?: string | null
+      clientOperationId?: string
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      const payload = {
+        materialId: input.materialId,
+        qty: input.qty,
+        repairCaseId: input.repairCaseId,
+        note: input.note || null,
+        clientOperationId:
+          input.clientOperationId ||
+          `usage-${input.repairCaseId}-${input.materialId}-${Date.now()}`,
+      }
+      return formal
+        ? supabaseRepos.postMaterialUsage(user, payload)
+        : localDb.postMaterialUsage({ id: user.id }, payload)
+    },
+    onSuccess: (_d, v) => {
+      void queryClient.invalidateQueries({
+        queryKey: repairKeys.usages(v.repairCaseId),
+      })
+      void queryClient.invalidateQueries({ queryKey: ['materials'] })
+    },
+  })
+
+  const quoteFromUsages = useMutation({
+    mutationFn: async (input: {
+      repairCaseId: string
+      title?: string
+      taxMode?: TaxMode
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      return formal
+        ? supabaseRepos.createQuoteFromRepairUsages(user, input)
+        : localDb.createQuoteFromRepairUsages(
+            { id: user.id, role: user.role },
+            input,
+          )
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['quotes'] })
+    },
+  })
+
   return {
     repairs: listQuery.data ?? [],
     warranties: warrantiesQuery.data ?? [],
@@ -176,13 +227,17 @@ export function useRepairs() {
     setStatus: setStatus.mutateAsync,
     createWarranty: createWarranty.mutateAsync,
     assessWarranty: assessWarranty.mutateAsync,
+    postUsage: postUsage.mutateAsync,
+    quoteFromUsages: quoteFromUsages.mutateAsync,
     saving:
       createRepair.isPending ||
       assign.isPending ||
       recordVisit.isPending ||
       setStatus.isPending ||
       createWarranty.isPending ||
-      assessWarranty.isPending,
+      assessWarranty.isPending ||
+      postUsage.isPending ||
+      quoteFromUsages.isPending,
   }
 }
 
@@ -221,15 +276,28 @@ export function useRepairHistory(repairCaseId: string | undefined) {
       return localDb.listWarrantyAssessments(repairCaseId)
     },
   })
+  const usages = useQuery({
+    queryKey: repairCaseId
+      ? repairKeys.usages(repairCaseId)
+      : ['material-usages', 'none'],
+    enabled: Boolean(repairCaseId),
+    queryFn: async () => {
+      if (!repairCaseId) return []
+      if (formal) return supabaseRepos.listMaterialUsages(repairCaseId)
+      return localDb.listMaterialUsages(repairCaseId)
+    },
+  })
   return {
     assignments: assignments.data ?? [],
     visits: visits.data ?? [],
     assessments: assessments.data ?? [],
+    usages: usages.data ?? [],
     refetch: async () => {
       await Promise.all([
         assignments.refetch(),
         visits.refetch(),
         assessments.refetch(),
+        usages.refetch(),
       ])
     },
   }
