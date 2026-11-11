@@ -4,6 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { AppShell } from '@/components/AppShell'
 import { RequireAuth } from '@/components/RequireAuth'
 import { queryClient } from '@/lib/queryClient'
+import { AnalyticsPage } from '@/pages/AnalyticsPage'
 import { AttendancePage } from '@/pages/AttendancePage'
 import { ComplaintsPage } from '@/pages/ComplaintsPage'
 import { CustomersPage } from '@/pages/CustomersPage'
@@ -42,6 +43,7 @@ export default function App() {
             <Route path="/customers" element={<Protected><CustomersPage /></Protected>} />
             <Route path="/repairs" element={<Protected><RepairsPage /></Protected>} />
             <Route path="/complaints" element={<Protected><ComplaintsPage /></Protected>} />
+            <Route path="/analytics" element={<Protected><AnalyticsPage /></Protected>} />
             <Route path="/attendance" element={<Protected><AttendancePage /></Protected>} />
             <Route path="/purchases" element={<Protected><PurchasesPage /></Protected>} />
             <Route path="/quotes" element={<Protected><QuotesPage /></Protected>} />
