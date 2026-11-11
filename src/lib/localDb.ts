@@ -194,6 +194,11 @@ import {
   requiresBossReview,
   type OrgSpendSettings,
 } from '@/domain/orgSpendSettings'
+import { filterSitesByAccess } from '@/domain/siteAccess'
+import {
+  assertAccountStatus,
+  normalizeProfileFields,
+} from '@/domain/profileFields'
 import { roundMoney } from '@/domain/money'
 import { formatTaipei } from '@/lib/time'
 
@@ -250,7 +255,16 @@ const KEYS = {
   cashReceipts: 'eg.cashReceipts.v1',
   auditLogs: 'eg.auditLogs.v1',
   orgSpendSettings: 'eg.orgSpendSettings.v1',
+  siteMembers: 'eg.siteMembers.v1',
 } as const
+
+type SiteMemberRow = {
+  siteId: string
+  userId: string
+  createdAt: string
+}
+
+const emptySiteMembers: SiteMemberRow[] = []
 
 function read<T>(key: string, fallback: T): T {
   try {
@@ -365,6 +379,9 @@ function seedIfNeeded() {
       email: 'boss@example.com',
       payType: 'monthly',
       financeAuthorized: true,
+      nickname: '老闆',
+      jobTitle: '負責人',
+      accountStatus: 'active',
       createdAt: now,
     },
     {
@@ -375,6 +392,10 @@ function seedIfNeeded() {
       email: 'ming@example.com',
       payType: 'daily',
       financeAuthorized: false,
+      nickname: '阿明',
+      jobTitle: '水電',
+      hiredAt: '2024-01-15',
+      accountStatus: 'active',
       createdAt: now,
     },
     {
@@ -385,6 +406,10 @@ function seedIfNeeded() {
       email: 'qiang@example.com',
       payType: 'daily',
       financeAuthorized: false,
+      nickname: '阿強',
+      jobTitle: '水電',
+      hiredAt: '2024-06-01',
+      accountStatus: 'active',
       createdAt: now,
     },
   ]
@@ -719,6 +744,23 @@ function seedIfNeeded() {
   write(KEYS.cashReceipts, emptyCashReceipts)
   write(KEYS.auditLogs, emptyAuditLogs)
   write(KEYS.orgSpendSettings, defaultOrgSpendSettings(ORG_ID))
+  write(KEYS.siteMembers, [
+    {
+      siteId: 'site-a',
+      userId: 'user-worker',
+      createdAt: now,
+    },
+    {
+      siteId: 'site-b',
+      userId: 'user-worker',
+      createdAt: now,
+    },
+    {
+      siteId: 'site-a',
+      userId: 'user-worker-2',
+      createdAt: now,
+    },
+  ] satisfies SiteMemberRow[])
   write(KEYS.shortcuts, [
     'sites',
     'cash',
@@ -729,6 +771,7 @@ function seedIfNeeded() {
     'team',
     'audit',
     'settings',
+    'profile',
     'notices',
   ])
 }
@@ -755,10 +798,83 @@ export const localDb = {
     else localStorage.setItem(KEYS.sessionUserId, id)
   },
 
-  getSites(): SiteProject[] {
-    return read(KEYS.sites, emptySites).sort((a, b) =>
+  getSites(actor?: { id: string; role: AppUser['role'] } | null): SiteProject[] {
+    const all = read(KEYS.sites, emptySites).sort((a, b) =>
       b.updatedAt.localeCompare(a.updatedAt),
     )
+    if (!actor) return all
+    return filterSitesByAccess({
+      role: actor.role,
+      sites: all,
+      allowedSiteIds: this.listAllowedSiteIds(actor.id),
+    })
+  },
+
+  listAllowedSiteIds(userId: string): string[] {
+    return read(KEYS.siteMembers, emptySiteMembers)
+      .filter((m) => m.userId === userId)
+      .map((m) => m.siteId)
+  },
+
+  listSiteMembers(siteId: string): string[] {
+    return read(KEYS.siteMembers, emptySiteMembers)
+      .filter((m) => m.siteId === siteId)
+      .map((m) => m.userId)
+  },
+
+  setSiteMembers(
+    actor: { id: string; role: AppUser['role'] },
+    siteId: string,
+    userIds: string[],
+  ): void {
+    if (actor.role !== 'boss') throw new Error('僅老闆可設定工地權限')
+    if (!read(KEYS.sites, emptySites).some((s) => s.id === siteId)) {
+      throw new Error('找不到工地')
+    }
+    const now = new Date().toISOString()
+    const others = read(KEYS.siteMembers, emptySiteMembers).filter(
+      (m) => m.siteId !== siteId,
+    )
+    const next: SiteMemberRow[] = [
+      ...others,
+      ...userIds.map((userId) => ({ siteId, userId, createdAt: now })),
+    ]
+    write(KEYS.siteMembers, next)
+  },
+
+  updateProfile(
+    actor: { id: string; role: AppUser['role'] },
+    targetUserId: string,
+    input: {
+      nickname?: string | null
+      birthDate?: string | null
+      jobTitle?: string | null
+      hiredAt?: string | null
+      notes?: string | null
+      accountStatus?: string | null
+    },
+  ): AppUser {
+    const users = this.getUsers()
+    const idx = users.findIndex((u) => u.id === targetUserId)
+    if (idx < 0) throw new Error('找不到使用者')
+    const self = actor.id === targetUserId
+    if (!self && actor.role !== 'boss') {
+      throw new Error('僅本人或老闆可更新資料')
+    }
+    const fields = normalizeProfileFields(input)
+    let nextStatus = users[idx].accountStatus ?? 'active'
+    if (input.accountStatus != null) {
+      if (actor.role !== 'boss') throw new Error('僅老闆可停用帳號')
+      nextStatus = assertAccountStatus(input.accountStatus)
+    }
+    const updated: AppUser = {
+      ...users[idx],
+      ...fields,
+      accountStatus: nextStatus,
+    }
+    users[idx] = updated
+    write(KEYS.users, users)
+    return updated
   },
 
   getSite(id: string): SiteProject | null {
@@ -3713,9 +3829,10 @@ export const localDb = {
       item: string
       amount: number
       note?: string | null
+      receiptPhotoPath?: string | null
     },
   ): ExpenseReport {
-    const site = this.getSites().find((s) => s.id === input.siteId)
+    const site = this.getSites(actor).find((s) => s.id === input.siteId)
     if (!site) throw new Error('找不到工地／案件')
     const amount = assertPositiveMoney(input.amount, '支出金額')
     const settings = this.getOrgSpendSettings()
@@ -3732,7 +3849,7 @@ export const localDb = {
       item: assertExpenseItem(input.item),
       amount,
       note: input.note?.trim() || null,
-      receiptPhotoPath: null,
+      receiptPhotoPath: input.receiptPhotoPath?.trim() || null,
       status: needsReview ? 'pending_review' : 'confirmed',
       reportedBy: actor.id,
       reportedByName: actor.name,
@@ -3821,9 +3938,10 @@ export const localDb = {
       siteId: string
       amount: number
       sourceNote?: string | null
+      proofPhotoPath?: string | null
     },
   ): CashReceiptReport {
-    const site = this.getSites().find((s) => s.id === input.siteId)
+    const site = this.getSites(actor).find((s) => s.id === input.siteId)
     if (!site) throw new Error('找不到工地／案件')
     const row: CashReceiptReport = {
       id: `cr-${crypto.randomUUID()}`,
@@ -3832,7 +3950,7 @@ export const localDb = {
       siteName: site.name,
       amount: assertPositiveMoney(input.amount, '收款金額'),
       sourceNote: input.sourceNote?.trim() || null,
-      proofPhotoPath: null,
+      proofPhotoPath: input.proofPhotoPath?.trim() || null,
       status: 'pending_confirm',
       reportedBy: actor.id,
       reportedByName: actor.name,
@@ -3986,6 +4104,7 @@ export const localDb = {
       'team',
       'audit',
       'settings',
+      'profile',
       'notices',
     ]
     const stored = read(KEYS.shortcuts, defaults)

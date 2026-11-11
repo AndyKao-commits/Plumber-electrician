@@ -46,7 +46,7 @@ export function useSites() {
       try {
         return formal
           ? await supabaseRepos.listSites(user ?? undefined)
-          : localDb.getSites()
+          : localDb.getSites(user ?? null)
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入工地列表'))
       }
@@ -93,9 +93,13 @@ export function useSite(id: string | undefined) {
     queryFn: async () => {
       if (!id) return null
       try {
-        return formal
-          ? await supabaseRepos.getSite(id, user ?? undefined)
-          : localDb.getSite(id)
+        if (formal) {
+          return await supabaseRepos.getSite(id, user ?? undefined)
+        }
+        const site = localDb.getSite(id)
+        if (!site || !user) return site
+        const visible = localDb.getSites(user).some((s) => s.id === id)
+        return visible ? site : null
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入工地'))
       }

@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { DefectSeverity } from '@/domain/types'
 import { useAttendance } from '@/hooks/useAttendance'
 import { useDefects } from '@/hooks/useDefects'
@@ -8,16 +8,21 @@ import { useReports } from '@/hooks/useReports'
 import { useSite } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
 import { isFormalMode } from '@/lib/dataMode'
-import { useQuery } from '@tanstack/react-query'
+import { toUserMessage } from '@/lib/errors'
+import { localDb } from '@/lib/localDb'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 
 export function SiteDetailPage() {
   const { siteId } = useParams()
   const { data: site, isLoading, isError, error } = useSite(siteId)
-  const { user } = useUser()
+  const { user, directory } = useUser()
+  const queryClient = useQueryClient()
   const { openShift, assignSite, isAssigningSite } = useAttendance(user?.id)
   const formal = isFormalMode()
   const { photos } = usePhotos(siteId)
+  const isBoss = user?.role === 'boss'
+  const [memberDraft, setMemberDraft] = useState<string[]>([])
   const { reports } = useReports(siteId)
   const {
     defects,
@@ -54,6 +59,43 @@ export function SiteDetailPage() {
     () => photos.filter((p) => p.status === 'linked').slice(0, 8),
     [photos],
   )
+
+  const membersQuery = useQuery({
+    queryKey: ['site-members', siteId],
+    enabled: Boolean(siteId && user),
+    queryFn: async () => {
+      if (!siteId) return []
+      return formal
+        ? supabaseRepos.listSiteMemberIds(siteId)
+        : localDb.listSiteMembers(siteId)
+    },
+  })
+
+  const orgUsersQuery = useQuery({
+    queryKey: ['org-users-for-sites'],
+    enabled: Boolean(user && isBoss),
+    queryFn: async () => {
+      if (!user) return []
+      if (formal) return supabaseRepos.listOrgProfiles(user)
+      return localDb.getUsers()
+    },
+  })
+
+  useEffect(() => {
+    setMemberDraft(membersQuery.data ?? [])
+  }, [membersQuery.data])
+
+  const saveMembers = useMutation({
+    mutationFn: async () => {
+      if (!user || !siteId) throw new Error('尚未登入')
+      if (formal) await supabaseRepos.setSiteMembers(user, siteId, memberDraft)
+      else localDb.setSiteMembers(user, siteId, memberDraft)
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['site-members', siteId] })
+      void queryClient.invalidateQueries({ queryKey: ['sites'] })
+    },
+  })
 
   if (isLoading) return <div className="empty">載入工地…</div>
   if (isError) {
@@ -189,6 +231,52 @@ export function SiteDetailPage() {
           </div>
         )}
       </section>
+
+      {isBoss && siteId ? (
+        <section className="panel stack">
+          <strong>有權限工地成員</strong>
+          <p className="muted" style={{ margin: 0 }}>
+            員工僅能看到被指派的工地；未指派則列表為空。
+          </p>
+          {(orgUsersQuery.data ?? directory)
+            .filter((u) => u.role === 'employee')
+            .map((u) => {
+              const checked = memberDraft.includes(u.id)
+              return (
+                <label key={u.id} className="row" style={{ gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => {
+                      setMemberDraft((prev) =>
+                        e.target.checked
+                          ? [...prev, u.id]
+                          : prev.filter((id) => id !== u.id),
+                      )
+                    }}
+                  />
+                  <span>
+                    {u.name}
+                    {u.jobTitle ? ` · ${u.jobTitle}` : ''}
+                  </span>
+                </label>
+              )
+            })}
+          <button
+            type="button"
+            className="btn btn-steel"
+            disabled={saveMembers.isPending}
+            onClick={() => void saveMembers.mutateAsync()}
+          >
+            {saveMembers.isPending ? '儲存中…' : '儲存工地權限'}
+          </button>
+          {saveMembers.error ? (
+            <p style={{ color: 'var(--danger)', margin: 0 }}>
+              {toUserMessage(saveMembers.error)}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="panel stack">
         <div className="row between">

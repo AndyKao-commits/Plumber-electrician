@@ -52,11 +52,35 @@ export function useFieldFinance(userId: string | undefined) {
       item: string
       amount: number
       note?: string | null
+      receiptPhotoPath?: string | null
+      receiptFiles?: File[]
     }) => {
       if (!user) throw new Error('尚未登入')
+      let receiptPhotoPath = input.receiptPhotoPath ?? null
+      if (formal && input.receiptFiles?.length) {
+        const paths: string[] = []
+        for (const file of input.receiptFiles) {
+          paths.push(
+            await supabaseRepos.uploadReceiptPhoto({
+              file,
+              siteId: input.siteId,
+            }),
+          )
+        }
+        receiptPhotoPath = paths[0] ?? null
+      } else if (!formal && input.receiptFiles?.length) {
+        receiptPhotoPath = `local-receipt:${input.receiptFiles[0].name}`
+      }
+      const payload = {
+        siteId: input.siteId,
+        item: input.item,
+        amount: input.amount,
+        note: input.note,
+        receiptPhotoPath,
+      }
       return formal
-        ? supabaseRepos.createExpenseReport(user, input)
-        : localDb.createExpenseReport(user, input)
+        ? supabaseRepos.createExpenseReport(user, payload)
+        : localDb.createExpenseReport(user, payload)
     },
     onSuccess: invalidate,
   })
@@ -80,11 +104,27 @@ export function useFieldFinance(userId: string | undefined) {
       siteId: string
       amount: number
       sourceNote?: string | null
+      proofFiles?: File[]
     }) => {
       if (!user) throw new Error('尚未登入')
+      let proofPhotoPath: string | null = null
+      if (formal && input.proofFiles?.length) {
+        proofPhotoPath = await supabaseRepos.uploadReceiptPhoto({
+          file: input.proofFiles[0],
+          siteId: input.siteId,
+        })
+      } else if (!formal && input.proofFiles?.length) {
+        proofPhotoPath = `local-receipt:${input.proofFiles[0].name}`
+      }
+      const payload = {
+        siteId: input.siteId,
+        amount: input.amount,
+        sourceNote: input.sourceNote,
+        proofPhotoPath,
+      }
       return formal
-        ? supabaseRepos.createCashReceipt(user, input)
-        : localDb.createCashReceipt(user, input)
+        ? supabaseRepos.createCashReceipt(user, payload)
+        : localDb.createCashReceipt(user, payload)
     },
     onSuccess: invalidate,
   })
