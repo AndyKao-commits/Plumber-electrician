@@ -19,8 +19,15 @@ import {
   assertQuoteDraftEditable,
   calcFinalPayable,
   calcQuoteItemAmount,
-  requiresPreApproval,
 } from '@/domain/rules'
+import {
+  assertSpendSettingsInput,
+  assertWithinDailyPurchaseLimit,
+  defaultOrgSpendSettings,
+  requiresBossReview,
+  type OrgSpendSettings,
+} from '@/domain/orgSpendSettings'
+import { assertPhotoType } from '@/domain/photoTypes'
 import {
   assertBillingDocumentEditable,
   assertCanManageBilling,
@@ -1140,7 +1147,24 @@ export const supabaseRepos = {
     const siteId = optionalUuid(input.siteId, '工地')
     const finalPayable = calcFinalPayable(input)
     const businessDate = formatTaipei(new Date(), 'yyyy-MM-dd')
-    const needsApproval = input.mode === 'normal' && requiresPreApproval(finalPayable)
+    const settings = await this.getOrgSpendSettings(actor)
+    const needsApproval =
+      input.mode === 'normal' &&
+      requiresBossReview(finalPayable, settings.reportReviewThresholdNtd)
+
+    const dayPurchases = (await this.listPurchases(actor)).filter(
+      (p) =>
+        p.userId === actor.id &&
+        p.businessDate === businessDate &&
+        p.status !== 'rejected' &&
+        p.status !== 'cancelled',
+    )
+    const usedToday = dayPurchases.reduce((s, p) => s + p.finalPayable, 0)
+    assertWithinDailyPurchaseLimit({
+      usedTodayNtd: usedToday,
+      nextAmount: finalPayable,
+      dailyPurchaseLimitNtd: settings.dailyPurchaseLimitNtd,
+    })
 
     if (input.mode === 'emergency') {
       const used = await this.emergencyUsedToday(actor.id, businessDate)
@@ -1158,6 +1182,8 @@ export const supabaseRepos = {
           },
         ],
         reserveAmount: finalPayable,
+        singleLimit: settings.emergencySingleLimitNtd,
+        dailyLimit: settings.emergencyDailyLimitNtd,
       })
     }
 
@@ -3842,14 +3868,18 @@ export const supabaseRepos = {
     })
   },
 
-  async listPhotoUploads(): Promise<PhotoUpload[]> {
-    const { data, error } = await sb()
+  async listPhotoUploads(siteId?: string | null): Promise<PhotoUpload[]> {
+    let q = sb()
       .from('photo_uploads')
       .select(
-        'id, organization_id, uploaded_by, site_id, storage_path, content_type, byte_size, source, status, created_at',
+        'id, organization_id, uploaded_by, site_id, photo_type, storage_path, content_type, byte_size, source, status, created_at',
       )
       .order('created_at', { ascending: false })
-      .limit(100)
+      .limit(200)
+    if (siteId) {
+      q = q.eq('site_id', requireUuid(siteId, '工地'))
+    }
+    const { data, error } = await q
     if (error) throw new AppError(toUserMessage(error, '無法載入施工照片'))
 
     const rows = data ?? []
@@ -3901,6 +3931,7 @@ export const supabaseRepos = {
       uploaderName: nameByUser.get(String(row.uploaded_by)),
       siteId: row.site_id ? String(row.site_id) : null,
       siteName: row.site_id ? nameBySite.get(String(row.site_id)) ?? null : null,
+      photoType: (row.photo_type as PhotoUpload['photoType']) ?? 'unclassified',
       storagePath: String(row.storage_path),
       contentType: row.content_type ? String(row.content_type) : null,
       byteSize: row.byte_size == null ? null : Number(row.byte_size),
@@ -3911,12 +3942,33 @@ export const supabaseRepos = {
     }))
   },
 
-  async linkPhotoUpload(photoId: string, siteId: string): Promise<void> {
+  async linkPhotoUpload(
+    photoId: string,
+    siteId: string,
+    photoType?: string | null,
+  ): Promise<void> {
+    const type = assertPhotoType(photoType || 'unclassified')
     const { error } = await sb()
       .from('photo_uploads')
-      .update({ site_id: requireUuid(siteId, '工地'), status: 'linked' })
+      .update({
+        site_id: requireUuid(siteId, '工地'),
+        photo_type: type,
+        status: 'linked',
+      })
       .eq('id', requireUuid(photoId, '照片'))
     if (error) throw new AppError(toUserMessage(error, '無法指定工地'))
+  },
+
+  async classifyPhotoUpload(
+    photoId: string,
+    photoType: string,
+  ): Promise<void> {
+    const type = assertPhotoType(photoType)
+    const { error } = await sb()
+      .from('photo_uploads')
+      .update({ photo_type: type })
+      .eq('id', requireUuid(photoId, '照片'))
+    if (error) throw new AppError(toUserMessage(error, '無法更新照片分類'))
   },
 
   async discardPhotoUpload(photoId: string): Promise<void> {
@@ -3930,6 +3982,7 @@ export const supabaseRepos = {
   async uploadAppPhoto(input: {
     file: File
     siteId?: string | null
+    photoType?: string | null
   }): Promise<PhotoUpload> {
     const { data: authData, error: authError } = await sb().auth.getUser()
     if (authError) throw new AppError(toUserMessage(authError, '無法讀取登入狀態'))
@@ -3938,7 +3991,11 @@ export const supabaseRepos = {
     const me = await this.getCurrentUser()
     if (!me) throw new AppError('找不到個人資料')
 
+    const photoType = assertPhotoType(input.photoType || 'unclassified')
     const siteId = optionalUuid(input.siteId)
+    if (!siteId) {
+      throw new AppError('請先選擇工地，再上傳照片（工地檔案只顯示該工地）')
+    }
     const mime = input.file.type || 'image/jpeg'
     const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg'
     const path = `${me.organizationId}/${me.id}/${crypto.randomUUID()}.${ext}`
@@ -3951,21 +4008,21 @@ export const supabaseRepos = {
       throw new AppError(toUserMessage(uploadError, '無法上傳照片'))
     }
 
-    const status = siteId ? 'linked' : 'pending'
     const { data, error } = await sb()
       .from('photo_uploads')
       .insert({
         organization_id: me.organizationId,
         uploaded_by: me.id,
         site_id: siteId,
+        photo_type: photoType,
         storage_path: path,
         content_type: mime,
         byte_size: input.file.size,
         source: 'app',
-        status,
+        status: 'linked',
       })
       .select(
-        'id, organization_id, uploaded_by, site_id, storage_path, content_type, byte_size, source, status, created_at',
+        'id, organization_id, uploaded_by, site_id, photo_type, storage_path, content_type, byte_size, source, status, created_at',
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法寫入照片紀錄'))
@@ -3975,6 +4032,7 @@ export const supabaseRepos = {
       organizationId: String(data.organization_id),
       uploadedBy: String(data.uploaded_by),
       siteId: data.site_id ? String(data.site_id) : null,
+      photoType: (data.photo_type as PhotoUpload['photoType']) ?? photoType,
       storagePath: String(data.storage_path),
       contentType: data.content_type ? String(data.content_type) : null,
       byteSize: data.byte_size == null ? null : Number(data.byte_size),
@@ -4205,6 +4263,79 @@ export const supabaseRepos = {
     }))
   },
 
+  async getOrgSpendSettings(actor: AppUser): Promise<OrgSpendSettings> {
+    const { data, error } = await sb()
+      .from('org_spend_settings')
+      .select(
+        'organization_id, report_review_threshold_ntd, emergency_single_limit_ntd, emergency_daily_limit_ntd, daily_purchase_limit_ntd, updated_at, updated_by',
+      )
+      .eq('organization_id', actor.organizationId)
+      .maybeSingle()
+    if (error) {
+      throw new AppError(toUserMessage(error, '無法讀取額度設定'))
+    }
+    if (!data) {
+      return defaultOrgSpendSettings(actor.organizationId)
+    }
+    return {
+      organizationId: String(data.organization_id),
+      reportReviewThresholdNtd: Number(data.report_review_threshold_ntd),
+      emergencySingleLimitNtd: Number(data.emergency_single_limit_ntd),
+      emergencyDailyLimitNtd: Number(data.emergency_daily_limit_ntd),
+      dailyPurchaseLimitNtd: Number(data.daily_purchase_limit_ntd),
+      updatedAt: String(data.updated_at),
+      updatedBy: (data.updated_by as string | null) ?? null,
+    }
+  },
+
+  async updateOrgSpendSettings(
+    actor: AppUser,
+    input: {
+      reportReviewThresholdNtd: number
+      emergencySingleLimitNtd: number
+      emergencyDailyLimitNtd: number
+      dailyPurchaseLimitNtd: number
+    },
+  ): Promise<OrgSpendSettings> {
+    if (actor.role !== 'boss') {
+      throw new AppError('僅老闆可設定額度')
+    }
+    const next = assertSpendSettingsInput(input)
+    const payload = {
+      organization_id: actor.organizationId,
+      report_review_threshold_ntd: next.reportReviewThresholdNtd,
+      emergency_single_limit_ntd: next.emergencySingleLimitNtd,
+      emergency_daily_limit_ntd: next.emergencyDailyLimitNtd,
+      daily_purchase_limit_ntd: next.dailyPurchaseLimitNtd,
+      updated_at: new Date().toISOString(),
+      updated_by: actor.id,
+    }
+    const { data, error } = await sb()
+      .from('org_spend_settings')
+      .upsert(payload, { onConflict: 'organization_id' })
+      .select(
+        'organization_id, report_review_threshold_ntd, emergency_single_limit_ntd, emergency_daily_limit_ntd, daily_purchase_limit_ntd, updated_at, updated_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法儲存額度設定'))
+    const row: OrgSpendSettings = {
+      organizationId: String(data.organization_id),
+      reportReviewThresholdNtd: Number(data.report_review_threshold_ntd),
+      emergencySingleLimitNtd: Number(data.emergency_single_limit_ntd),
+      emergencyDailyLimitNtd: Number(data.emergency_daily_limit_ntd),
+      dailyPurchaseLimitNtd: Number(data.daily_purchase_limit_ntd),
+      updatedAt: String(data.updated_at),
+      updatedBy: (data.updated_by as string | null) ?? null,
+    }
+    await this.appendAuditLog(actor, {
+      action: 'permission.update',
+      targetType: 'org_spend_settings',
+      targetId: actor.organizationId,
+      after: row,
+    })
+    return row
+  },
+
   async listExpenseReports(actor: AppUser): Promise<ExpenseReport[]> {
     let q = sb()
       .from('expense_reports')
@@ -4246,17 +4377,29 @@ export const supabaseRepos = {
     const sites = await this.listSites(actor)
     const site = sites.find((s) => s.id === siteId)
     if (!site) throw new AppError('找不到工地／案件')
+    const amount = assertPositiveMoney(input.amount, '支出金額')
+    const settings = await this.getOrgSpendSettings(actor)
+    const needsReview = requiresBossReview(
+      amount,
+      settings.reportReviewThresholdNtd,
+    )
+    const now = new Date().toISOString()
     const { data, error } = await sb()
       .from('expense_reports')
       .insert({
         site_id: siteId,
         site_name: site.name,
         item: assertExpenseItem(input.item),
-        amount: assertPositiveMoney(input.amount, '支出金額'),
+        amount,
         note: input.note?.trim() || null,
-        status: 'pending_review',
+        status: needsReview ? 'pending_review' : 'confirmed',
         reported_by: actor.id,
         reported_by_name: actor.name,
+        reviewed_by: needsReview ? null : actor.id,
+        reviewed_at: needsReview ? null : now,
+        review_note: needsReview
+          ? null
+          : `小額免審（門檻 NT$${settings.reportReviewThresholdNtd.toLocaleString()}）`,
       })
       .select(
         'id, organization_id, site_id, site_name, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',

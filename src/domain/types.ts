@@ -914,6 +914,13 @@ export interface PurchaseRuleSnapshot {
   emergencyDailyLimitNtd: number | null
 }
 
+export type PhotoType =
+  | 'before'
+  | 'during'
+  | 'after'
+  | 'acceptance'
+  | 'unclassified'
+
 export interface PhotoUpload {
   id: string
   organizationId: string
@@ -921,6 +928,7 @@ export interface PhotoUpload {
   uploaderName?: string
   siteId?: string | null
   siteName?: string | null
+  photoType?: PhotoType | null
   storagePath: string
   contentType?: string | null
   byteSize?: number | null

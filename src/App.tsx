@@ -15,6 +15,7 @@ import { LineBindCallbackPage } from '@/pages/LineBindCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { NotificationsPage } from '@/pages/NotificationsPage'
 import { PhotosPage } from '@/pages/PhotosPage'
+import { SettingsPage } from '@/pages/SettingsPage'
 import { PurchasesPage } from '@/pages/PurchasesPage'
 import { ReportsPage } from '@/pages/ReportsPage'
 import { QuoteDetailPage } from '@/pages/QuoteDetailPage'
@@ -61,6 +62,7 @@ export default function App() {
             <Route path="/todos" element={<Protected><TodosPage /></Protected>} />
             <Route path="/team" element={<Protected><TeamPage /></Protected>} />
             <Route path="/photos" element={<Protected><PhotosPage /></Protected>} />
+            <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
             <Route path="/reports" element={<Protected><ReportsPage /></Protected>} />
             <Route path="/offline-queue" element={<Protected><OfflineQueuePage /></Protected>} />
           </Route>

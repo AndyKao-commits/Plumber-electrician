@@ -187,6 +187,13 @@ import {
   computeCaseFinance,
 } from '@/domain/fieldFinance'
 import { buildAuditEntry, type AuditAction } from '@/domain/auditLog'
+import {
+  assertSpendSettingsInput,
+  assertWithinDailyPurchaseLimit,
+  defaultOrgSpendSettings,
+  requiresBossReview,
+  type OrgSpendSettings,
+} from '@/domain/orgSpendSettings'
 import { roundMoney } from '@/domain/money'
 import { formatTaipei } from '@/lib/time'
 
@@ -242,6 +249,7 @@ const KEYS = {
   expenseReports: 'eg.expenseReports.v1',
   cashReceipts: 'eg.cashReceipts.v1',
   auditLogs: 'eg.auditLogs.v1',
+  orgSpendSettings: 'eg.orgSpendSettings.v1',
 } as const
 
 function read<T>(key: string, fallback: T): T {
@@ -710,6 +718,7 @@ function seedIfNeeded() {
   write(KEYS.expenseReports, emptyExpenseReports)
   write(KEYS.cashReceipts, emptyCashReceipts)
   write(KEYS.auditLogs, emptyAuditLogs)
+  write(KEYS.orgSpendSettings, defaultOrgSpendSettings(ORG_ID))
   write(KEYS.shortcuts, [
     'sites',
     'cash',
@@ -719,6 +728,7 @@ function seedIfNeeded() {
     'todos',
     'team',
     'audit',
+    'settings',
     'notices',
   ])
 }
@@ -911,13 +921,33 @@ export const localDb = {
       otherBuyerFees: input.otherBuyerFees,
     })
     const businessDate = formatTaipei(new Date(), 'yyyy-MM-dd')
-    const needsApproval = input.mode === 'normal' && finalPayable >= 3000
+    const settings = this.getOrgSpendSettings()
+    const needsApproval =
+      input.mode === 'normal' &&
+      requiresBossReview(finalPayable, settings.reportReviewThresholdNtd)
+
+    const usedToday = this.getPurchases()
+      .filter(
+        (p) =>
+          p.userId === input.userId &&
+          p.businessDate === businessDate &&
+          p.status !== 'rejected' &&
+          p.status !== 'cancelled',
+      )
+      .reduce((s, p) => s + p.finalPayable, 0)
+    assertWithinDailyPurchaseLimit({
+      usedTodayNtd: usedToday,
+      nextAmount: finalPayable,
+      dailyPurchaseLimitNtd: settings.dailyPurchaseLimitNtd,
+    })
 
     if (input.mode === 'emergency') {
       const dayEvents = this.emergencyEventsForDay(input.userId, businessDate)
       assertEmergencyReserveAllowed({
         eventsForDay: dayEvents,
         reserveAmount: finalPayable,
+        singleLimit: settings.emergencySingleLimitNtd,
+        dailyLimit: settings.emergencyDailyLimitNtd,
       })
     }
 
@@ -3687,22 +3717,31 @@ export const localDb = {
   ): ExpenseReport {
     const site = this.getSites().find((s) => s.id === input.siteId)
     if (!site) throw new Error('找不到工地／案件')
+    const amount = assertPositiveMoney(input.amount, '支出金額')
+    const settings = this.getOrgSpendSettings()
+    const needsReview = requiresBossReview(
+      amount,
+      settings.reportReviewThresholdNtd,
+    )
+    const now = new Date().toISOString()
     const row: ExpenseReport = {
       id: `exp-${crypto.randomUUID()}`,
       organizationId: ORG_ID,
       siteId: site.id,
       siteName: site.name,
       item: assertExpenseItem(input.item),
-      amount: assertPositiveMoney(input.amount, '支出金額'),
+      amount,
       note: input.note?.trim() || null,
       receiptPhotoPath: null,
-      status: 'pending_review',
+      status: needsReview ? 'pending_review' : 'confirmed',
       reportedBy: actor.id,
       reportedByName: actor.name,
-      reportedAt: new Date().toISOString(),
-      reviewedBy: null,
-      reviewedAt: null,
-      reviewNote: null,
+      reportedAt: now,
+      reviewedBy: needsReview ? null : actor.id,
+      reviewedAt: needsReview ? null : now,
+      reviewNote: needsReview
+        ? null
+        : `小額免審（門檻 NT$${settings.reportReviewThresholdNtd.toLocaleString()}）`,
     }
     const all = read(KEYS.expenseReports, emptyExpenseReports)
     all.unshift(row)
@@ -3902,6 +3941,40 @@ export const localDb = {
     write(KEYS.notices, all)
   },
 
+  getOrgSpendSettings(): OrgSpendSettings {
+    return read(KEYS.orgSpendSettings, defaultOrgSpendSettings(ORG_ID))
+  },
+
+  updateOrgSpendSettings(
+    actor: { id: string; role: AppUser['role'] },
+    input: {
+      reportReviewThresholdNtd: number
+      emergencySingleLimitNtd: number
+      emergencyDailyLimitNtd: number
+      dailyPurchaseLimitNtd: number
+    },
+  ): OrgSpendSettings {
+    if (actor.role !== 'boss') throw new Error('僅老闆可設定額度')
+    const next = assertSpendSettingsInput(input)
+    const row: OrgSpendSettings = {
+      organizationId: ORG_ID,
+      ...next,
+      updatedAt: new Date().toISOString(),
+      updatedBy: actor.id,
+    }
+    write(KEYS.orgSpendSettings, row)
+    this.appendAudit(
+      { id: actor.id, name: '老闆' },
+      {
+        action: 'permission.update',
+        targetType: 'org_spend_settings',
+        targetId: ORG_ID,
+        after: row,
+      },
+    )
+    return row
+  },
+
   getShortcutIds(): string[] {
     const defaults = [
       'sites',
@@ -3912,6 +3985,7 @@ export const localDb = {
       'todos',
       'team',
       'audit',
+      'settings',
       'notices',
     ]
     const stored = read(KEYS.shortcuts, defaults)
