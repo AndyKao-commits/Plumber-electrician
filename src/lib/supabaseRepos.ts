@@ -121,6 +121,7 @@ import {
   assertCanReviewExpense,
   assertExpenseItem,
   assertPositiveMoney,
+  resolveFieldCashTarget,
 } from '@/domain/fieldFinance'
 import { type AuditAction } from '@/domain/auditLog'
 import { roundMoney } from '@/domain/money'
@@ -4497,7 +4498,7 @@ export const supabaseRepos = {
     let q = sb()
       .from('expense_reports')
       .select(
-        'id, organization_id, site_id, site_name, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
+        'id, organization_id, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
       )
     if (actor.role !== 'boss') q = q.eq('reported_by', actor.id)
     const { data, error } = await q.order('reported_at', { ascending: false })
@@ -4505,8 +4506,9 @@ export const supabaseRepos = {
     return (data ?? []).map((row) => ({
       id: String(row.id),
       organizationId: String(row.organization_id),
-      siteId: String(row.site_id),
+      siteId: row.site_id ? String(row.site_id) : null,
       siteName: String(row.site_name),
+      locationText: (row.location_text as string | null) ?? null,
       item: String(row.item),
       amount: Number(row.amount),
       note: (row.note as string | null) ?? null,
@@ -4523,11 +4525,11 @@ export const supabaseRepos = {
 
   async uploadReceiptPhoto(input: {
     file: File
-    siteId: string
+    siteId?: string | null
   }): Promise<string> {
     const me = await this.getCurrentUser()
     if (!me) throw new AppError('尚未登入')
-    const siteId = requireUuid(input.siteId, '工地')
+    const siteId = input.siteId ? requireUuid(input.siteId, '工地') : null
     const mime = input.file.type || 'image/jpeg'
     const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg'
     const path = `${me.organizationId}/${me.id}/receipt-${crypto.randomUUID()}.${ext}`
@@ -4546,7 +4548,7 @@ export const supabaseRepos = {
       content_type: mime,
       byte_size: input.file.size,
       source: 'app-receipt',
-      status: 'linked',
+      status: siteId ? 'linked' : 'pending',
     })
     return path
   },
@@ -4554,17 +4556,27 @@ export const supabaseRepos = {
   async createExpenseReport(
     actor: AppUser,
     input: {
-      siteId: string
+      siteId?: string | null
       item: string
       amount: number
       note?: string | null
+      locationText?: string | null
       receiptPhotoPath?: string | null
+      misc?: boolean
     },
   ): Promise<ExpenseReport> {
-    const siteId = requireUuid(input.siteId, '工地')
-    const sites = await this.listSites(actor)
-    const site = sites.find((s) => s.id === siteId)
-    if (!site) throw new AppError('找不到工地／案件')
+    let target = resolveFieldCashTarget({
+      siteId: input.siteId,
+      locationText: input.locationText,
+      misc: input.misc,
+    })
+    if (!target.isMisc) {
+      const siteId = requireUuid(target.siteId, '工地')
+      const sites = await this.listSites(actor)
+      const site = sites.find((s) => s.id === siteId)
+      if (!site) throw new AppError('找不到工地／案件')
+      target = { ...target, siteId: site.id, siteName: site.name }
+    }
     const amount = assertPositiveMoney(input.amount, '支出金額')
     const settings = await this.getOrgSpendSettings(actor)
     const needsReview = requiresBossReview(
@@ -4575,8 +4587,9 @@ export const supabaseRepos = {
     const { data, error } = await sb()
       .from('expense_reports')
       .insert({
-        site_id: siteId,
-        site_name: site.name,
+        site_id: target.siteId,
+        site_name: target.siteName,
+        location_text: target.locationText,
         item: assertExpenseItem(input.item),
         amount,
         note: input.note?.trim() || null,
@@ -4591,15 +4604,16 @@ export const supabaseRepos = {
           : `小額免審（門檻 NT$${settings.reportReviewThresholdNtd.toLocaleString()}）`,
       })
       .select(
-        'id, organization_id, site_id, site_name, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
+        'id, organization_id, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法建立支出'))
     const row = {
       id: String(data.id),
       organizationId: String(data.organization_id),
-      siteId: String(data.site_id),
+      siteId: data.site_id ? String(data.site_id) : null,
       siteName: String(data.site_name),
+      locationText: (data.location_text as string | null) ?? null,
       item: String(data.item),
       amount: Number(data.amount),
       note: (data.note as string | null) ?? null,
@@ -4694,7 +4708,7 @@ export const supabaseRepos = {
     let q = sb()
       .from('cash_receipt_reports')
       .select(
-        'id, organization_id, site_id, site_name, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note',
+        'id, organization_id, site_id, site_name, location_text, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note',
       )
     if (actor.role !== 'boss') q = q.eq('reported_by', actor.id)
     const { data, error } = await q.order('reported_at', { ascending: false })
@@ -4702,8 +4716,9 @@ export const supabaseRepos = {
     return (data ?? []).map((row) => ({
       id: String(row.id),
       organizationId: String(row.organization_id),
-      siteId: String(row.site_id),
+      siteId: row.site_id ? String(row.site_id) : null,
       siteName: String(row.site_name),
+      locationText: (row.location_text as string | null) ?? null,
       amount: Number(row.amount),
       sourceNote: (row.source_note as string | null) ?? null,
       proofPhotoPath: (row.proof_photo_path as string | null) ?? null,
@@ -4720,21 +4735,32 @@ export const supabaseRepos = {
   async createCashReceipt(
     actor: AppUser,
     input: {
-      siteId: string
+      siteId?: string | null
       amount: number
       sourceNote?: string | null
+      locationText?: string | null
       proofPhotoPath?: string | null
+      misc?: boolean
     },
   ): Promise<CashReceiptReport> {
-    const siteId = requireUuid(input.siteId, '工地')
-    const sites = await this.listSites(actor)
-    const site = sites.find((s) => s.id === siteId)
-    if (!site) throw new AppError('找不到工地／案件')
+    let target = resolveFieldCashTarget({
+      siteId: input.siteId,
+      locationText: input.locationText,
+      misc: input.misc,
+    })
+    if (!target.isMisc) {
+      const siteId = requireUuid(target.siteId, '工地')
+      const sites = await this.listSites(actor)
+      const site = sites.find((s) => s.id === siteId)
+      if (!site) throw new AppError('找不到工地／案件')
+      target = { ...target, siteId: site.id, siteName: site.name }
+    }
     const { data, error } = await sb()
       .from('cash_receipt_reports')
       .insert({
-        site_id: siteId,
-        site_name: site.name,
+        site_id: target.siteId,
+        site_name: target.siteName,
+        location_text: target.locationText,
         amount: assertPositiveMoney(input.amount, '收款金額'),
         source_note: input.sourceNote?.trim() || null,
         proof_photo_path: input.proofPhotoPath?.trim() || null,
@@ -4743,15 +4769,16 @@ export const supabaseRepos = {
         reported_by_name: actor.name,
       })
       .select(
-        'id, organization_id, site_id, site_name, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note',
+        'id, organization_id, site_id, site_name, location_text, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note',
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法建立收款'))
     const row = {
       id: String(data.id),
       organizationId: String(data.organization_id),
-      siteId: String(data.site_id),
+      siteId: data.site_id ? String(data.site_id) : null,
       siteName: String(data.site_name),
+      locationText: (data.location_text as string | null) ?? null,
       amount: Number(data.amount),
       sourceNote: (data.source_note as string | null) ?? null,
       proofPhotoPath: (data.proof_photo_path as string | null) ?? null,

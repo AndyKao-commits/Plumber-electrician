@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MISC_SITE_LABEL,
+  MISC_SITE_VALUE,
   assertBossFinalize,
   computeCaseFinance,
+  isCaseLinkedCash,
+  resolveFieldCashTarget,
 } from './fieldFinance'
 
 describe('V1.0 field finance', () => {
@@ -39,5 +43,32 @@ describe('V1.0 field finance', () => {
         reporterId: 'emp-1',
       }),
     ).not.toThrow()
+  })
+})
+
+describe('misc field cash target', () => {
+  it('resolves misc without site', () => {
+    const t = resolveFieldCashTarget({
+      siteId: MISC_SITE_VALUE,
+      locationText: '中油忠孝站',
+    })
+    expect(t.siteId).toBeNull()
+    expect(t.siteName).toBe(MISC_SITE_LABEL)
+    expect(t.locationText).toBe('中油忠孝站')
+    expect(t.isMisc).toBe(true)
+  })
+
+  it('requires site when not misc', () => {
+    expect(() => resolveFieldCashTarget({ siteId: '', siteName: '' })).toThrow(
+      /請選擇工地/,
+    )
+    const t = resolveFieldCashTarget({ siteId: 's1' })
+    expect(t.isMisc).toBe(false)
+    expect(t.siteId).toBe('s1')
+  })
+
+  it('case-linked filter ignores misc', () => {
+    expect(isCaseLinkedCash({ siteId: 's1' })).toBe(true)
+    expect(isCaseLinkedCash({ siteId: null })).toBe(false)
   })
 })

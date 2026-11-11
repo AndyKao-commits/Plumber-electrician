@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react'
 import {
   EXPENSE_STATUS_LABELS,
+  MISC_EXPENSE_EXAMPLES,
+  MISC_SITE_LABEL,
+  MISC_SITE_VALUE,
   RECEIPT_STATUS_LABELS,
   computeCaseFinance,
 } from '@/domain/fieldFinance'
@@ -31,15 +34,19 @@ export function ExpensesPage() {
   const [item, setItem] = useState('')
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
+  const [locationText, setLocationText] = useState('')
   const [receiptFiles, setReceiptFiles] = useState<File[]>([])
   const [receiptAmount, setReceiptAmount] = useState('')
   const [sourceNote, setSourceNote] = useState('')
   const [proofFiles, setProofFiles] = useState<File[]>([])
 
   const selectedSite =
-    siteId && sites.some((s) => s.id === siteId)
-      ? siteId
-      : (sites[0]?.id ?? '')
+    siteId === MISC_SITE_VALUE
+      ? MISC_SITE_VALUE
+      : siteId && sites.some((s) => s.id === siteId)
+        ? siteId
+        : (sites[0]?.id ?? MISC_SITE_VALUE)
+  const isMisc = selectedSite === MISC_SITE_VALUE
 
   const isBoss = user?.role === 'boss'
 
@@ -123,7 +130,9 @@ export function ExpensesPage() {
             e.preventDefault()
             if (!selectedSite) return
             void createExpense({
-              siteId: selectedSite,
+              siteId: isMisc ? null : selectedSite,
+              misc: isMisc,
+              locationText: isMisc ? locationText : null,
               item,
               amount: Number(amount) || 0,
               note,
@@ -132,6 +141,7 @@ export function ExpensesPage() {
               setItem('')
               setAmount('')
               setNote('')
+              setLocationText('')
               setReceiptFiles([])
             })
           }}
@@ -143,13 +153,28 @@ export function ExpensesPage() {
               value={selectedSite}
               onChange={(e) => setSiteId(e.target.value)}
             >
+              <option value={MISC_SITE_VALUE}>{MISC_SITE_LABEL}</option>
               {sites.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
                 </option>
               ))}
             </select>
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
+              加油、買飯、飲料、臨時支援等請選雜項。
+            </p>
           </div>
+          {isMisc ? (
+            <div className="field">
+              <label htmlFor="exp-loc">地點（自行輸入）</label>
+              <input
+                id="exp-loc"
+                value={locationText}
+                onChange={(e) => setLocationText(e.target.value)}
+                placeholder="例如：中油忠孝站、工地附近超商"
+              />
+            </div>
+          ) : null}
           <div className="grid-2">
             <div className="field">
               <label htmlFor="exp-item">支出項目</label>
@@ -157,6 +182,7 @@ export function ExpensesPage() {
                 id="exp-item"
                 value={item}
                 onChange={(e) => setItem(e.target.value)}
+                placeholder={MISC_EXPENSE_EXAMPLES.join('／')}
                 required
               />
             </div>
@@ -205,7 +231,7 @@ export function ExpensesPage() {
           <button
             className="btn btn-steel"
             type="submit"
-            disabled={isCreatingExpense || sites.length === 0}
+            disabled={isCreatingExpense || (!isMisc && sites.length === 0)}
           >
             {isCreatingExpense ? '送出中…' : '送出待審核'}
           </button>
@@ -220,7 +246,9 @@ export function ExpensesPage() {
             e.preventDefault()
             if (!selectedSite) return
             void createReceipt({
-              siteId: selectedSite,
+              siteId: isMisc ? null : selectedSite,
+              misc: isMisc,
+              locationText: isMisc ? locationText : null,
               amount: Number(receiptAmount) || 0,
               sourceNote,
               proofFiles,
@@ -231,6 +259,20 @@ export function ExpensesPage() {
             })
           }}
         >
+          <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+            工地／雜項與上方「回報支出」共用；雜項收款同樣可填地點。
+          </p>
+          {isMisc ? (
+            <div className="field">
+              <label htmlFor="rc-loc">地點（自行輸入）</label>
+              <input
+                id="rc-loc"
+                value={locationText}
+                onChange={(e) => setLocationText(e.target.value)}
+                placeholder="例如：客戶住處、臨時會合點"
+              />
+            </div>
+          ) : null}
           <div className="grid-2">
             <div className="field">
               <label htmlFor="rc-amt">收到金額</label>
@@ -270,7 +312,7 @@ export function ExpensesPage() {
           <button
             className="btn btn-steel"
             type="submit"
-            disabled={isCreatingReceipt || sites.length === 0}
+            disabled={isCreatingReceipt || (!isMisc && sites.length === 0)}
           >
             {isCreatingReceipt ? '送出中…' : '送出待確認'}
           </button>
@@ -291,8 +333,9 @@ export function ExpensesPage() {
                 <span className="badge">{EXPENSE_STATUS_LABELS[e.status]}</span>
               </div>
               <p style={{ margin: 0 }}>
-                {e.siteName} · {e.reportedByName} ·{' '}
-                {formatTaipei(e.reportedAt, 'MM/dd HH:mm')}
+                {e.siteName}
+                {e.locationText ? `（${e.locationText}）` : ''} ·{' '}
+                {e.reportedByName} · {formatTaipei(e.reportedAt, 'MM/dd HH:mm')}
                 {e.receiptPhotoPath ? ' · 已附收據' : ''}
               </p>
               {isBoss && e.status === 'pending_review' ? (
@@ -338,8 +381,9 @@ export function ExpensesPage() {
                 <span className="badge">{RECEIPT_STATUS_LABELS[r.status]}</span>
               </div>
               <p style={{ margin: 0 }}>
-                {r.siteName} · {r.reportedByName} ·{' '}
-                {formatTaipei(r.reportedAt, 'MM/dd HH:mm')}
+                {r.siteName}
+                {r.locationText ? `（${r.locationText}）` : ''} ·{' '}
+                {r.reportedByName} · {formatTaipei(r.reportedAt, 'MM/dd HH:mm')}
                 {r.sourceNote ? ` · ${r.sourceNote}` : ''}
               </p>
               {isBoss && r.status === 'pending_confirm' ? (

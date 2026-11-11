@@ -48,10 +48,12 @@ export function useFieldFinance(userId: string | undefined) {
 
   const createExpense = useMutation({
     mutationFn: async (input: {
-      siteId: string
+      siteId?: string | null
       item: string
       amount: number
       note?: string | null
+      locationText?: string | null
+      misc?: boolean
       receiptPhotoPath?: string | null
       receiptFiles?: File[]
     }) => {
@@ -63,7 +65,7 @@ export function useFieldFinance(userId: string | undefined) {
           paths.push(
             await supabaseRepos.uploadReceiptPhoto({
               file,
-              siteId: input.siteId,
+              siteId: input.misc ? null : input.siteId,
             }),
           )
         }
@@ -76,6 +78,8 @@ export function useFieldFinance(userId: string | undefined) {
         item: input.item,
         amount: input.amount,
         note: input.note,
+        locationText: input.locationText,
+        misc: input.misc,
         receiptPhotoPath,
       }
       return formal
@@ -101,9 +105,11 @@ export function useFieldFinance(userId: string | undefined) {
 
   const createReceipt = useMutation({
     mutationFn: async (input: {
-      siteId: string
+      siteId?: string | null
       amount: number
       sourceNote?: string | null
+      locationText?: string | null
+      misc?: boolean
       proofFiles?: File[]
     }) => {
       if (!user) throw new Error('尚未登入')
@@ -111,7 +117,7 @@ export function useFieldFinance(userId: string | undefined) {
       if (formal && input.proofFiles?.length) {
         proofPhotoPath = await supabaseRepos.uploadReceiptPhoto({
           file: input.proofFiles[0],
-          siteId: input.siteId,
+          siteId: input.misc ? null : input.siteId,
         })
       } else if (!formal && input.proofFiles?.length) {
         proofPhotoPath = `local-receipt:${input.proofFiles[0].name}`
@@ -120,6 +126,8 @@ export function useFieldFinance(userId: string | undefined) {
         siteId: input.siteId,
         amount: input.amount,
         sourceNote: input.sourceNote,
+        locationText: input.locationText,
+        misc: input.misc,
         proofPhotoPath,
       }
       return formal

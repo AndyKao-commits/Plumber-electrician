@@ -52,6 +52,29 @@ describe('V1.0 field finance local', () => {
     expect(localDb.listAuditLogs().length).toBeGreaterThan(0)
   })
 
+  it('misc expense/receipt allow null site + location text', () => {
+    const w = worker()
+    const misc = localDb.createExpenseReport(w, {
+      misc: true,
+      locationText: '中油忠孝站',
+      item: '加油',
+      amount: 500,
+    })
+    expect(misc.siteId).toBeNull()
+    expect(misc.siteName).toMatch(/雜項/)
+    expect(misc.locationText).toBe('中油忠孝站')
+    expect(misc.item).toBe('加油')
+
+    const rc = localDb.createCashReceipt(w, {
+      misc: true,
+      locationText: '臨時會合點',
+      amount: 300,
+      sourceNote: '代墊餐費收回',
+    })
+    expect(rc.siteId).toBeNull()
+    expect(rc.locationText).toBe('臨時會合點')
+  })
+
   it('boss can set daily purchase and emergency limits', () => {
     const b = boss()
     const before = localDb.getOrgSpendSettings()

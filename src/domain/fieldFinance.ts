@@ -43,6 +43,55 @@ export function assertExpenseItem(item: string): string {
   return s
 }
 
+/** Sentinel used by UI selects for misc (no site) cash. */
+export const MISC_SITE_VALUE = '__misc__'
+
+export const MISC_SITE_LABEL = '雜項（無工地）'
+
+/** Examples: 加油、買飯、飲料、臨時支援 */
+export const MISC_EXPENSE_EXAMPLES = ['加油', '買飯', '飲料', '臨時支援'] as const
+
+export function resolveFieldCashTarget(input: {
+  siteId?: string | null
+  siteName?: string | null
+  locationText?: string | null
+  misc?: boolean
+}): {
+  siteId: string | null
+  siteName: string
+  locationText: string | null
+  isMisc: boolean
+} {
+  const misc =
+    input.misc === true ||
+    input.siteId === MISC_SITE_VALUE ||
+    (!input.siteId && Boolean(input.locationText?.trim() || input.siteName === MISC_SITE_LABEL))
+  if (misc) {
+    const location = input.locationText?.trim() || null
+    return {
+      siteId: null,
+      siteName: MISC_SITE_LABEL,
+      locationText: location,
+      isMisc: true,
+    }
+  }
+  const siteId = (input.siteId || '').trim()
+  if (!siteId) {
+    throw new Error('請選擇工地，或改選雜項並自行輸入地點')
+  }
+  return {
+    siteId,
+    siteName: (input.siteName || '').trim() || '工地',
+    locationText: input.locationText?.trim() || null,
+    isMisc: false,
+  }
+}
+
+/** Case-linked totals should ignore misc (null site) rows. */
+export function isCaseLinkedCash(row: { siteId?: string | null }): boolean {
+  return Boolean(row.siteId)
+}
+
 /** Employees cannot finalize their own expense / receipt. */
 export function assertBossFinalize(input: {
   actorRole: UserRole
