@@ -76,6 +76,12 @@ import {
   assertUsageQty,
   computeUsageCost,
 } from '@/domain/materialUsage'
+import {
+  assertAvailableForConsume,
+  assertPositiveQty,
+  assertReservationRelease,
+  assertTransferDoesNotAffectCost,
+} from '@/domain/stockLedger'
 import { roundMoney } from '@/domain/money'
 import {
   assertCanMarkChangeOrderAccept,
@@ -116,6 +122,10 @@ import type {
   OperatingCostKind,
   MaterialStock,
   MaterialUsage,
+  StockBalance,
+  StockLocation,
+  StockMovement,
+  StockReservation,
   PaymentAllocation,
   PaymentMethod,
   PurchaseMode,
@@ -582,6 +592,65 @@ function mapMaterialUsageRow(row: Record<string, unknown>): MaterialUsage {
     clientOperationId: String(row.client_operation_id),
     postedAt: String(row.posted_at),
     createdBy: String(row.created_by ?? ''),
+  }
+}
+
+function mapStockLocationRow(row: Record<string, unknown>): StockLocation {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    kind: row.kind as StockLocation['kind'],
+    name: String(row.name),
+    siteId: (row.site_id as string | null) ?? null,
+    isDefault: Boolean(row.is_default),
+    createdAt: String(row.created_at),
+  }
+}
+
+function mapStockBalanceRow(row: Record<string, unknown>): StockBalance {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    materialId: String(row.material_id),
+    locationId: String(row.location_id),
+    qty: Number(row.qty),
+    updatedAt: String(row.updated_at),
+  }
+}
+
+function mapStockMovementRow(row: Record<string, unknown>): StockMovement {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    movementType: row.movement_type as StockMovement['movementType'],
+    materialId: String(row.material_id),
+    materialName: String(row.material_name),
+    qty: Number(row.qty),
+    unitCost: Number(row.unit_cost),
+    fromLocationId: (row.from_location_id as string | null) ?? null,
+    toLocationId: (row.to_location_id as string | null) ?? null,
+    reservationId: (row.reservation_id as string | null) ?? null,
+    note: (row.note as string | null) ?? null,
+    clientOperationId: String(row.client_operation_id),
+    postedAt: String(row.posted_at),
+    createdBy: String(row.created_by ?? ''),
+    reversalOf: (row.reversal_of as string | null) ?? null,
+  }
+}
+
+function mapStockReservationRow(row: Record<string, unknown>): StockReservation {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    materialId: String(row.material_id),
+    locationId: (row.location_id as string | null) ?? null,
+    qty: Number(row.qty),
+    status: row.status as StockReservation['status'],
+    note: (row.note as string | null) ?? null,
+    clientOperationId: String(row.client_operation_id),
+    createdAt: String(row.created_at),
+    createdBy: String(row.created_by ?? ''),
+    releasedAt: (row.released_at as string | null) ?? null,
   }
 }
 
@@ -2911,15 +2980,336 @@ export const supabaseRepos = {
       .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
       .order('name', { ascending: true })
     if (error) throw new AppError(toUserMessage(error, '無法載入庫存'))
-    return (data ?? []).map((row) => ({
-      id: String(row.id),
-      organizationId: String(row.organization_id),
-      name: String(row.name),
-      unit: String(row.unit),
-      qty: Number(row.qty),
-      unitCost: Number(row.unit_cost),
-      updatedAt: String(row.updated_at),
-    }))
+    const { data: reservations } = await sb()
+      .from('stock_reservations')
+      .select('material_id, qty, status')
+      .eq('status', 'active')
+    const reservedByMaterial = new Map<string, number>()
+    for (const r of reservations ?? []) {
+      const mid = String(r.material_id)
+      reservedByMaterial.set(
+        mid,
+        roundMoney((reservedByMaterial.get(mid) || 0) + Number(r.qty), 4),
+      )
+    }
+    return (data ?? []).map((row) => {
+      const qty = Number(row.qty)
+      const reservedQty = reservedByMaterial.get(String(row.id)) || 0
+      return {
+        id: String(row.id),
+        organizationId: String(row.organization_id),
+        name: String(row.name),
+        unit: String(row.unit),
+        qty,
+        unitCost: Number(row.unit_cost),
+        reservedQty,
+        availableQty: roundMoney(qty - reservedQty, 4),
+        updatedAt: String(row.updated_at),
+      }
+    })
+  },
+
+  async listStockLocations(): Promise<StockLocation[]> {
+    const { data, error } = await sb()
+      .from('stock_locations')
+      .select('id, organization_id, kind, name, site_id, is_default, created_at')
+      .order('name', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入庫位'))
+    return (data ?? []).map((row) =>
+      mapStockLocationRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listStockBalances(materialId?: string): Promise<StockBalance[]> {
+    let q = sb()
+      .from('stock_balances')
+      .select('id, organization_id, material_id, location_id, qty, updated_at')
+    if (materialId) q = q.eq('material_id', requireUuid(materialId, '材料'))
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入庫位餘額'))
+    return (data ?? []).map((row) =>
+      mapStockBalanceRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listStockMovements(materialId?: string): Promise<StockMovement[]> {
+    let q = sb()
+      .from('stock_movements')
+      .select(
+        'id, organization_id, movement_type, material_id, material_name, qty, unit_cost, from_location_id, to_location_id, reservation_id, note, client_operation_id, posted_at, created_by, reversal_of',
+      )
+    if (materialId) q = q.eq('material_id', requireUuid(materialId, '材料'))
+    const { data, error } = await q.order('posted_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入流水帳'))
+    return (data ?? []).map((row) =>
+      mapStockMovementRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listStockReservations(materialId?: string): Promise<StockReservation[]> {
+    let q = sb()
+      .from('stock_reservations')
+      .select(
+        'id, organization_id, material_id, location_id, qty, status, note, client_operation_id, created_at, created_by, released_at',
+      )
+    if (materialId) q = q.eq('material_id', requireUuid(materialId, '材料'))
+    const { data, error } = await q.order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入預留'))
+    return (data ?? []).map((row) =>
+      mapStockReservationRow(row as Record<string, unknown>),
+    )
+  },
+
+  async ensureDefaultWarehouse(actor: AppUser): Promise<string> {
+    const locs = await this.listStockLocations()
+    const existing =
+      locs.find((l) => l.isDefault) || locs.find((l) => l.kind === 'warehouse')
+    if (existing) return existing.id
+    const { data, error } = await sb()
+      .from('stock_locations')
+      .insert({
+        kind: 'warehouse',
+        name: '總倉',
+        is_default: true,
+        site_id: null,
+      })
+      .select('id')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立預設倉庫'))
+    void actor
+    return String(data.id)
+  },
+
+  async upsertStockBalanceDelta(input: {
+    materialId: string
+    locationId: string
+    delta: number
+  }): Promise<void> {
+    const materialId = requireUuid(input.materialId, '材料')
+    const locationId = requireUuid(input.locationId, '庫位')
+    const { data: existing } = await sb()
+      .from('stock_balances')
+      .select('id, qty')
+      .eq('material_id', materialId)
+      .eq('location_id', locationId)
+      .maybeSingle()
+    const nextQty = roundMoney(Number(existing?.qty || 0) + input.delta, 4)
+    if (nextQty < -0.0001) throw new AppError('禁止負庫存')
+    if (existing) {
+      const { error } = await sb()
+        .from('stock_balances')
+        .update({ qty: Math.max(0, nextQty), updated_at: new Date().toISOString() })
+        .eq('id', existing.id)
+      if (error) throw new AppError(toUserMessage(error, '無法更新庫位餘額'))
+      return
+    }
+    const { error } = await sb().from('stock_balances').insert({
+      material_id: materialId,
+      location_id: locationId,
+      qty: Math.max(0, nextQty),
+    })
+    if (error) throw new AppError(toUserMessage(error, '無法建立庫位餘額'))
+  },
+
+  async appendStockMovement(
+    actor: AppUser,
+    input: {
+      movementType: StockMovement['movementType']
+      materialId: string
+      materialName: string
+      qty: number
+      unitCost: number
+      fromLocationId?: string | null
+      toLocationId?: string | null
+      reservationId?: string | null
+      note?: string | null
+      clientOperationId: string
+    },
+  ): Promise<StockMovement> {
+    const { data, error } = await sb()
+      .from('stock_movements')
+      .insert({
+        movement_type: input.movementType,
+        material_id: requireUuid(input.materialId, '材料'),
+        material_name: input.materialName,
+        qty: input.qty,
+        unit_cost: input.unitCost,
+        from_location_id: optionalUuid(input.fromLocationId, '來源庫位'),
+        to_location_id: optionalUuid(input.toLocationId, '目的庫位'),
+        reservation_id: optionalUuid(input.reservationId, '預留'),
+        note: input.note?.trim() || null,
+        client_operation_id: input.clientOperationId.trim(),
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, movement_type, material_id, material_name, qty, unit_cost, from_location_id, to_location_id, reservation_id, note, client_operation_id, posted_at, created_by, reversal_of',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法寫入流水帳'))
+    return mapStockMovementRow(data as Record<string, unknown>)
+  },
+
+  async transferStock(
+    actor: AppUser,
+    input: {
+      materialId: string
+      qty: number
+      fromLocationId: string
+      toLocationId: string
+      note?: string | null
+      clientOperationId: string
+    },
+  ): Promise<StockMovement> {
+    assertPermission(actor.role, PERMISSIONS.INVENTORY_ADJUST, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const qty = assertPositiveQty(input.qty, '調撥數量')
+    if (input.fromLocationId === input.toLocationId) {
+      throw new AppError('調撥來源與目的庫位不可相同')
+    }
+    const materials = await this.listMaterials(actor)
+    const mat = materials.find((m) => m.id === input.materialId)
+    if (!mat) throw new AppError('找不到材料')
+    assertAvailableForConsume({
+      onHand: mat.qty,
+      reserved: mat.reservedQty || 0,
+      qty,
+      label: '調撥數量',
+    })
+    await this.upsertStockBalanceDelta({
+      materialId: mat.id,
+      locationId: input.fromLocationId,
+      delta: -qty,
+    })
+    await this.upsertStockBalanceDelta({
+      materialId: mat.id,
+      locationId: input.toLocationId,
+      delta: qty,
+    })
+    assertTransferDoesNotAffectCost({
+      beforeUnitCost: mat.unitCost,
+      afterUnitCost: mat.unitCost,
+      beforeOrgQty: mat.qty,
+      afterOrgQty: mat.qty,
+    })
+    return this.appendStockMovement(actor, {
+      movementType: 'transfer',
+      materialId: mat.id,
+      materialName: mat.name,
+      qty,
+      unitCost: mat.unitCost,
+      fromLocationId: input.fromLocationId,
+      toLocationId: input.toLocationId,
+      note: input.note,
+      clientOperationId: input.clientOperationId,
+    })
+  },
+
+  async reserveStock(
+    actor: AppUser,
+    input: {
+      materialId: string
+      qty: number
+      locationId?: string | null
+      note?: string | null
+      clientOperationId: string
+    },
+  ): Promise<StockReservation> {
+    assertPermission(actor.role, PERMISSIONS.INVENTORY_ADJUST, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const qty = assertPositiveQty(input.qty, '預留數量')
+    const materials = await this.listMaterials(actor)
+    const mat = materials.find((m) => m.id === input.materialId)
+    if (!mat) throw new AppError('找不到材料')
+    assertAvailableForConsume({
+      onHand: mat.qty,
+      reserved: mat.reservedQty || 0,
+      qty,
+      label: '預留數量',
+    })
+    const locationId =
+      input.locationId || (await this.ensureDefaultWarehouse(actor))
+    const { data, error } = await sb()
+      .from('stock_reservations')
+      .insert({
+        material_id: requireUuid(mat.id, '材料'),
+        location_id: requireUuid(locationId, '庫位'),
+        qty,
+        status: 'active',
+        note: input.note?.trim() || null,
+        client_operation_id: input.clientOperationId.trim(),
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, material_id, location_id, qty, status, note, client_operation_id, created_at, created_by, released_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立預留'))
+    const row = mapStockReservationRow(data as Record<string, unknown>)
+    await this.appendStockMovement(actor, {
+      movementType: 'reserve',
+      materialId: mat.id,
+      materialName: mat.name,
+      qty,
+      unitCost: mat.unitCost,
+      fromLocationId: locationId,
+      reservationId: row.id,
+      note: row.note,
+      clientOperationId: `mv-${input.clientOperationId}`,
+    })
+    return row
+  },
+
+  async releaseReservation(
+    actor: AppUser,
+    input: { reservationId: string; clientOperationId: string },
+  ): Promise<StockReservation> {
+    assertPermission(actor.role, PERMISSIONS.INVENTORY_ADJUST, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const rid = requireUuid(input.reservationId, '預留')
+    const { data: current, error: loadError } = await sb()
+      .from('stock_reservations')
+      .select(
+        'id, organization_id, material_id, location_id, qty, status, note, client_operation_id, created_at, created_by, released_at',
+      )
+      .eq('id', rid)
+      .maybeSingle()
+    if (loadError || !current) {
+      throw new AppError(toUserMessage(loadError, '找不到預留'))
+    }
+    const mapped = mapStockReservationRow(current as Record<string, unknown>)
+    assertReservationRelease({
+      status: mapped.status,
+      releaseQty: mapped.qty,
+      reservedQty: mapped.qty,
+    })
+    const { data, error } = await sb()
+      .from('stock_reservations')
+      .update({
+        status: 'released',
+        released_at: new Date().toISOString(),
+      })
+      .eq('id', rid)
+      .select(
+        'id, organization_id, material_id, location_id, qty, status, note, client_operation_id, created_at, created_by, released_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法釋放預留'))
+    const materials = await this.listMaterials(actor)
+    const mat = materials.find((m) => m.id === mapped.materialId)
+    await this.appendStockMovement(actor, {
+      movementType: 'release',
+      materialId: mapped.materialId,
+      materialName: mat?.name || mapped.materialId,
+      qty: mapped.qty,
+      unitCost: mat?.unitCost || 0,
+      fromLocationId: mapped.locationId,
+      reservationId: mapped.id,
+      clientOperationId: input.clientOperationId,
+    })
+    return mapStockReservationRow(data as Record<string, unknown>)
   },
 
   async listMaterialUsages(repairCaseId?: string): Promise<MaterialUsage[]> {
@@ -2968,13 +3358,28 @@ export const supabaseRepos = {
       throw new AppError(toUserMessage(loadError, '找不到材料'))
     }
     assertSameOrganization(actor.organizationId, String(material.organization_id))
+    const listed = await this.listMaterials(actor)
+    const withReserve = listed.find((m) => m.id === materialId)
+    const reservedQty = withReserve?.reservedQty || 0
+    assertAvailableForConsume({
+      onHand: Number(material.qty),
+      reserved: reservedQty,
+      qty,
+      label: '耗用數量',
+    })
     assertNoNegativeStock({
-      availableQty: Number(material.qty),
+      availableQty: Number(material.qty) - reservedQty,
       usageQty: qty,
     })
     const unitCost = Number(material.unit_cost)
     const totalCost = computeUsageCost({ qty, unitCost })
     const nextQty = roundMoney(Number(material.qty) - qty, 4)
+    const locationId = await this.ensureDefaultWarehouse(actor)
+    await this.upsertStockBalanceDelta({
+      materialId,
+      locationId,
+      delta: -qty,
+    })
     const { error: updError } = await sb()
       .from('materials')
       .update({ qty: nextQty, updated_at: new Date().toISOString() })
@@ -2999,6 +3404,16 @@ export const supabaseRepos = {
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法過帳耗用'))
+    await this.appendStockMovement(actor, {
+      movementType: 'usage',
+      materialId,
+      materialName: String(material.name),
+      qty,
+      unitCost,
+      fromLocationId: locationId,
+      note: input.note,
+      clientOperationId: `mv-usage-${input.clientOperationId.trim()}`,
+    })
     return mapMaterialUsageRow(data as Record<string, unknown>)
   },
 
@@ -3041,13 +3456,15 @@ export const supabaseRepos = {
       materialId: string
       qty: number
       unitCost: number
+      locationId?: string | null
+      clientOperationId?: string
     },
   ): Promise<MaterialStock> {
     assertPermission(actor.role, PERMISSIONS.INVENTORY_INBOUND, {
       financeAuthorized: actor.financeAuthorized,
     })
     const materialId = requireUuid(input.materialId, '材料')
-    if (input.qty <= 0) throw new AppError('入庫數量必須大於 0')
+    const inboundQty = assertPositiveQty(input.qty, '入庫數量')
     if (input.unitCost < 0) throw new AppError('入庫單價不可為負')
 
     const { data: current, error: loadError } = await sb()
@@ -3062,10 +3479,18 @@ export const supabaseRepos = {
     const next = applyInboundMovingAverage({
       oldQty: Number(current.qty),
       oldUnitCost: Number(current.unit_cost),
-      inboundQty: input.qty,
+      inboundQty,
       inboundUnitCost: input.unitCost,
     })
     if (next.qty < 0) throw new AppError('禁止負庫存')
+
+    const locationId =
+      input.locationId || (await this.ensureDefaultWarehouse(actor))
+    await this.upsertStockBalanceDelta({
+      materialId,
+      locationId,
+      delta: inboundQty,
+    })
 
     const { data, error } = await sb()
       .from('materials')
@@ -3078,6 +3503,19 @@ export const supabaseRepos = {
       .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
       .single()
     if (error) throw new AppError(toUserMessage(error, '入庫失敗'))
+    await this.appendStockMovement(actor, {
+      movementType: 'inbound',
+      materialId,
+      materialName: String(current.name),
+      qty: inboundQty,
+      unitCost: roundMoney(input.unitCost, 4),
+      toLocationId: locationId,
+      clientOperationId:
+        input.clientOperationId?.trim() || `inbound-${crypto.randomUUID()}`,
+    })
+    const reserved = (await this.listMaterials(actor)).find(
+      (m) => m.id === materialId,
+    )
     return {
       id: String(data.id),
       organizationId: String(data.organization_id),
@@ -3085,6 +3523,8 @@ export const supabaseRepos = {
       unit: String(data.unit),
       qty: Number(data.qty),
       unitCost: Number(data.unit_cost),
+      reservedQty: reserved?.reservedQty || 0,
+      availableQty: reserved?.availableQty ?? Number(data.qty),
       updatedAt: String(data.updated_at),
     }
   },

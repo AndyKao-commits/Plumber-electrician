@@ -88,6 +88,10 @@ import type {
   MaterialStock,
   MaterialUsage,
   OperatingCostKind,
+  StockBalance,
+  StockLocation,
+  StockMovement,
+  StockReservation,
   PaymentAllocation,
   PaymentMethod,
   PurchaseRecord,
@@ -131,6 +135,15 @@ import {
   assertUsageQty,
   computeUsageCost,
 } from '@/domain/materialUsage'
+import {
+  assertAvailableForConsume,
+  assertLedgerImmutable,
+  assertNoNegativeOnHand,
+  assertPositiveQty,
+  assertReservationRelease,
+  assertTransferDoesNotAffectCost,
+  sumActiveReserved,
+} from '@/domain/stockLedger'
 import { roundMoney } from '@/domain/money'
 import { formatTaipei } from '@/lib/time'
 
@@ -172,6 +185,10 @@ const KEYS = {
   customerSiteLinks: 'eg.customerSiteLinks.v1',
   materials: 'eg.materials.v1',
   materialUsages: 'eg.materialUsages.v1',
+  stockLocations: 'eg.stockLocations.v1',
+  stockBalances: 'eg.stockBalances.v1',
+  stockMovements: 'eg.stockMovements.v1',
+  stockReservations: 'eg.stockReservations.v1',
 } as const
 
 function read<T>(key: string, fallback: T): T {
@@ -217,6 +234,10 @@ const emptyCustomerContacts: CustomerContact[] = []
 const emptyCustomerSiteLinks: CustomerSiteLink[] = []
 const emptyMaterials: MaterialStock[] = []
 const emptyMaterialUsages: MaterialUsage[] = []
+const emptyStockLocations: StockLocation[] = []
+const emptyStockBalances: StockBalance[] = []
+const emptyStockMovements: StockMovement[] = []
+const emptyStockReservations: StockReservation[] = []
 
 function write<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value))
@@ -452,6 +473,45 @@ function seedIfNeeded() {
   write(KEYS.customerSiteLinks, emptyCustomerSiteLinks)
   write(KEYS.materials, seededMaterials)
   write(KEYS.materialUsages, emptyMaterialUsages)
+  const defaultWh: StockLocation = {
+    id: 'loc-warehouse',
+    organizationId: ORG_ID,
+    kind: 'warehouse',
+    name: '總倉',
+    siteId: null,
+    isDefault: true,
+    createdAt: now,
+  }
+  const siteLoc: StockLocation = {
+    id: 'loc-site-a',
+    organizationId: ORG_ID,
+    kind: 'site',
+    name: '工地庫 · 示範工程 A',
+    siteId: 'site-a',
+    isDefault: false,
+    createdAt: now,
+  }
+  write(KEYS.stockLocations, [defaultWh, siteLoc])
+  write(KEYS.stockBalances, [
+    {
+      id: 'bal-pipe-wh',
+      organizationId: ORG_ID,
+      materialId: 'mat-pipe',
+      locationId: defaultWh.id,
+      qty: 20,
+      updatedAt: now,
+    },
+    {
+      id: 'bal-wire-wh',
+      organizationId: ORG_ID,
+      materialId: 'mat-wire',
+      locationId: defaultWh.id,
+      qty: 100,
+      updatedAt: now,
+    },
+  ])
+  write(KEYS.stockMovements, emptyStockMovements)
+  write(KEYS.stockReservations, emptyStockReservations)
   write(KEYS.shortcuts, [
     'clock',
     'sites',
@@ -2433,7 +2493,295 @@ export const localDb = {
   },
 
   getMaterials(): MaterialStock[] {
-    return read(KEYS.materials, emptyMaterials)
+    const reserved = read(KEYS.stockReservations, emptyStockReservations)
+    return read(KEYS.materials, emptyMaterials).map((m) => {
+      const reservedQty = sumActiveReserved(
+        reserved.filter((r) => r.materialId === m.id),
+      )
+      return {
+        ...m,
+        reservedQty,
+        availableQty: roundMoney(m.qty - reservedQty, 4),
+      }
+    })
+  },
+
+  listStockLocations(): StockLocation[] {
+    return read(KEYS.stockLocations, emptyStockLocations)
+  },
+
+  listStockBalances(materialId?: string): StockBalance[] {
+    const all = read(KEYS.stockBalances, emptyStockBalances)
+    return materialId ? all.filter((b) => b.materialId === materialId) : all
+  },
+
+  listStockMovements(materialId?: string): StockMovement[] {
+    const all = read(KEYS.stockMovements, emptyStockMovements)
+    const filtered = materialId
+      ? all.filter((m) => m.materialId === materialId)
+      : all
+    return filtered.sort((a, b) => b.postedAt.localeCompare(a.postedAt))
+  },
+
+  listStockReservations(materialId?: string): StockReservation[] {
+    const all = read(KEYS.stockReservations, emptyStockReservations)
+    const filtered = materialId
+      ? all.filter((r) => r.materialId === materialId)
+      : all
+    return filtered.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  },
+
+  defaultWarehouseId(): string {
+    const locs = this.listStockLocations()
+    const wh = locs.find((l) => l.isDefault) || locs.find((l) => l.kind === 'warehouse')
+    if (!wh) throw new Error('尚未設定預設倉庫')
+    return wh.id
+  },
+
+  upsertBalance(input: {
+    materialId: string
+    locationId: string
+    delta: number
+  }): StockBalance {
+    const now = new Date().toISOString()
+    const all = read(KEYS.stockBalances, emptyStockBalances)
+    const idx = all.findIndex(
+      (b) =>
+        b.materialId === input.materialId && b.locationId === input.locationId,
+    )
+    if (idx < 0) {
+      const nextQty = assertNoNegativeOnHand({ onHand: 0, delta: input.delta })
+      const row: StockBalance = {
+        id: `bal-${crypto.randomUUID()}`,
+        organizationId: ORG_ID,
+        materialId: input.materialId,
+        locationId: input.locationId,
+        qty: nextQty,
+        updatedAt: now,
+      }
+      all.push(row)
+      write(KEYS.stockBalances, all)
+      return row
+    }
+    const current = all[idx]
+    const nextQty = assertNoNegativeOnHand({
+      onHand: current.qty,
+      delta: input.delta,
+    })
+    const updated: StockBalance = { ...current, qty: nextQty, updatedAt: now }
+    all[idx] = updated
+    write(KEYS.stockBalances, all)
+    return updated
+  },
+
+  appendMovement(
+    actor: { id: string },
+    input: Omit<StockMovement, 'id' | 'organizationId' | 'postedAt' | 'createdBy'>,
+  ): StockMovement {
+    const movements = read(KEYS.stockMovements, emptyStockMovements)
+    if (
+      movements.some((m) => m.clientOperationId === input.clientOperationId)
+    ) {
+      throw new Error('此庫存異動已過帳（冪等）')
+    }
+    const row: StockMovement = {
+      ...input,
+      id: `sm-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      postedAt: new Date().toISOString(),
+      createdBy: actor.id,
+    }
+    movements.unshift(row)
+    write(KEYS.stockMovements, movements)
+    return row
+  },
+
+  /** INV-002: posted movements are immutable. */
+  updateStockMovement(_id: string): never {
+    return assertLedgerImmutable({ action: 'update' })
+  },
+
+  deleteStockMovement(_id: string): never {
+    return assertLedgerImmutable({ action: 'delete' })
+  },
+
+  reserveStock(
+    actor: { id: string },
+    input: {
+      materialId: string
+      qty: number
+      locationId?: string | null
+      note?: string | null
+      clientOperationId: string
+    },
+  ): StockReservation {
+    const qty = assertPositiveQty(input.qty, '預留數量')
+    const materials = read(KEYS.materials, emptyMaterials)
+    const mat = materials.find((m) => m.id === input.materialId)
+    if (!mat) throw new Error('找不到材料')
+    const reserved = sumActiveReserved(
+      read(KEYS.stockReservations, emptyStockReservations).filter(
+        (r) => r.materialId === mat.id,
+      ),
+    )
+    assertAvailableForConsume({
+      onHand: mat.qty,
+      reserved,
+      qty,
+      label: '預留數量',
+    })
+    const locationId = input.locationId || this.defaultWarehouseId()
+    const locBal = this.listStockBalances(mat.id).find(
+      (b) => b.locationId === locationId,
+    )
+    if (!locBal || locBal.qty + 0.0001 < qty) {
+      throw new Error('庫位可用量不足，無法預留')
+    }
+    const now = new Date().toISOString()
+    const row: StockReservation = {
+      id: `sr-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      materialId: mat.id,
+      locationId,
+      qty,
+      status: 'active',
+      note: input.note?.trim() || null,
+      clientOperationId: input.clientOperationId.trim(),
+      createdAt: now,
+      createdBy: actor.id,
+      releasedAt: null,
+    }
+    const all = read(KEYS.stockReservations, emptyStockReservations)
+    if (all.some((r) => r.clientOperationId === row.clientOperationId)) {
+      throw new Error('此預留已建立（冪等）')
+    }
+    all.unshift(row)
+    write(KEYS.stockReservations, all)
+    this.appendMovement(actor, {
+      movementType: 'reserve',
+      materialId: mat.id,
+      materialName: mat.name,
+      qty,
+      unitCost: mat.unitCost,
+      fromLocationId: locationId,
+      toLocationId: null,
+      reservationId: row.id,
+      note: row.note,
+      clientOperationId: `mv-${row.clientOperationId}`,
+      reversalOf: null,
+    })
+    return row
+  },
+
+  releaseReservation(
+    actor: { id: string },
+    input: { reservationId: string; clientOperationId: string },
+  ): StockReservation {
+    const all = read(KEYS.stockReservations, emptyStockReservations)
+    const idx = all.findIndex((r) => r.id === input.reservationId)
+    if (idx < 0) throw new Error('找不到預留')
+    const current = all[idx]
+    assertReservationRelease({
+      status: current.status,
+      releaseQty: current.qty,
+      reservedQty: current.qty,
+    })
+    const now = new Date().toISOString()
+    const updated: StockReservation = {
+      ...current,
+      status: 'released',
+      releasedAt: now,
+    }
+    all[idx] = updated
+    write(KEYS.stockReservations, all)
+    const mat = read(KEYS.materials, emptyMaterials).find(
+      (m) => m.id === current.materialId,
+    )
+    this.appendMovement(actor, {
+      movementType: 'release',
+      materialId: current.materialId,
+      materialName: mat?.name || current.materialId,
+      qty: current.qty,
+      unitCost: mat?.unitCost || 0,
+      fromLocationId: current.locationId || null,
+      toLocationId: null,
+      reservationId: current.id,
+      note: null,
+      clientOperationId: input.clientOperationId.trim(),
+      reversalOf: null,
+    })
+    return updated
+  },
+
+  transferStock(
+    actor: { id: string },
+    input: {
+      materialId: string
+      qty: number
+      fromLocationId: string
+      toLocationId: string
+      note?: string | null
+      clientOperationId: string
+    },
+  ): StockMovement {
+    const qty = assertPositiveQty(input.qty, '調撥數量')
+    if (input.fromLocationId === input.toLocationId) {
+      throw new Error('調撥來源與目的庫位不可相同')
+    }
+    const locs = this.listStockLocations()
+    if (!locs.some((l) => l.id === input.fromLocationId)) {
+      throw new Error('找不到來源庫位')
+    }
+    if (!locs.some((l) => l.id === input.toLocationId)) {
+      throw new Error('找不到目的庫位')
+    }
+    const materials = read(KEYS.materials, emptyMaterials)
+    const idx = materials.findIndex((m) => m.id === input.materialId)
+    if (idx < 0) throw new Error('找不到材料')
+    const mat = materials[idx]
+    const reserved = sumActiveReserved(
+      read(KEYS.stockReservations, emptyStockReservations).filter(
+        (r) => r.materialId === mat.id,
+      ),
+    )
+    assertAvailableForConsume({
+      onHand: mat.qty,
+      reserved,
+      qty,
+      label: '調撥數量',
+    })
+    const beforeUnitCost = mat.unitCost
+    const beforeOrgQty = mat.qty
+    this.upsertBalance({
+      materialId: mat.id,
+      locationId: input.fromLocationId,
+      delta: -qty,
+    })
+    this.upsertBalance({
+      materialId: mat.id,
+      locationId: input.toLocationId,
+      delta: qty,
+    })
+    // Org cost pool unchanged — transfer ≠ usage.
+    assertTransferDoesNotAffectCost({
+      beforeUnitCost,
+      afterUnitCost: mat.unitCost,
+      beforeOrgQty,
+      afterOrgQty: mat.qty,
+    })
+    return this.appendMovement(actor, {
+      movementType: 'transfer',
+      materialId: mat.id,
+      materialName: mat.name,
+      qty,
+      unitCost: mat.unitCost,
+      fromLocationId: input.fromLocationId,
+      toLocationId: input.toLocationId,
+      reservationId: null,
+      note: input.note?.trim() || null,
+      clientOperationId: input.clientOperationId.trim(),
+      reversalOf: null,
+    })
   },
 
   listMaterialUsages(repairCaseId?: string): MaterialUsage[] {
@@ -2464,14 +2812,34 @@ export const localDb = {
     if (input.repairCaseId && !this.getRepairCase(input.repairCaseId)) {
       throw new Error('找不到維修案件')
     }
-    const materials = this.getMaterials()
+    const materials = read(KEYS.materials, emptyMaterials)
     const idx = materials.findIndex((m) => m.id === input.materialId)
     if (idx < 0) throw new Error('找不到材料')
     const material = materials[idx]
-    assertNoNegativeStock({ availableQty: material.qty, usageQty: qty })
+    const reservedQty = sumActiveReserved(
+      read(KEYS.stockReservations, emptyStockReservations).filter(
+        (r) => r.materialId === material.id,
+      ),
+    )
+    assertAvailableForConsume({
+      onHand: material.qty,
+      reserved: reservedQty,
+      qty,
+      label: '耗用數量',
+    })
+    assertNoNegativeStock({
+      availableQty: material.qty - reservedQty,
+      usageQty: qty,
+    })
     const unitCost = material.unitCost
     const totalCost = computeUsageCost({ qty, unitCost })
     const now = new Date().toISOString()
+    const locationId = this.defaultWarehouseId()
+    this.upsertBalance({
+      materialId: material.id,
+      locationId,
+      delta: -qty,
+    })
     materials[idx] = {
       ...material,
       qty: roundMoney(material.qty - qty, 4),
@@ -2495,6 +2863,19 @@ export const localDb = {
     }
     usages.unshift(row)
     write(KEYS.materialUsages, usages)
+    this.appendMovement(actor, {
+      movementType: 'usage',
+      materialId: material.id,
+      materialName: material.name,
+      qty,
+      unitCost,
+      fromLocationId: locationId,
+      toLocationId: null,
+      reservationId: null,
+      note: row.note,
+      clientOperationId: `mv-usage-${row.clientOperationId}`,
+      reversalOf: null,
+    })
     return row
   },
 
@@ -2533,20 +2914,32 @@ export const localDb = {
     return this.getQuotation(quote.id)!
   },
 
-  inboundMaterial(input: {
-    materialId: string
-    qty: number
-    unitCost: number
-  }): MaterialStock {
-    const all = this.getMaterials()
+  inboundMaterial(
+    input: {
+      materialId: string
+      qty: number
+      unitCost: number
+      locationId?: string | null
+      clientOperationId?: string
+      actorId?: string
+    },
+  ): MaterialStock {
+    const all = read(KEYS.materials, emptyMaterials)
     const idx = all.findIndex((m) => m.id === input.materialId)
     if (idx < 0) throw new Error('找不到材料')
     const current = all[idx]
+    const inboundQty = assertPositiveQty(input.qty, '入庫數量')
     const next = applyInboundMovingAverage({
       oldQty: current.qty,
       oldUnitCost: current.unitCost,
-      inboundQty: input.qty,
+      inboundQty,
       inboundUnitCost: input.unitCost,
+    })
+    const locationId = input.locationId || this.defaultWarehouseId()
+    this.upsertBalance({
+      materialId: current.id,
+      locationId,
+      delta: inboundQty,
     })
     const updated: MaterialStock = {
       ...current,
@@ -2556,7 +2949,35 @@ export const localDb = {
     }
     all[idx] = updated
     write(KEYS.materials, all)
-    return updated
+    const actorId = input.actorId || 'system'
+    this.appendMovement(
+      { id: actorId },
+      {
+        movementType: 'inbound',
+        materialId: current.id,
+        materialName: current.name,
+        qty: inboundQty,
+        unitCost: roundMoney(input.unitCost, 4),
+        fromLocationId: null,
+        toLocationId: locationId,
+        reservationId: null,
+        note: null,
+        clientOperationId:
+          input.clientOperationId?.trim() ||
+          `inbound-${crypto.randomUUID()}`,
+        reversalOf: null,
+      },
+    )
+    const reservedQty = sumActiveReserved(
+      read(KEYS.stockReservations, emptyStockReservations).filter(
+        (r) => r.materialId === updated.id,
+      ),
+    )
+    return {
+      ...updated,
+      reservedQty,
+      availableQty: roundMoney(updated.qty - reservedQty, 4),
+    }
   },
 
   getNotices(userId: string): AppNotice[] {
