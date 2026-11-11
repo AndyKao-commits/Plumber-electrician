@@ -91,6 +91,7 @@ export const HOME_SHORTCUTS = [
   { id: 'todos', label: '待辦', path: '/todos' },
   { id: 'team', label: '今日團隊', path: '/team' },
   { id: 'audit', label: '操作紀錄', path: '/audit' },
+  { id: 'settings', label: '額度設定', path: '/settings' },
   { id: 'notices', label: '通知中心', path: '/notifications' },
 ] as const
 
@@ -210,19 +211,26 @@ export function assertQuoteDraftEditable(input: {
   }
 }
 
-export function requiresPreApproval(finalPayableNtd: number): boolean {
-  return finalPayableNtd >= PURCHASE_PREAPPROVAL_THRESHOLD_NTD
+export function requiresPreApproval(
+  finalPayableNtd: number,
+  thresholdNtd = PURCHASE_PREAPPROVAL_THRESHOLD_NTD,
+): boolean {
+  return finalPayableNtd >= thresholdNtd
 }
 
-export function isWithinEmergencySingleLimit(finalPayableNtd: number): boolean {
-  return finalPayableNtd <= EMERGENCY_PURCHASE_SINGLE_LIMIT_NTD
+export function isWithinEmergencySingleLimit(
+  finalPayableNtd: number,
+  singleLimitNtd = EMERGENCY_PURCHASE_SINGLE_LIMIT_NTD,
+): boolean {
+  return finalPayableNtd <= singleLimitNtd
 }
 
 export function isWithinEmergencyDailyLimit(
   usedTodayNtd: number,
   nextFinalPayableNtd: number,
+  dailyLimitNtd = EMERGENCY_PURCHASE_DAILY_LIMIT_NTD,
 ): boolean {
-  return usedTodayNtd + nextFinalPayableNtd <= EMERGENCY_PURCHASE_DAILY_LIMIT_NTD
+  return usedTodayNtd + nextFinalPayableNtd <= dailyLimitNtd
 }
 
 export {

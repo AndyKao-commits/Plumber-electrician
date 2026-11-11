@@ -17,7 +17,7 @@ export function SiteDetailPage() {
   const { user } = useUser()
   const { openShift, assignSite, isAssigningSite } = useAttendance(user?.id)
   const formal = isFormalMode()
-  const { photos } = usePhotos()
+  const { photos } = usePhotos(siteId)
   const { reports } = useReports(siteId)
   const {
     defects,
@@ -51,11 +51,8 @@ export function SiteDetailPage() {
   })
 
   const sitePhotos = useMemo(
-    () =>
-      photos
-        .filter((p) => p.siteId === siteId && p.status === 'linked')
-        .slice(0, 8),
-    [photos, siteId],
+    () => photos.filter((p) => p.status === 'linked').slice(0, 8),
+    [photos],
   )
 
   if (isLoading) return <div className="empty">載入工地…</div>
@@ -128,7 +125,7 @@ export function SiteDetailPage() {
           <Link className="btn btn-steel" to={`/reports?siteId=${site.id}`}>
             施工回報
           </Link>
-          <Link className="btn btn-ghost" to={`/photos`}>
+          <Link className="btn btn-ghost" to={`/photos?siteId=${site.id}`}>
             施工照片
           </Link>
           <Link className="btn btn-ghost" to={`/purchases`}>
@@ -165,8 +162,8 @@ export function SiteDetailPage() {
 
       <section className="panel stack">
         <div className="row between">
-          <strong>施工照片</strong>
-          <Link to="/photos">管理</Link>
+          <strong>施工照片（僅本工地）</strong>
+          <Link to={`/photos?siteId=${site.id}`}>管理</Link>
         </div>
         {sitePhotos.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>尚無已歸檔照片</p>
@@ -174,17 +171,19 @@ export function SiteDetailPage() {
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
             {sitePhotos.map((photo) =>
               photo.previewUrl ? (
-                <img
-                  key={photo.id}
-                  src={photo.previewUrl}
-                  alt="工地照片"
-                  style={{
-                    width: 96,
-                    height: 96,
-                    objectFit: 'cover',
-                    borderRadius: 8,
-                  }}
-                />
+                <Link key={photo.id} to={`/photos?siteId=${site.id}`}>
+                  <img
+                    src={photo.previewUrl}
+                    alt="工地照片"
+                    style={{
+                      width: 96,
+                      height: 96,
+                      objectFit: 'cover',
+                      borderRadius: 8,
+                      display: 'block',
+                    }}
+                  />
+                </Link>
               ) : null,
             )}
           </div>

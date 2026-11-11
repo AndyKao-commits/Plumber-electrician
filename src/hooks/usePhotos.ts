@@ -5,22 +5,38 @@ import { supabaseRepos } from '@/lib/supabaseRepos'
 
 export const photoKeys = {
   all: ['photos'] as const,
-  list: () => [...photoKeys.all, 'list'] as const,
+  list: (siteId?: string | null) =>
+    [...photoKeys.all, 'list', siteId ?? 'all'] as const,
 }
 
-export function usePhotos() {
+export function usePhotos(siteId?: string | null) {
   const queryClient = useQueryClient()
   const formal = isFormalMode()
 
   const listQuery = useQuery({
-    queryKey: photoKeys.list(),
+    queryKey: photoKeys.list(siteId),
     enabled: formal,
-    queryFn: async () => supabaseRepos.listPhotoUploads(),
+    queryFn: async () => supabaseRepos.listPhotoUploads(siteId),
   })
 
   const linkMutation = useMutation({
-    mutationFn: async (input: { photoId: string; siteId: string }) => {
-      await supabaseRepos.linkPhotoUpload(input.photoId, input.siteId)
+    mutationFn: async (input: {
+      photoId: string
+      siteId: string
+      photoType?: string | null
+    }) => {
+      await supabaseRepos.linkPhotoUpload(
+        input.photoId,
+        input.siteId,
+        input.photoType,
+      )
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: photoKeys.all }),
+  })
+
+  const classifyMutation = useMutation({
+    mutationFn: async (input: { photoId: string; photoType: string }) => {
+      await supabaseRepos.classifyPhotoUpload(input.photoId, input.photoType)
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: photoKeys.all }),
   })
@@ -33,7 +49,11 @@ export function usePhotos() {
   })
 
   const uploadMutation = useMutation({
-    mutationFn: async (input: { file: File; siteId?: string | null }) => {
+    mutationFn: async (input: {
+      file: File
+      siteId?: string | null
+      photoType?: string | null
+    }) => {
       return supabaseRepos.uploadAppPhoto(input)
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: photoKeys.all }),
@@ -46,6 +66,8 @@ export function usePhotos() {
     refetch: listQuery.refetch,
     linkPhoto: linkMutation.mutateAsync,
     isLinking: linkMutation.isPending,
+    classifyPhoto: classifyMutation.mutateAsync,
+    isClassifying: classifyMutation.isPending,
     discardPhoto: discardMutation.mutateAsync,
     isDiscarding: discardMutation.isPending,
     uploadPhoto: uploadMutation.mutateAsync,

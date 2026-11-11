@@ -10,22 +10,32 @@ function worker() {
 }
 
 describe('V1.0 field finance local', () => {
-  it('employee reports expense; boss confirms; self-finalize blocked', () => {
+  it('small expense under review threshold auto-confirms; large needs boss', () => {
     const b = boss()
     const w = worker()
     const site = localDb.getSites()[0]
-    const exp = localDb.createExpenseReport(w, {
+    const settings = localDb.getOrgSpendSettings()
+
+    const small = localDb.createExpenseReport(w, {
       siteId: site.id,
-      item: `現場材料-${Date.now()}`,
-      amount: 800,
+      item: `現場材料小額-${Date.now()}`,
+      amount: Math.max(1, settings.reportReviewThresholdNtd - 1),
     })
-    expect(exp.status).toBe('pending_review')
+    expect(small.status).toBe('confirmed')
+    expect(small.reviewNote).toMatch(/小額免審/)
+
+    const large = localDb.createExpenseReport(w, {
+      siteId: site.id,
+      item: `現場材料大額-${Date.now()}`,
+      amount: settings.reportReviewThresholdNtd,
+    })
+    expect(large.status).toBe('pending_review')
     expect(() =>
-      localDb.reviewExpenseReport(w, { id: exp.id, decision: 'confirm' }),
+      localDb.reviewExpenseReport(w, { id: large.id, decision: 'confirm' }),
     ).toThrow(/僅老闆/)
-    localDb.reviewExpenseReport(b, { id: exp.id, decision: 'confirm' })
+    localDb.reviewExpenseReport(b, { id: large.id, decision: 'confirm' })
     expect(
-      localDb.listExpenseReports().find((e) => e.id === exp.id)?.status,
+      localDb.listExpenseReports().find((e) => e.id === large.id)?.status,
     ).toBe('confirmed')
 
     const rc = localDb.createCashReceipt(w, {
@@ -40,5 +50,32 @@ describe('V1.0 field finance local', () => {
       }),
     ).not.toThrow()
     expect(localDb.listAuditLogs().length).toBeGreaterThan(0)
+  })
+
+  it('boss can set daily purchase and emergency limits', () => {
+    const b = boss()
+    const before = localDb.getOrgSpendSettings()
+    const next = localDb.updateOrgSpendSettings(b, {
+      reportReviewThresholdNtd: 2500,
+      emergencySingleLimitNtd: 4000,
+      emergencyDailyLimitNtd: 8000,
+      dailyPurchaseLimitNtd: 15000,
+    })
+    expect(next.reportReviewThresholdNtd).toBe(2500)
+    expect(next.dailyPurchaseLimitNtd).toBe(15000)
+    expect(() =>
+      localDb.updateOrgSpendSettings(worker(), {
+        reportReviewThresholdNtd: 1000,
+        emergencySingleLimitNtd: 4000,
+        emergencyDailyLimitNtd: 8000,
+        dailyPurchaseLimitNtd: 0,
+      }),
+    ).toThrow(/僅老闆/)
+    localDb.updateOrgSpendSettings(b, {
+      reportReviewThresholdNtd: before.reportReviewThresholdNtd,
+      emergencySingleLimitNtd: before.emergencySingleLimitNtd,
+      emergencyDailyLimitNtd: before.emergencyDailyLimitNtd,
+      dailyPurchaseLimitNtd: before.dailyPurchaseLimitNtd,
+    })
   })
 })
