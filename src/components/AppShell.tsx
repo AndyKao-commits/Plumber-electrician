@@ -1,14 +1,26 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { clearPostLoginRedirect } from '@/components/RequireAuth'
 import { FEATURE_FLAGS, PRODUCT, ROLES } from '@/domain/rules'
 import { useNotices } from '@/hooks/useNotices'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { useUser } from '@/hooks/useUser'
 
 export function AppShell() {
-  const { user, logout } = useUser()
+  const navigate = useNavigate()
+  const { user, logout, isLoggingOut } = useUser()
   const { unreadCount } = useNotices(user?.id)
   const { online, pendingCount, flush, flushing } = useOfflineQueue()
   const showOffline = FEATURE_FLAGS.offlineFirst && user && (!online || pendingCount > 0)
+
+  async function onLogout() {
+    clearPostLoginRedirect()
+    try {
+      await logout()
+    } finally {
+      clearPostLoginRedirect()
+      navigate('/login', { replace: true })
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -26,8 +38,13 @@ export function AppShell() {
             <NavLink to="/notifications" className="btn btn-ghost">
               通知{unreadCount > 0 ? ` ${unreadCount}` : ''}
             </NavLink>
-            <button className="btn btn-ghost" type="button" onClick={() => void logout()}>
-              登出
+            <button
+              className="btn btn-ghost"
+              type="button"
+              disabled={isLoggingOut}
+              onClick={() => void onLogout()}
+            >
+              {isLoggingOut ? '登出中…' : '登出'}
             </button>
           </div>
         ) : null}

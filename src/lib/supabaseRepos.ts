@@ -955,8 +955,10 @@ export const supabaseRepos = {
   async getCurrentUser(): Promise<AppUser | null> {
     const client = sb()
     const { data: auth, error: authError } = await client.auth.getUser()
-    if (authError) throw new AppError(toUserMessage(authError, '無法取得登入狀態'))
-    if (!auth.user) return null
+    if (authError || !auth.user) {
+      // Missing / expired session is a logged-out state, not a hard failure.
+      return null
+    }
 
     const { data, error } = await client
       .from('profiles')
@@ -1041,7 +1043,10 @@ export const supabaseRepos = {
 
   async signOut(): Promise<void> {
     const { error } = await sb().auth.signOut()
-    if (error) throw new AppError(toUserMessage(error, '登出失敗'))
+    // Already signed out / missing session is fine.
+    if (error && !/session|not authenticated|jwt/i.test(error.message)) {
+      throw new AppError(toUserMessage(error, '登出失敗'))
+    }
   },
 
   async listAllowedSiteIds(userId: string): Promise<string[]> {
