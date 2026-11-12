@@ -28,6 +28,11 @@ export function useNotices(userId: string | undefined) {
     },
   })
 
+  const invalidate = () => {
+    if (!userId) return
+    void queryClient.invalidateQueries({ queryKey: noticeKeys.list(userId) })
+  }
+
   const markRead = useMutation({
     mutationFn: async (id: string) => {
       try {
@@ -37,10 +42,7 @@ export function useNotices(userId: string | undefined) {
         throw new Error(toUserMessage(e, '無法標記已讀'))
       }
     },
-    onSuccess: () => {
-      if (!userId) return
-      void queryClient.invalidateQueries({ queryKey: noticeKeys.list(userId) })
-    },
+    onSuccess: invalidate,
   })
 
   const complete = useMutation({
@@ -52,10 +54,33 @@ export function useNotices(userId: string | undefined) {
         throw new Error(toUserMessage(e, '無法完成待辦'))
       }
     },
-    onSuccess: () => {
-      if (!userId) return
-      void queryClient.invalidateQueries({ queryKey: noticeKeys.list(userId) })
+    onSuccess: invalidate,
+  })
+
+  const remove = useMutation({
+    mutationFn: async (id: string) => {
+      if (!userId) throw new Error('尚未登入')
+      try {
+        if (formal) await supabaseRepos.deleteNotice(userId, id)
+        else localDb.deleteNotice(userId, id)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法刪除通知'))
+      }
     },
+    onSuccess: invalidate,
+  })
+
+  const clearRead = useMutation({
+    mutationFn: async () => {
+      if (!userId) throw new Error('尚未登入')
+      try {
+        if (formal) return await supabaseRepos.clearReadNotices(userId)
+        return localDb.clearReadNotices(userId)
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法清除已讀通知'))
+      }
+    },
+    onSuccess: invalidate,
   })
 
   const notices = listQuery.data ?? []
@@ -63,8 +88,13 @@ export function useNotices(userId: string | undefined) {
     notices,
     todos: notices.filter((n) => n.kind === 'todo' && n.status === 'open'),
     unreadCount: notices.filter((n) => n.unread).length,
+    readCount: notices.filter((n) => !n.unread).length,
     isLoading: listQuery.isLoading,
     markRead: markRead.mutateAsync,
     complete: complete.mutateAsync,
+    deleteNotice: remove.mutateAsync,
+    clearReadNotices: clearRead.mutateAsync,
+    isClearingRead: clearRead.isPending,
+    isDeleting: remove.isPending,
   }
 }

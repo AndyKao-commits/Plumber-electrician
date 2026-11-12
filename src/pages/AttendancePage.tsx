@@ -3,6 +3,12 @@ import { useQuery } from '@tanstack/react-query'
 import { formatDistanceStrict } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
 import {
+  buildMonthGrid,
+  currentTaipeiYearMonth,
+  groupAttendanceDays,
+  shiftMonth,
+} from '@/domain/attendanceCalendar'
+import {
   buildAttendanceTimeline,
   formatWorkDuration,
   summarizeAttendanceDay,
@@ -15,6 +21,8 @@ import { isFormalMode } from '@/lib/dataMode'
 import { localDb } from '@/lib/localDb'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { formatTaipei, taipeiDateString } from '@/lib/time'
+
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'] as const
 
 /** datetime-local value → ISO, treating wall clock as Asia/Taipei. */
 function taipeiLocalToIso(local: string): string {
@@ -70,14 +78,37 @@ export function AttendancePage() {
   const [reason, setReason] = useState('')
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({})
   const [timelineId, setTimelineId] = useState<string | null>(null)
+  const initialYm = currentTaipeiYearMonth()
+  const [calYear, setCalYear] = useState(initialYm.year)
+  const [calMonth, setCalMonth] = useState(initialYm.monthIndex)
+  const [selectedDay, setSelectedDay] = useState<string | null>(
+    () => taipeiDateString(),
+  )
 
   const siteName = (id?: string | null) =>
     sites.find((s) => s.id === id)?.name ?? (id ? '未知工地' : '尚未補登工地')
+
+  const daysWithWork = useMemo(() => groupAttendanceDays(history), [history])
+  const monthCells = useMemo(
+    () => buildMonthGrid(calYear, calMonth),
+    [calYear, calMonth],
+  )
+  const dayRecords = useMemo(() => {
+    if (!selectedDay) return []
+    return history.filter((r) => taipeiDateString(r.clockInAt) === selectedDay)
+  }, [history, selectedDay])
 
   const timelineRecord = history.find((h) => h.id === timelineId) ?? null
   const timelineDay = timelineRecord
     ? taipeiDateString(timelineRecord.clockInAt)
     : null
+  const ownPendingCorrections = useMemo(
+    () =>
+      corrections.filter(
+        (c) => c.userId === user?.id && c.status === 'pending',
+      ),
+    [corrections, user?.id],
+  )
 
   const timelineQuery = useQuery({
     queryKey: ['attendance-timeline', user?.id, timelineId, timelineDay],
@@ -199,15 +230,19 @@ export function AttendancePage() {
       {canApproveCorrections && pendingCorrections.length > 0 ? (
         <section className="panel stack">
           <strong>待核准補打卡</strong>
+          <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
+            申請人不可自行核准。請由其他老闆或具核准權的管理員處理。
+          </p>
           {pendingCorrections.map((c) => (
             <div key={c.id} className="site-link stack">
               <div className="row between">
-                <span className="badge">pending</span>
+                <span className="badge">待核准</span>
                 <span className="muted">
                   {formatTaipei(c.createdAt, 'MM/dd HH:mm')}
                 </span>
               </div>
               <p style={{ margin: 0 }}>
+                {c.userName ? `${c.userName} · ` : ''}
                 擬訂 {formatTaipei(c.proposedClockInAt, 'MM/dd HH:mm')}
                 {c.proposedClockOutAt
                   ? ` → ${formatTaipei(c.proposedClockOutAt, 'HH:mm')}`
@@ -357,6 +392,14 @@ export function AttendancePage() {
 
       <section className="panel stack">
         <strong>我的補打卡紀錄</strong>
+        <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
+          申請人不可自行核准。老闆的補打卡須由其他老闆，或具核准權的管理員處理。
+        </p>
+        {ownPendingCorrections.length > 0 ? (
+          <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
+            目前有 {ownPendingCorrections.length} 筆待核准，已通知其他核准人。
+          </p>
+        ) : null}
         {corrections.length === 0 ? (
           <div className="empty">尚無補打卡申請</div>
         ) : (
@@ -405,12 +448,74 @@ export function AttendancePage() {
       <section className="panel stack">
         <strong>最近出勤</strong>
         <p className="muted" style={{ margin: 0 }}>
-          點一天可看完整時間軸（上班／足跡／下班）。
+          有上班的日期會紅點並框起來；點日期可看當天時間軸。
         </p>
-        {history.length === 0 ? (
-          <div className="empty">尚無出勤紀錄</div>
+        <div className="row between" style={{ gap: 8 }}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => {
+              const next = shiftMonth(calYear, calMonth, -1)
+              setCalYear(next.year)
+              setCalMonth(next.monthIndex)
+            }}
+          >
+            上個月
+          </button>
+          <strong style={{ margin: 0 }}>
+            {calYear} 年 {calMonth + 1} 月
+          </strong>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => {
+              const next = shiftMonth(calYear, calMonth, 1)
+              setCalYear(next.year)
+              setCalMonth(next.monthIndex)
+            }}
+          >
+            下個月
+          </button>
+        </div>
+        <div className="attendance-cal">
+          {WEEKDAYS.map((w) => (
+            <div key={w} className="attendance-cal-head">
+              {w}
+            </div>
+          ))}
+          {monthCells.map((cell, idx) => {
+            if (!cell.day) {
+              return (
+                <div key={`pad-${idx}`} className="attendance-cal-day muted" />
+              )
+            }
+            const hasWork = daysWithWork.has(cell.day)
+            const selected = selectedDay === cell.day
+            return (
+              <button
+                key={cell.day}
+                type="button"
+                className={`attendance-cal-day${hasWork ? ' has-work' : ''}${selected ? ' selected' : ''}`}
+                onClick={() => {
+                  setSelectedDay(cell.day)
+                  setTimelineId(null)
+                }}
+              >
+                <span className="cal-num">{Number(cell.day.slice(8))}</span>
+                {hasWork ? <span className="cal-dot" aria-hidden /> : null}
+              </button>
+            )
+          })}
+        </div>
+
+        {!selectedDay ? (
+          <div className="empty">請選擇日期</div>
+        ) : dayRecords.length === 0 ? (
+          <div className="empty">
+            {selectedDay} 尚無出勤紀錄
+          </div>
         ) : (
-          history.map((record) => {
+          dayRecords.map((record) => {
             const open = timelineId === record.id
             const dayLabel = formatTaipei(record.clockInAt, 'yyyy/MM/dd EEEE')
             const checkins = open ? (timelineQuery.data ?? []) : []
@@ -418,7 +523,6 @@ export function AttendancePage() {
               ? buildAttendanceTimeline({
                   attendance: {
                     ...record,
-                    // enrich site name into note for place when assigned
                   },
                   checkins: checkins.map((c) => ({
                     ...c,

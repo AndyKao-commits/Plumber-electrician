@@ -4847,6 +4847,21 @@ export const localDb = {
     write(KEYS.notices, all)
   },
 
+  deleteNotice(userId: string, id: string) {
+    const all = read(KEYS.notices, emptyNotices).filter(
+      (n) => !(n.id === id && n.userId === userId),
+    )
+    write(KEYS.notices, all)
+  },
+
+  clearReadNotices(userId: string): number {
+    const all = read(KEYS.notices, emptyNotices)
+    const next = all.filter((n) => !(n.userId === userId && !n.unread))
+    const removed = all.length - next.length
+    write(KEYS.notices, next)
+    return removed
+  },
+
 getOrgSpendSettings(): OrgSpendSettings {
     return read(KEYS.orgSpendSettings, defaultOrgSpendSettings(ORG_ID))
   },

@@ -31,6 +31,7 @@ import {
 import { assertPhotoType } from '@/domain/photoTypes'
 import { assertCanAccessSite, filterSitesByAccess } from '@/domain/siteAccess'
 import { assertFeature } from '@/domain/featureAccess'
+import { permissionRoleOf } from '@/domain/roleGroups'
 import {
   assertSiteStatus,
   assertSiteStatusTransition,
@@ -2326,7 +2327,12 @@ export const supabaseRepos = {
       .order('created_at', { ascending: false })
       .limit(50)
 
-    if (!hasPermission(actor.role, PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)) {
+    if (
+      !hasPermission(
+        permissionRoleOf(actor),
+        PERMISSIONS.ATTENDANCE_CORRECT_APPROVE,
+      )
+    ) {
       query = query.eq('user_id', actor.id)
     }
 
@@ -2338,7 +2344,10 @@ export const supabaseRepos = {
   async listPendingAttendanceCorrections(
     actor: AppUser,
   ): Promise<AttendanceCorrection[]> {
-    assertPermission(actor.role, PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)
+    assertPermission(
+      permissionRoleOf(actor),
+      PERMISSIONS.ATTENDANCE_CORRECT_APPROVE,
+    )
     const { data, error } = await sb()
       .from('attendance_corrections')
       .select(ATTENDANCE_CORRECTION_COLS)
@@ -2448,7 +2457,7 @@ export const supabaseRepos = {
     if (current.status !== 'pending') throw new AppError('此申請不在待核准狀態')
     assertSameOrganization(actor.organizationId, String(current.organization_id))
     assertCanApproveAttendanceCorrection({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: String(current.user_id),
     })
@@ -2538,7 +2547,7 @@ export const supabaseRepos = {
     if (current.status !== 'pending') throw new AppError('此申請不在待核准狀態')
     assertSameOrganization(actor.organizationId, String(current.organization_id))
     assertCanApproveAttendanceCorrection({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: String(current.user_id),
     })
@@ -5324,6 +5333,29 @@ export const supabaseRepos = {
       .update({ unread: false, status: 'done' })
       .eq('id', nid)
     if (error) throw new AppError(toUserMessage(error, '無法完成待辦'))
+  },
+
+  async deleteNotice(userId: string, id: string): Promise<void> {
+    const uid = requireUuid(userId, '使用者')
+    const nid = requireUuid(id, '通知')
+    const { error } = await sb()
+      .from('notices')
+      .delete()
+      .eq('id', nid)
+      .eq('user_id', uid)
+    if (error) throw new AppError(toUserMessage(error, '無法刪除通知'))
+  },
+
+  async clearReadNotices(userId: string): Promise<number> {
+    const uid = requireUuid(userId, '使用者')
+    const { data, error } = await sb()
+      .from('notices')
+      .delete()
+      .eq('user_id', uid)
+      .eq('unread', false)
+      .select('id')
+    if (error) throw new AppError(toUserMessage(error, '無法清除已讀通知'))
+    return (data ?? []).length
   },
 
   /**

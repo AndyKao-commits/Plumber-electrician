@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { hasPermission, PERMISSIONS } from '@/domain/permissions'
+import { permissionRoleOf } from '@/domain/roleGroups'
 import type { AttendanceCorrection, AttendanceRecord, JobType } from '@/domain/types'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
@@ -76,7 +77,10 @@ export function useAttendance(userId: string | undefined) {
 
   const canApproveCorrections =
     Boolean(user) &&
-    hasPermission(user!.role, PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)
+    hasPermission(
+      permissionRoleOf(user!),
+      PERMISSIONS.ATTENDANCE_CORRECT_APPROVE,
+    )
 
   const correctionsQuery = useQuery({
     queryKey: attendanceKeys.corrections(userId ?? 'anon'),

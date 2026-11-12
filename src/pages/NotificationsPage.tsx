@@ -5,12 +5,36 @@ import { formatTaipei } from '@/lib/time'
 
 export function NotificationsPage() {
   const { user } = useUser()
-  const { notices, markRead, complete } = useNotices(user?.id)
+  const {
+    notices,
+    markRead,
+    complete,
+    deleteNotice,
+    clearReadNotices,
+    readCount,
+    isClearingRead,
+    isDeleting,
+  } = useNotices(user?.id)
 
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <strong>通知中心</strong>
+        <div className="row between" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <strong>通知中心</strong>
+          {readCount > 0 ? (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={isClearingRead}
+              onClick={() => {
+                if (!window.confirm(`清除 ${readCount} 則已讀通知？`)) return
+                void clearReadNotices().catch(() => undefined)
+              }}
+            >
+              {isClearingRead ? '清除中…' : '清除已讀'}
+            </button>
+          ) : null}
+        </div>
       </section>
 
       <section className="stack">
@@ -31,7 +55,7 @@ export function NotificationsPage() {
               <p className="muted" style={{ margin: 0 }}>
                 {notice.detail}
               </p>
-              <div className="row">
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                 {notice.unread ? (
                   <button
                     type="button"
@@ -57,6 +81,17 @@ export function NotificationsPage() {
                     開啟
                   </Link>
                 ) : null}
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={isDeleting}
+                  onClick={() => {
+                    if (!window.confirm('刪除此通知？')) return
+                    void deleteNotice(notice.id).catch(() => undefined)
+                  }}
+                >
+                  刪除
+                </button>
               </div>
             </div>
           ))
