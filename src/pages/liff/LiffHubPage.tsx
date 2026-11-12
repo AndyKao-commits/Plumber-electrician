@@ -15,6 +15,9 @@ export function LiffHubPage() {
         <Link className="btn btn-steel" to="/liff/location" style={{ textAlign: 'center' }}>
           紀錄地點
         </Link>
+        <Link className="btn btn-steel" to="/liff/expense" style={{ textAlign: 'center' }}>
+          記帳
+        </Link>
       </section>
     </LiffFrame>
   )

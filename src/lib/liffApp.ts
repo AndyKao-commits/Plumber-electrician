@@ -7,13 +7,16 @@ const LIFF_ID_ATTENDANCE =
   (import.meta.env.VITE_LIFF_ID_ATTENDANCE as string | undefined)?.trim() || ''
 const LIFF_ID_LOCATION =
   (import.meta.env.VITE_LIFF_ID_LOCATION as string | undefined)?.trim() || ''
+const LIFF_ID_EXPENSE =
+  (import.meta.env.VITE_LIFF_ID_EXPENSE as string | undefined)?.trim() || ''
 
-export type LiffEntry = 'attendance' | 'location' | 'hub'
+export type LiffEntry = 'attendance' | 'location' | 'expense' | 'hub'
 
 export const LIFF_PATHS = {
   hub: '/liff',
   attendance: '/liff/attendance',
   location: '/liff/location',
+  expense: '/liff/expense',
 } as const
 
 const initById = new Map<string, Promise<boolean>>()
@@ -21,7 +24,14 @@ const initById = new Map<string, Promise<boolean>>()
 export function getLiffIdFor(entry: LiffEntry = 'hub'): string | null {
   if (entry === 'attendance') return LIFF_ID_ATTENDANCE || LIFF_ID || null
   if (entry === 'location') return LIFF_ID_LOCATION || LIFF_ID || null
-  return LIFF_ID || LIFF_ID_ATTENDANCE || LIFF_ID_LOCATION || null
+  if (entry === 'expense') return LIFF_ID_EXPENSE || LIFF_ID || null
+  return (
+    LIFF_ID ||
+    LIFF_ID_ATTENDANCE ||
+    LIFF_ID_LOCATION ||
+    LIFF_ID_EXPENSE ||
+    null
+  )
 }
 
 export function isLiffConfigured(entry?: LiffEntry): boolean {
@@ -98,11 +108,12 @@ export function liffOpenUrl(entry: LiffEntry, appBase: string): string {
       ? LIFF_ID_ATTENDANCE
       : entry === 'location'
         ? LIFF_ID_LOCATION
-        : ''
+        : entry === 'expense'
+          ? LIFF_ID_EXPENSE
+          : ''
   if (dedicated) return `https://liff.line.me/${dedicated}`
   if (LIFF_ID) {
     if (entry === 'hub') return `https://liff.line.me/${LIFF_ID}`
-    // Shared LIFF whose Endpoint is `{app}/liff`
     return `https://liff.line.me/${LIFF_ID}/${entry}`
   }
   return `${base}${path}`
