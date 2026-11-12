@@ -8,29 +8,20 @@ import { PRODUCT, ROLES } from '@/domain/rules'
 import { useUser } from '@/hooks/useUser'
 import { isSupabaseConfigured } from '@/lib/supabase'
 
-type AuthTab = 'login' | 'signup'
-
 export function LoginPage() {
   const {
     user,
     directory,
     loginAs,
     loginWithPassword,
-    signUp,
     isLoggingIn,
-    isSigningUp,
     isLoading,
     isDemoMode,
     passwordLoginError,
-    signUpError,
   } = useUser()
 
-  const [tab, setTab] = useState<AuthTab>('login')
   const [account, setAccount] = useState('')
   const [password, setPassword] = useState('')
-  const [name, setName] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [organizationName, setOrganizationName] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const location = useLocation()
   const fromState =
@@ -39,6 +30,9 @@ export function LoginPage() {
       : null
 
   if (!isLoading && user) {
+    if (user.mustChangePassword) {
+      return <Navigate to="/change-password" replace />
+    }
     const pendingLineBind =
       typeof sessionStorage !== 'undefined' &&
       Boolean(sessionStorage.getItem('line_bind_pending_user_id'))
@@ -61,27 +55,6 @@ export function LoginPage() {
     await loginWithPassword({ account, password })
   }
 
-  async function onSignUp(event: FormEvent) {
-    event.preventDefault()
-    setFormError(null)
-    if (password !== confirmPassword) {
-      setFormError('兩次密碼不一致')
-      return
-    }
-    if (password.length < 6) {
-      setFormError('密碼至少 6 碼')
-      return
-    }
-    await signUp({
-      name,
-      account,
-      password,
-      organizationName: organizationName.trim() || null,
-    })
-  }
-
-  const busy = isLoggingIn || isSigningUp
-
   return (
     <div className="login-page">
       <div className="login-card stack fade-up">
@@ -90,176 +63,72 @@ export function LoginPage() {
         </section>
 
         <section className="panel stack">
-          <strong>
-            {isDemoMode
-              ? '選擇身分開始'
-              : tab === 'login'
-                ? '帳號／密碼登入'
-                : '建立帳號'}
-          </strong>
+          <strong>{isDemoMode ? '選擇身分開始' : '帳號／密碼登入'}</strong>
           {isDemoMode ? (
             <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
               本機示範（未連線正式資料庫）
             </p>
-          ) : null}
+          ) : (
+            <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
+              帳號由管理者開通。預設帳號與密碼為電話；首次登入需更改密碼。
+            </p>
+          )}
 
           {!isDemoMode && isSupabaseConfigured ? (
-            <>
-              <div className="row" style={{ gap: 8 }}>
-                <button
-                  type="button"
-                  className={`btn ${tab === 'login' ? 'btn-steel' : 'btn-ghost'}`}
-                  disabled={busy}
-                  onClick={() => {
-                    setTab('login')
-                    setFormError(null)
-                  }}
-                >
-                  登入
-                </button>
-                <button
-                  type="button"
-                  className={`btn ${tab === 'signup' ? 'btn-steel' : 'btn-ghost'}`}
-                  disabled={busy}
-                  onClick={() => {
-                    setTab('signup')
-                    setFormError(null)
-                  }}
-                >
-                  建立帳號
-                </button>
+            <form className="stack" onSubmit={(e) => void onPasswordLogin(e)}>
+              <div className="field">
+                <label htmlFor="login-account">帳號（電話）</label>
+                <input
+                  id="login-account"
+                  type="text"
+                  inputMode="tel"
+                  autoComplete="username"
+                  value={account}
+                  onChange={(e) => setAccount(e.target.value)}
+                  placeholder="例如：0912345678"
+                  required
+                />
               </div>
-
-              {tab === 'login' ? (
-                <form className="stack" onSubmit={(e) => void onPasswordLogin(e)}>
-                  <div className="field">
-                    <label htmlFor="login-account">帳號</label>
-                    <input
-                      id="login-account"
-                      type="text"
-                      autoComplete="username"
-                      value={account}
-                      onChange={(e) => setAccount(e.target.value)}
-                      placeholder="自訂帳號或 Email"
-                      required
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="login-password">密碼</label>
-                    <input
-                      id="login-password"
-                      type="password"
-                      autoComplete="current-password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                    />
-                  </div>
-                  {formError ? (
-                    <p style={{ color: 'var(--danger)', margin: 0 }}>{formError}</p>
-                  ) : null}
-                  {passwordLoginError ? (
-                    <p style={{ color: 'var(--danger)', margin: 0 }}>
-                      {passwordLoginError.message}
-                    </p>
-                  ) : null}
-                  <button className="btn btn-steel btn-block" type="submit" disabled={busy}>
-                    {isLoggingIn ? '登入中…' : '登入'}
-                  </button>
-                </form>
-              ) : (
-                <form className="stack" onSubmit={(e) => void onSignUp(e)}>
-                  <div className="field">
-                    <label htmlFor="signup-name">姓名</label>
-                    <input
-                      id="signup-name"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="例如：師傅阿明"
-                      required
-                      autoComplete="name"
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="signup-account">帳號</label>
-                    <input
-                      id="signup-account"
-                      type="text"
-                      autoComplete="username"
-                      value={account}
-                      onChange={(e) => setAccount(e.target.value)}
-                      placeholder="例如：ming01 或 ming@example.com"
-                      required
-                    />
-                    <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
-                      可用自訂帳號（英數，如 ming01）或 Email。自訂帳號請關閉
-                      Supabase「Confirm email」。
-                    </p>
-                  </div>
-                  <div className="field">
-                    <label htmlFor="signup-password">密碼（至少 6 碼）</label>
-                    <input
-                      id="signup-password"
-                      type="password"
-                      autoComplete="new-password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      minLength={6}
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="signup-confirm">確認密碼</label>
-                    <input
-                      id="signup-confirm"
-                      type="password"
-                      autoComplete="new-password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      required
-                      minLength={6}
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="signup-org">公司名稱（選填）</label>
-                    <input
-                      id="signup-org"
-                      value={organizationName}
-                      onChange={(e) => setOrganizationName(e.target.value)}
-                      placeholder="留空＝加入既有組織；填寫＝開設新公司"
-                    />
-                  </div>
-                  <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-                    留空公司名稱：加入系統中既有組織（首位為老闆，之後為員工）。
-                    填寫公司名稱：建立新組織，你會成為老闆。
-                  </p>
-                  {formError ? (
-                    <p style={{ color: 'var(--danger)', margin: 0 }}>{formError}</p>
-                  ) : null}
-                  {signUpError ? (
-                    <p style={{ color: 'var(--danger)', margin: 0 }}>{signUpError.message}</p>
-                  ) : null}
-                  <button className="btn btn-steel btn-block" type="submit" disabled={busy}>
-                    {isSigningUp ? '建立中…' : '建立帳號並進入'}
-                  </button>
-                </form>
-              )}
-            </>
+              <div className="field">
+                <label htmlFor="login-password">密碼</label>
+                <input
+                  id="login-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+              {formError ? (
+                <p style={{ color: 'var(--danger)', margin: 0 }}>{formError}</p>
+              ) : null}
+              {passwordLoginError ? (
+                <p style={{ color: 'var(--danger)', margin: 0 }}>
+                  {passwordLoginError.message}
+                </p>
+              ) : null}
+              <button className="btn btn-steel btn-block" type="submit" disabled={isLoggingIn}>
+                {isLoggingIn ? '登入中…' : '登入'}
+              </button>
+            </form>
           ) : (
             <div className="stack">
-              {directory.map((account) => (
+              {directory.map((accountOption) => (
                 <button
-                  key={account.id}
+                  key={accountOption.id}
                   type="button"
                   className="account-option"
                   disabled={isLoggingIn}
-                  onClick={() => void loginAs(account.id)}
+                  onClick={() => void loginAs(accountOption.id)}
                 >
                   <div>
-                    <strong>{account.name}</strong>
-                    <span>{ROLES[account.role].label}</span>
+                    <strong>{accountOption.name}</strong>
+                    <span>{ROLES[accountOption.role].label}</span>
                   </div>
-                  <span className="badge">{account.role === 'boss' ? '管理' : '現場'}</span>
+                  <span className="badge">
+                    {accountOption.role === 'boss' ? '管理' : '現場'}
+                  </span>
                 </button>
               ))}
             </div>

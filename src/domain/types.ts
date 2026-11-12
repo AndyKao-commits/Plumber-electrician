@@ -100,6 +100,8 @@ export interface AppUser {
   email?: string
   /** Custom account name (optional; may map to synthetic Auth email). */
   loginId?: string | null
+  /** True until the user changes the admin-assigned default password. */
+  mustChangePassword?: boolean
   phone?: string
   /** V1.0 profile */
   nickname?: string | null
