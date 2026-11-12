@@ -2044,69 +2044,51 @@ async function handleBind(
 // ----- Location footprints (到點打卡／足跡) -----
 
 /**
- * LIFF Endpoint should be `{APP}/liff`.
- * Then `https://liff.line.me/{id}/location` → `{APP}/liff/location`.
+ * Prefer dedicated LIFF apps (Endpoint = exact page) to avoid double redirect.
+ * Fallbacks: shared LIFF_ID with path, then plain site URL.
  */
 function locationLiffUri(): string {
-  const liffId = (Deno.env.get('LIFF_ID') ?? '').trim()
-  if (liffId) return `https://liff.line.me/${liffId}/location`
-  return `${appBaseUrl()}/liff/location`
-}
-
-function locationDirectUri(): string {
+  const dedicated = (Deno.env.get('LIFF_ID_LOCATION') ?? '').trim()
+  if (dedicated) return `https://liff.line.me/${dedicated}`
+  const shared = (Deno.env.get('LIFF_ID') ?? '').trim()
+  if (shared) return `https://liff.line.me/${shared}/location`
   return `${appBaseUrl()}/liff/location`
 }
 
 function attendanceLiffUri(): string {
-  const liffId = (Deno.env.get('LIFF_ID') ?? '').trim()
-  if (liffId) return `https://liff.line.me/${liffId}/attendance`
-  return `${appBaseUrl()}/liff/attendance`
-}
-
-function attendanceDirectUri(): string {
+  const dedicated = (Deno.env.get('LIFF_ID_ATTENDANCE') ?? '').trim()
+  if (dedicated) return `https://liff.line.me/${dedicated}`
+  const shared = (Deno.env.get('LIFF_ID') ?? '').trim()
+  if (shared) return `https://liff.line.me/${shared}/attendance`
   return `${appBaseUrl()}/liff/attendance`
 }
 
 /** Prefer LIFF page over multi-step chat for attendance. */
 function handoffAttendanceToLiff(): LineMessage[] {
-  const primary = attendanceLiffUri()
-  const fallback = attendanceDirectUri()
-  const buttons =
-    primary === fallback
-      ? [{ label: '開啟出勤', uri: primary, style: 'primary' as const }]
-      : [
-          { label: '開啟出勤', uri: primary, style: 'primary' as const },
-          { label: '備用連結', uri: fallback, style: 'secondary' as const },
-        ]
   return [
     flexMenu({
       altText: '出勤打卡',
       eyebrow: '出勤',
       title: '出勤打卡',
-      body: '一鍵上班／下班，可指定工地。',
-      buttons,
+      body: '開啟後即可一鍵上下班。',
+      buttons: [
+        { label: '開啟出勤', uri: attendanceLiffUri(), style: 'primary' },
+      ],
     }),
   ]
 }
 
-/** Prefer LIFF GPS page over multi-step chat for location. */
+/** Prefer LIFF GPS page — opens and starts locating immediately. */
 function handoffLocationToLiff(): LineMessage[] {
-  const primary = locationLiffUri()
-  const fallback = locationDirectUri()
-  const buttons =
-    primary === fallback
-      ? [{ label: '開啟定位', uri: primary, style: 'primary' as const }]
-      : [
-          { label: '開啟定位', uri: primary, style: 'primary' as const },
-          { label: '備用連結', uri: fallback, style: 'secondary' as const },
-        ]
   return [
     flexMenu({
       altText: '紀錄地點',
       eyebrow: '地點',
       title: '紀錄地點',
-      body: '點下方開啟定位頁，再按「開始定位」。',
-      buttons,
+      body: '開啟後會自動定位。',
+      buttons: [
+        { label: '開啟定位', uri: locationLiffUri(), style: 'primary' },
+      ],
     }),
   ]
 }

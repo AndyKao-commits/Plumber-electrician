@@ -9,11 +9,15 @@ describe('liffApp', () => {
 
   it('reports whether LIFF id is configured from env', () => {
     expect(typeof isLiffConfigured()).toBe('boolean')
+    expect(typeof isLiffConfigured('location')).toBe('boolean')
   })
 
   it('builds site path urls when liff id is absent', () => {
-    expect(liffOpenUrl('attendance', 'https://example.com')).toMatch(
-      /\/liff\/attendance$/,
+    expect(liffOpenUrl('attendance', 'https://example.com')).toBe(
+      'https://example.com/liff/attendance',
+    )
+    expect(liffOpenUrl('location', 'https://example.com')).toBe(
+      'https://example.com/liff/location',
     )
   })
 })
