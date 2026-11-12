@@ -1618,14 +1618,30 @@ export const supabaseRepos = {
     }
 
     const label = deletedSiteFinanceLabel(current.name)
-    await sb()
+    const { error: expenseUnlinkError } = await sb()
       .from('expense_reports')
       .update({ site_id: null, site_name: label })
       .eq('site_id', sid)
-    await sb()
+    if (
+      expenseUnlinkError &&
+      !/column|relation|schema cache/i.test(expenseUnlinkError.message)
+    ) {
+      throw new AppError(
+        toUserMessage(expenseUnlinkError, '無法解除支出與工地關聯'),
+      )
+    }
+    const { error: receiptUnlinkError } = await sb()
       .from('cash_receipt_reports')
       .update({ site_id: null, site_name: label })
       .eq('site_id', sid)
+    if (
+      receiptUnlinkError &&
+      !/column|relation|schema cache/i.test(receiptUnlinkError.message)
+    ) {
+      throw new AppError(
+        toUserMessage(receiptUnlinkError, '無法解除收款與工地關聯'),
+      )
+    }
 
     const quotes = (await this.listQuotations()).filter(
       (q) => q.projectId === sid && !q.deletedAt,
@@ -1633,17 +1649,16 @@ export const supabaseRepos = {
     for (const q of quotes) {
       await this.softDeleteQuotation(actor, q.id, '刪除工地案件')
     }
-    if (quotes.length > 0) {
-      const { error: unlinkError } = await sb()
-        .from('quotations')
-        .update({ project_id: null })
-        .eq('project_id', sid)
-        .not('deleted_at', 'is', null)
-      if (unlinkError) {
-        throw new AppError(
-          toUserMessage(unlinkError, '無法解除報價與工地關聯，請先處理報價後再刪'),
-        )
-      }
+    // Always unlink — including quotes already soft-deleted earlier — or
+    // quotations_project_id_fkey (ON DELETE RESTRICT) blocks site delete.
+    const { error: unlinkError } = await sb()
+      .from('quotations')
+      .update({ project_id: null })
+      .eq('project_id', sid)
+    if (unlinkError) {
+      throw new AppError(
+        toUserMessage(unlinkError, '無法解除報價與工地關聯，請先處理報價後再刪'),
+      )
     }
 
     await sb().from('site_members').delete().eq('site_id', sid)
