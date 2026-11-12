@@ -1364,7 +1364,7 @@ export const supabaseRepos = {
   },
 
   async listOrgProfiles(actor: AppUser): Promise<AppUser[]> {
-    if (actor.role !== 'boss') throw new AppError('僅老闆可查看完整名冊')
+    if (actor.role !== 'boss') assertFeature(actor, 'account')
     const full = await sb()
       .from('profiles')
       .select(PROFILE_SELECT)
@@ -1386,6 +1386,46 @@ export const supabaseRepos = {
     }
     if (full.error) throw new AppError(toUserMessage(full.error, '無法載入名冊'))
     return (full.data ?? []).map((row) => mapUser(row))
+  },
+
+  async deleteMemberAccount(
+    actor: AppUser,
+    input: { targetUserId: string; confirmName: string },
+  ): Promise<{ message: string; mode: string }> {
+    assertFeature(actor, 'account')
+    const confirmName = input.confirmName.trim()
+    if (!confirmName) throw new AppError('請填寫被刪除者姓名以確認')
+    const { data, error } = await sb().functions.invoke('admin-delete-member', {
+      body: {
+        targetUserId: input.targetUserId,
+        confirmName,
+      },
+    })
+    const body = data as {
+      error?: string
+      message?: string
+      mode?: string
+    } | null
+    if (error) {
+      const ctx = (error as { context?: Response }).context
+      if (ctx && typeof ctx.json === 'function') {
+        try {
+          const errBody = (await ctx.json()) as { error?: string }
+          if (errBody?.error) throw new AppError(errBody.error)
+        } catch (e) {
+          if (e instanceof AppError) throw e
+        }
+      }
+      if (body?.error) throw new AppError(body.error)
+      throw new AppError(toUserMessage(error, '無法刪除帳號'))
+    }
+    if (!body || body.error) {
+      throw new AppError(body?.error || '無法刪除帳號')
+    }
+    return {
+      message: body.message || '已刪除帳號',
+      mode: body.mode || 'unknown',
+    }
   },
 
   async listSites(actor?: AppUser): Promise<SiteProject[]> {

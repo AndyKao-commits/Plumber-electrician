@@ -58,6 +58,9 @@ export function AccessPage() {
   const [newName, setNewName] = useState('')
   const [newPhone, setNewPhone] = useState('')
   const [createMessage, setCreateMessage] = useState<string | null>(null)
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
+  const [deleteConfirmName, setDeleteConfirmName] = useState('')
+  const [deleteMessage, setDeleteMessage] = useState<string | null>(null)
 
   const [customName, setCustomName] = useState('')
   const [customTemplate, setCustomTemplate] =
@@ -82,7 +85,7 @@ export function AccessPage() {
 
   const directoryQuery = useQuery({
     queryKey: [...userKeys.directory(), 'access'],
-    enabled: Boolean(user && isBoss),
+    enabled: Boolean(user && canManageAccounts),
     queryFn: async () => {
       if (!user) return []
       if (formal) return supabaseRepos.listOrgProfiles(user)
@@ -114,6 +117,34 @@ export function AccessPage() {
       setNewName('')
       setNewPhone('')
       setCreateMessage(result.message)
+      void queryClient.invalidateQueries({ queryKey: userKeys.directory() })
+      void directoryQuery.refetch()
+    },
+  })
+
+  const deleteMember = useMutation({
+    mutationFn: async () => {
+      if (!user || !deleteTargetId) throw new Error('尚未選擇要刪除的帳號')
+      const target = (directoryQuery.data ?? []).find((m) => m.id === deleteTargetId)
+      if (!target) throw new Error('找不到要刪除的帳號')
+      if (target.role === 'boss') throw new Error('不可刪除老闆帳號')
+      const confirmName = deleteConfirmName.trim()
+      if (!confirmName) throw new Error('請填寫被刪除者姓名以確認')
+      if (confirmName !== target.name.trim()) {
+        throw new Error('姓名不符，請輸入被刪除者正確姓名')
+      }
+      if (!formal) {
+        throw new Error('示範模式不支援刪除帳號')
+      }
+      return supabaseRepos.deleteMemberAccount(user, {
+        targetUserId: target.id,
+        confirmName,
+      })
+    },
+    onSuccess: (result) => {
+      setDeleteTargetId(null)
+      setDeleteConfirmName('')
+      setDeleteMessage(result.message)
       void queryClient.invalidateQueries({ queryKey: userKeys.directory() })
       void directoryQuery.refetch()
     },
@@ -240,19 +271,35 @@ export function AccessPage() {
       <div className="panel stack">
         <strong>帳號與管理</strong>
         <p className="muted" style={{ margin: 0 }}>
-          僅老闆或擁有帳號管理權限者可協助註冊新帳號。
+          僅老闆或擁有帳號管理權限者可註冊／刪除帳號。
         </p>
         <Link to="/profile">回個人中心</Link>
       </div>
     )
   }
 
-  const members = (directoryQuery.data ?? []).filter((m) => m.id !== user.id)
+  const members = (directoryQuery.data ?? []).filter((m) => {
+    if (m.id === user.id) return false
+    // Hide soft-purged accounts (login cleared).
+    if (m.accountStatus === 'disabled' && !m.loginId && !m.phone) return false
+    return true
+  })
+  const deletableMembers = members.filter((m) => m.role !== 'boss')
+  const deleteTarget = deletableMembers.find((m) => m.id === deleteTargetId) ?? null
+  const deleteNameMatches =
+    Boolean(deleteTarget) &&
+    deleteConfirmName.trim() === (deleteTarget?.name.trim() ?? '')
 
   function onCreateSubmit(e: FormEvent) {
     e.preventDefault()
     setCreateMessage(null)
     void createMember.mutateAsync().catch(() => undefined)
+  }
+
+  function onDeleteSubmit(e: FormEvent) {
+    e.preventDefault()
+    setDeleteMessage(null)
+    void deleteMember.mutateAsync().catch(() => undefined)
   }
 
   return (
@@ -263,7 +310,7 @@ export function AccessPage() {
         </Link>
         <strong>帳號與管理</strong>
         <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-          協助註冊新帳號。預設帳號與密碼皆為電話，首次登入後須更改密碼。
+          協助註冊或刪除帳號。預設帳號與密碼皆為電話，首次登入後須更改密碼。
         </p>
       </section>
 
@@ -308,6 +355,91 @@ export function AccessPage() {
         {createMessage ? (
           <p className="muted" style={{ margin: 0 }}>
             {createMessage}
+          </p>
+        ) : null}
+      </section>
+
+      <section className="panel stack">
+        <strong>刪除帳號</strong>
+        <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
+          刪除前需再次確認，並正確填寫被刪除者姓名。不可刪除老闆帳號。
+        </p>
+        {deletableMembers.length === 0 ? (
+          <p className="muted" style={{ margin: 0 }}>
+            尚無可刪除的成員
+          </p>
+        ) : (
+          deletableMembers.map((m) => (
+            <div key={m.id} className="site-link stack">
+              <div className="row between" style={{ gap: 8 }}>
+                <div>
+                  <strong style={{ margin: 0 }}>{m.name}</strong>
+                  <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+                    {m.loginId || m.phone || '未設定帳號'} ·{' '}
+                    {m.accountStatus === 'disabled' ? '停用' : '啟用'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    setDeleteMessage(null)
+                    setDeleteTargetId(m.id)
+                    setDeleteConfirmName('')
+                  }}
+                >
+                  刪除
+                </button>
+              </div>
+              {deleteTargetId === m.id ? (
+                <form className="stack" onSubmit={onDeleteSubmit}>
+                  <p style={{ margin: 0, color: 'var(--danger)', fontSize: '0.9rem' }}>
+                    確定刪除「{m.name}」？請在下方輸入姓名以確認。
+                  </p>
+                  <div className="field">
+                    <label htmlFor={`delete-confirm-${m.id}`}>
+                      被刪除者姓名（請輸入：{m.name}）
+                    </label>
+                    <input
+                      id={`delete-confirm-${m.id}`}
+                      value={deleteConfirmName}
+                      onChange={(e) => setDeleteConfirmName(e.target.value)}
+                      autoComplete="off"
+                      required
+                    />
+                  </div>
+                  <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={deleteMember.isPending || !deleteNameMatches}
+                    >
+                      {deleteMember.isPending ? '刪除中…' : '確認刪除'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => {
+                        setDeleteTargetId(null)
+                        setDeleteConfirmName('')
+                      }}
+                    >
+                      取消
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+            </div>
+          ))
+        )}
+        {deleteMember.error ? (
+          <p style={{ color: 'var(--danger)', margin: 0 }}>
+            {toUserMessage(deleteMember.error)}
+          </p>
+        ) : null}
+        {deleteMessage ? (
+          <p className="muted" style={{ margin: 0 }}>
+            {deleteMessage}
           </p>
         ) : null}
       </section>
