@@ -38,6 +38,7 @@ import { PettyCashPage } from '@/pages/PettyCashPage'
 import { SuppliersPage } from '@/pages/SuppliersPage'
 import { TodosPage } from '@/pages/TodosPage'
 import { LiffAttendancePage } from '@/pages/liff/LiffAttendancePage'
+import { LiffHubPage } from '@/pages/liff/LiffHubPage'
 import { LiffLocationPage } from '@/pages/liff/LiffLocationPage'
 
 function Protected({ children }: { children: ReactNode }) {
@@ -61,6 +62,14 @@ export default function App() {
           <Route path="/change-password" element={<ChangePasswordPage />} />
           <Route path="/line-bind-callback" element={<LineBindCallbackPage />} />
           {/* LIFF / LINE in-app: no bottom nav */}
+          <Route
+            path="/liff"
+            element={
+              <Protected>
+                <LiffHubPage />
+              </Protected>
+            }
+          />
           <Route
             path="/liff/attendance"
             element={

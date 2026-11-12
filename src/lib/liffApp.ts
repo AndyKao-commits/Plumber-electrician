@@ -63,17 +63,21 @@ export async function closeLiffWindow(): Promise<{ ok: boolean; reason?: string 
 }
 
 export const LIFF_PATHS = {
+  hub: '/liff',
   attendance: '/liff/attendance',
   location: '/liff/location',
 } as const
 
 export type LiffEntry = keyof typeof LIFF_PATHS
 
-/** Rich-menu URI when LIFF id is known (falls back to site path). */
+/**
+ * Rich-menu / reply URI.
+ * LIFF Endpoint should be `{appBase}/liff`, then append `/attendance` or `/location`.
+ */
 export function liffOpenUrl(entry: LiffEntry, appBase: string): string {
   const path = LIFF_PATHS[entry]
   const base = appBase.replace(/\/$/, '')
   if (!LIFF_ID) return `${base}${path}`
-  // Endpoint should be site origin; path is appended after LIFF id.
-  return `https://liff.line.me/${LIFF_ID}${path}`
+  if (entry === 'hub') return `https://liff.line.me/${LIFF_ID}`
+  return `https://liff.line.me/${LIFF_ID}/${entry}`
 }
