@@ -21,6 +21,7 @@ import { SettingsPage } from '@/pages/SettingsPage'
 import { LocationCheckinPage } from '@/pages/LocationCheckinPage'
 import { MySalaryPage } from '@/pages/MySalaryPage'
 import { AccessPage } from '@/pages/AccessPage'
+import { ChangePasswordPage } from '@/pages/ChangePasswordPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { SalaryAdminPage } from '@/pages/SalaryAdminPage'
 import { PurchasesPage } from '@/pages/PurchasesPage'
@@ -55,6 +56,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/change-password" element={<ChangePasswordPage />} />
           <Route path="/line-bind-callback" element={<LineBindCallbackPage />} />
           <Route element={<AppShell />}>
             <Route path="/" element={<Protected><HomePage /></Protected>} />

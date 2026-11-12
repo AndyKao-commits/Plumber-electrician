@@ -211,7 +211,7 @@ async function handleEvent(
   if (event.type === 'follow') {
     return [
       textMsg(
-        '歡迎加入。請用下方圖文選單操作。\n綁定：工程管家「今日團隊」→ 用 LINE 綁定。\n上傳照片／出勤／紀錄地點／記帳／待辦／進入工地。',
+        '歡迎加入工程管家。\n請用下方圖文選單操作：上傳照片、出勤、紀錄地點、記帳、待辦、進入工地。\n若要綁定個人身分，請到工程管家「個人中心」使用「用 LINE 綁定」。',
       ),
     ]
   }
@@ -1449,7 +1449,7 @@ async function requireProfile(
   }
   if (!data) {
     return {
-      error: '尚未綁定系統帳號。請先到工程管家「今日團隊」按「用 LINE 綁定」。',
+      error: '尚未綁定。請先到工程管家「個人中心」按「用 LINE 綁定」。',
     }
   }
   return data as Profile

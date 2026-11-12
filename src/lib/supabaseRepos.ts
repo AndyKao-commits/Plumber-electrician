@@ -753,7 +753,7 @@ function mapStockReservationRow(row: Record<string, unknown>): StockReservation 
 }
 
 const PROFILE_SELECT_CORE =
-  'id, organization_id, name, role, email, login_id, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, created_at'
+  'id, organization_id, name, role, email, login_id, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, must_change_password, created_at'
 
 /** Includes role-group columns when migration is applied; falls back to core. */
 const PROFILE_SELECT = `${PROFILE_SELECT_CORE}, role_group_name, role_group_id, access_template, features, permission_overrides`
@@ -767,21 +767,39 @@ async function selectProfileRow(userId: string) {
     .maybeSingle()
   if (
     full.error &&
-    /role_group_name|access_template|login_id|column/i.test(full.error.message)
+    /role_group_name|access_template|login_id|must_change_password|column/i.test(
+      full.error.message,
+    )
   ) {
     const core = await client
       .from('profiles')
       .select(PROFILE_SELECT_CORE)
       .eq('id', userId)
       .maybeSingle()
-    if (core.error && /login_id|column/i.test(core.error.message)) {
-      return client
+    if (
+      core.error &&
+      /login_id|must_change_password|column/i.test(core.error.message)
+    ) {
+      const withoutMust = await client
         .from('profiles')
         .select(
-          'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, created_at',
+          'id, organization_id, name, role, email, login_id, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, created_at',
         )
         .eq('id', userId)
         .maybeSingle()
+      if (
+        withoutMust.error &&
+        /login_id|column/i.test(withoutMust.error.message)
+      ) {
+        return client
+          .from('profiles')
+          .select(
+            'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, created_at',
+          )
+          .eq('id', userId)
+          .maybeSingle()
+      }
+      return withoutMust
     }
     return core
   }
@@ -795,6 +813,7 @@ function mapUser(row: {
   role: string
   email: string | null
   login_id?: string | null
+  must_change_password?: boolean | null
   phone: string | null
   pay_type: AppUser['payType'] | null
   line_user_id: string | null
@@ -825,6 +844,7 @@ function mapUser(row: {
     role: row.role as UserRole,
     email: row.email ?? undefined,
     loginId: row.login_id ?? null,
+    mustChangePassword: Boolean(row.must_change_password),
     phone: row.phone ?? undefined,
     payType: row.pay_type ?? undefined,
     lineUserId: row.line_user_id,
@@ -1130,6 +1150,72 @@ export const supabaseRepos = {
     if (error && !/session|not authenticated|jwt/i.test(error.message)) {
       throw new AppError(toUserMessage(error, '登出失敗'))
     }
+  },
+
+  /**
+   * Boss / account-permission holders create a teammate.
+   * Default login id + password = phone digits; must_change_password = true.
+   */
+  async createMemberAccount(
+    actor: AppUser,
+    input: { name: string; phone: string; roleGroupName?: string | null },
+  ): Promise<{ user: AppUser; message: string }> {
+    assertFeature(actor, 'account')
+    const { data, error } = await sb().functions.invoke('admin-create-member', {
+      body: {
+        name: input.name,
+        phone: input.phone,
+        roleGroupName: input.roleGroupName ?? null,
+      },
+    })
+    const body = data as {
+      error?: string
+      message?: string
+      user?: Parameters<typeof mapUser>[0]
+    } | null
+    if (error) {
+      const ctx = (error as { context?: Response }).context
+      if (ctx && typeof ctx.json === 'function') {
+        try {
+          const errBody = (await ctx.json()) as { error?: string }
+          if (errBody?.error) throw new AppError(errBody.error)
+        } catch (e) {
+          if (e instanceof AppError) throw e
+        }
+      }
+      if (body?.error) throw new AppError(body.error)
+      throw new AppError(toUserMessage(error, '無法建立帳號'))
+    }
+    if (!body || body.error) {
+      throw new AppError(body?.error || '無法建立帳號')
+    }
+    if (!body.user) throw new AppError('建立帳號成功但無法讀取資料')
+    return {
+      user: mapUser(body.user),
+      message: body.message || '已建立帳號',
+    }
+  },
+
+  async changeOwnPassword(newPassword: string): Promise<AppUser> {
+    if (newPassword.length < 6) throw new AppError('新密碼至少 6 碼')
+    const client = sb()
+    const { error } = await client.auth.updateUser({ password: newPassword })
+    if (error) throw new AppError(toUserMessage(error, '更改密碼失敗'))
+
+    const { data, error: rpcError } = await client.rpc('mark_password_changed')
+    if (rpcError) {
+      throw new AppError(toUserMessage(rpcError, '密碼已更新，但無法清除改密標記'))
+    }
+    const row = Array.isArray(data) ? data[0] : data
+    if (!row) {
+      const current = await this.getCurrentUser()
+      if (!current) throw new AppError('密碼已更新，請重新登入')
+      return { ...current, mustChangePassword: false }
+    }
+    return mapUser({
+      ...row,
+      must_change_password: false,
+    })
   },
 
   async listAllowedSiteIds(userId: string): Promise<string[]> {

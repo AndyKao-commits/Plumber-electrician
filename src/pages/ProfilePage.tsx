@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { hasFeature } from '@/domain/featureAccess'
 import { useUser, userKeys } from '@/hooks/useUser'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
@@ -23,6 +24,7 @@ export function ProfilePage() {
   const formal = isFormalMode() || formalFromHook
   const queryClient = useQueryClient()
   const isBoss = user?.role === 'boss'
+  const canManageAccounts = hasFeature(user, 'account')
 
   const [name, setName] = useState('')
   const [nickname, setNickname] = useState('')
@@ -377,41 +379,47 @@ export function ProfilePage() {
         {saved ? <p className="muted" style={{ margin: 0 }}>已儲存</p> : null}
       </form>
 
-      {isBoss ? (
+      {canManageAccounts ? (
         <section className="panel stack">
           <div className="row between">
-            <strong>團隊帳號</strong>
+            <strong>帳號與管理</strong>
             <Link className="btn btn-steel" to="/access">
-              權限設定
+              {isBoss ? '開帳／權限' : '協助註冊'}
             </Link>
           </div>
-          {(directoryQuery.data ?? [])
-            .filter((m) => m.id !== user.id)
-            .map((m) => (
-              <div key={m.id} className="row between" style={{ gap: 8 }}>
-                <div>
-                  <strong style={{ margin: 0 }}>{m.name}</strong>
-                  <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-                    {m.roleGroupName || m.jobTitle || '未填工種'} ·{' '}
-                    {m.accountStatus === 'disabled' ? '停用' : '啟用'}
-                  </p>
+          {!isBoss ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
+              可協助註冊新帳號（預設帳號與密碼為電話）。
+            </p>
+          ) : (
+            (directoryQuery.data ?? [])
+              .filter((m) => m.id !== user.id)
+              .map((m) => (
+                <div key={m.id} className="row between" style={{ gap: 8 }}>
+                  <div>
+                    <strong style={{ margin: 0 }}>{m.name}</strong>
+                    <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+                      {m.roleGroupName || m.jobTitle || '未填工種'} ·{' '}
+                      {m.accountStatus === 'disabled' ? '停用' : '啟用'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={statusMutation.isPending}
+                    onClick={() =>
+                      void statusMutation.mutateAsync({
+                        targetUserId: m.id,
+                        accountStatus:
+                          m.accountStatus === 'disabled' ? 'active' : 'disabled',
+                      })
+                    }
+                  >
+                    {m.accountStatus === 'disabled' ? '啟用' : '停用'}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={statusMutation.isPending}
-                  onClick={() =>
-                    void statusMutation.mutateAsync({
-                      targetUserId: m.id,
-                      accountStatus:
-                        m.accountStatus === 'disabled' ? 'active' : 'disabled',
-                    })
-                  }
-                >
-                  {m.accountStatus === 'disabled' ? '啟用' : '停用'}
-                </button>
-              </div>
-            ))}
+              ))
+          )}
         </section>
       ) : null}
     </div>
