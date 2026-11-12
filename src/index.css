@@ -556,3 +556,26 @@ button {
   border-radius: 50%;
   background: var(--danger);
 }
+
+/* LINE LIFF / in-app pages */
+.liff-shell {
+  min-height: 100dvh;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 12px 14px 28px;
+  background:
+    radial-gradient(120% 80% at 10% -10%, rgba(255, 193, 69, 0.18), transparent 55%),
+    linear-gradient(180deg, #f3f6f8 0%, #e8eef2 100%);
+}
+
+.liff-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.liff-main {
+  gap: 12px;
+}

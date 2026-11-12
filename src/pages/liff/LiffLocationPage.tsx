@@ -1,0 +1,142 @@
+import { useEffect, useRef, useState } from 'react'
+import { LiffFrame } from '@/components/LiffFrame'
+import { useUser } from '@/hooks/useUser'
+import { isFormalMode } from '@/lib/dataMode'
+import { toUserMessage } from '@/lib/errors'
+import { localDb } from '@/lib/localDb'
+import { reverseGeocode } from '@/lib/reverseGeocode'
+import { supabaseRepos } from '@/lib/supabaseRepos'
+import { formatTaipei } from '@/lib/time'
+
+type Phase = 'locating' | 'saving' | 'done' | 'error'
+
+export function LiffLocationPage() {
+  const { user } = useUser()
+  const formal = isFormalMode()
+  const runId = useRef(0)
+  const [phase, setPhase] = useState<Phase>('locating')
+  const [error, setError] = useState<string | null>(null)
+  const [summary, setSummary] = useState<string | null>(null)
+  const [nonce, setNonce] = useState(0)
+
+  useEffect(() => {
+    if (!user) return
+    const myRun = ++runId.current
+    let cancelled = false
+
+    async function run() {
+      setPhase('locating')
+      setError(null)
+      setSummary(null)
+      try {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+          if (!navigator.geolocation) {
+            reject(new Error('此裝置不支援定位'))
+            return
+          }
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 20000,
+            maximumAge: 0,
+          })
+        })
+        if (cancelled || myRun !== runId.current) return
+        setPhase('saving')
+        const latitude = pos.coords.latitude
+        const longitude = pos.coords.longitude
+        const geo = await reverseGeocode(latitude, longitude)
+        const address = geo?.address ?? null
+        const label = geo?.label || address || '目前位置'
+        const saved = formal
+          ? await supabaseRepos.createLocationCheckin(user!, {
+              label,
+              address,
+              latitude,
+              longitude,
+              source: 'web_gps',
+            })
+          : (() => {
+              const open = localDb.getOpenAttendance(user!.id)
+              const row = {
+                id: crypto.randomUUID(),
+                organizationId: user!.organizationId,
+                userId: user!.id,
+                recordedAt: new Date().toISOString(),
+                source: 'web_gps' as const,
+                siteId: null,
+                label,
+                address,
+                latitude,
+                longitude,
+                note: null,
+                attendanceId: open?.id ?? null,
+              }
+              localDb.saveLocationCheckin(row)
+              return row
+            })()
+        if (cancelled || myRun !== runId.current) return
+        setSummary(
+          `${formatTaipei(saved.recordedAt, 'HH:mm')} · ${
+            saved.address?.trim() || saved.label || label
+          }`,
+        )
+        setPhase('done')
+      } catch (err) {
+        if (cancelled || myRun !== runId.current) return
+        if (err && typeof err === 'object' && 'code' in err) {
+          const code = Number((err as GeolocationPositionError).code)
+          if (code === 1) setError('請允許位置權限後再試')
+          else if (code === 2) setError('讀不到位置，請到空曠處再試')
+          else if (code === 3) setError('定位逾時，請再試')
+          else setError(toUserMessage(err, '定位失敗'))
+        } else {
+          setError(toUserMessage(err, '定位失敗'))
+        }
+        setPhase('error')
+      }
+    }
+
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [user, formal, nonce])
+
+  return (
+    <LiffFrame title="紀錄地點">
+      <section className="panel stack">
+        {phase === 'locating' ? (
+          <>
+            <strong style={{ margin: 0 }}>定位中…</strong>
+            <p className="muted" style={{ margin: 0 }}>
+              請允許使用位置。
+            </p>
+          </>
+        ) : null}
+        {phase === 'saving' ? (
+          <strong style={{ margin: 0 }}>寫入中…</strong>
+        ) : null}
+        {phase === 'done' ? (
+          <>
+            <span className="badge ok">完成</span>
+            <strong style={{ margin: 0 }}>地點已紀錄</strong>
+            <p style={{ margin: 0 }}>{summary}</p>
+          </>
+        ) : null}
+        {phase === 'error' ? (
+          <>
+            <strong style={{ margin: 0 }}>無法完成</strong>
+            <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>
+            <button
+              type="button"
+              className="btn btn-steel"
+              onClick={() => setNonce((n) => n + 1)}
+            >
+              再試一次
+            </button>
+          </>
+        ) : null}
+      </section>
+    </LiffFrame>
+  )
+}

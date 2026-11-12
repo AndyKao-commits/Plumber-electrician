@@ -158,15 +158,15 @@ export function ProfilePage() {
       {formal ? (
         <section className="panel stack">
           <strong>個人 LINE 綁定</strong>
+          <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
+            綁定後可用圖文選單做出勤與定位（不主動推播）。
+          </p>
           {lineFlash ? (
             <p style={{ color: 'var(--ok)', margin: 0 }}>{lineFlash}</p>
           ) : null}
           {user.lineUserId ? (
-            <div className="site-link stack">
-              <strong style={{ margin: 0 }}>已綁定</strong>
-              <p className="muted" style={{ margin: 0, wordBreak: 'break-all' }}>
-                {user.lineUserId}
-              </p>
+            <div className="stack">
+              <span className="badge ok">已綁定 LINE</span>
               <button
                 className="btn btn-ghost"
                 type="button"
@@ -203,7 +203,7 @@ export function ProfilePage() {
               </button>
               {!lineLoginReady ? (
                 <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-                  尚未設定 LINE Login，可先用下方備援綁定碼。
+                  尚未設定 LINE Login，請用下方進階方式。
                 </p>
               ) : null}
               {lineLoginError ? (
@@ -216,7 +216,7 @@ export function ProfilePage() {
                 onClick={() => setShowFallback((v) => !v)}
                 style={{ alignSelf: 'flex-start' }}
               >
-                {showFallback ? '收合備援綁定碼' : '備援：用綁定碼'}
+                {showFallback ? '收合進階' : '進階：綁定碼／User ID'}
               </button>
 
               {showFallback ? (
@@ -224,7 +224,7 @@ export function ProfilePage() {
                   <ol className="muted" style={{ margin: 0, paddingLeft: '1.2rem' }}>
                     <li>按「產生綁定碼」</li>
                     <li>對官方帳號傳送：綁定 代碼</li>
-                    <li>收到成功後按「重新整理」</li>
+                    <li>成功後按「重新整理」</li>
                   </ol>
                   <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                     <button
@@ -270,7 +270,7 @@ export function ProfilePage() {
 
                   <form className="stack" onSubmit={(e) => void onBindLine(e)}>
                     <div className="field">
-                      <label htmlFor="line-user-id">或手動貼上 LINE User ID</label>
+                      <label htmlFor="line-user-id">手動貼上 LINE User ID</label>
                       <input
                         id="line-user-id"
                         value={lineUserId}

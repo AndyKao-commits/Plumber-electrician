@@ -211,7 +211,7 @@ async function handleEvent(
   if (event.type === 'follow') {
     return [
       textMsg(
-        '歡迎加入工程管家。\n請用下方圖文選單操作：上傳照片、出勤、紀錄地點、記帳、待辦、進入工地。\n若要綁定個人身分，請到工程管家「個人中心」使用「用 LINE 綁定」。',
+        '歡迎加入工程管家。\n請用下方圖文選單操作。\n首次請到網站「個人中心」綁定 LINE。',
       ),
     ]
   }
@@ -264,11 +264,11 @@ async function handleTextCommand(
   if (intent === 'open_app') {
     return [
       flexMenu({
-        altText: '進入工程管家',
-        eyebrow: '進入工地',
-        title: '開啟工程管家',
-        body: '前往網站主頁查看出勤、收支與工地。',
-        buttons: [{ label: '開啟主頁', uri: appBaseUrl(), style: 'primary' }],
+        altText: '開啟工程管家',
+        eyebrow: '開啟網站',
+        title: '工程管家',
+        body: '查看出勤、收支與工地。',
+        buttons: [{ label: '開啟', uri: appBaseUrl(), style: 'primary' }],
       }),
     ]
   }
@@ -683,8 +683,7 @@ async function startFlow(
   }
 
   if (flowType === 'attendance') {
-    const draft = await createDraft(admin, profile, 'attendance', 'menu', {})
-    return promptAttendanceMenu(admin, profile, draft)
+    return handoffAttendanceToLiff()
   }
 
   if (flowType === 'purchase') {
@@ -693,8 +692,7 @@ async function startFlow(
   }
 
   if (flowType === 'location') {
-    const draft = await createDraft(admin, profile, 'location', 'choose_method', {})
-    return promptLocationMethod(draft)
+    return handoffLocationToLiff()
   }
 
   const draft = await createDraft(admin, profile, 'photo_upload', 'select_site', {})
@@ -718,7 +716,8 @@ async function resumeDraft(
   }
 
   if (draft.flow_type === 'attendance') {
-    return promptAttendanceMenu(admin, profile, draft)
+    await finalizeDraft(admin, draft.id, 'cancelled')
+    return handoffAttendanceToLiff()
   }
 
   if (draft.flow_type === 'purchase') {
@@ -726,7 +725,8 @@ async function resumeDraft(
   }
 
   if (draft.flow_type === 'location') {
-    return promptLocationMethod(draft)
+    await finalizeDraft(admin, draft.id, 'cancelled')
+    return handoffLocationToLiff()
   }
 
   const step = draft.current_step || 'select_site'
@@ -1930,7 +1930,7 @@ function siteCarousel(input: {
     actionBubble({
       eyebrow: input.eyebrow,
       title: s.name.slice(0, 40),
-      body: '點下方按鈕選擇此工地',
+      body: ' ',
       buttons: [
         {
           label: '選擇',
@@ -2043,28 +2043,51 @@ async function handleBind(
 
 // ----- Location footprints (到點打卡／足跡) -----
 
-function locationWebUri(): string {
-  return `${appBaseUrl()}/location-checkin`
+function locationLiffUri(): string {
+  return `${appBaseUrl()}/liff/location`
 }
 
-/** Close LINE draft and send URI to website GPS page (no further LINE confirm). */
+function attendanceLiffUri(): string {
+  return `${appBaseUrl()}/liff/attendance`
+}
+
+/** Prefer LIFF page over multi-step chat for attendance. */
+function handoffAttendanceToLiff(): LineMessage[] {
+  return [
+    flexMenu({
+      altText: '出勤打卡',
+      eyebrow: '出勤',
+      title: '出勤打卡',
+      body: '一鍵上班／下班，可指定工地。',
+      buttons: [
+        { label: '開啟出勤', uri: attendanceLiffUri(), style: 'primary' },
+      ],
+    }),
+  ]
+}
+
+/** Prefer LIFF GPS page over multi-step chat for location. */
+function handoffLocationToLiff(): LineMessage[] {
+  return [
+    flexMenu({
+      altText: '紀錄地點',
+      eyebrow: '地點',
+      title: '紀錄地點',
+      body: '開啟後允許定位即可完成。',
+      buttons: [
+        { label: '開啟定位', uri: locationLiffUri(), style: 'primary' },
+      ],
+    }),
+  ]
+}
+
+/** Close LINE draft and send URI to LIFF GPS page (no further LINE confirm). */
 async function handoffLocationToWeb(
   admin: Sb,
   draft: DraftRow,
 ): Promise<LineMessage[]> {
   await finalizeDraft(admin, draft.id, 'completed')
-  return [
-    flexMenu({
-      altText: '請在網站完成定位',
-      eyebrow: '紀錄地點',
-      title: '請在網站完成定位',
-      body:
-        'LINE 流程已結束，不用再點完成。請點「開啟網站定位」，允許定位後網站會顯示「地點紀錄完成」。',
-      buttons: [
-        { label: '開啟網站定位', uri: locationWebUri(), style: 'primary' },
-      ],
-    }),
-  ]
+  return handoffLocationToLiff()
 }
 
 async function promptLocationMethod(_draft: DraftRow): Promise<LineMessage[]> {

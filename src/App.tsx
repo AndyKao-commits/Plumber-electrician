@@ -37,6 +37,8 @@ import { ExpensesPage } from '@/pages/ExpensesPage'
 import { PettyCashPage } from '@/pages/PettyCashPage'
 import { SuppliersPage } from '@/pages/SuppliersPage'
 import { TodosPage } from '@/pages/TodosPage'
+import { LiffAttendancePage } from '@/pages/liff/LiffAttendancePage'
+import { LiffLocationPage } from '@/pages/liff/LiffLocationPage'
 
 function Protected({ children }: { children: ReactNode }) {
   return <RequireAuth>{children}</RequireAuth>
@@ -58,6 +60,23 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/change-password" element={<ChangePasswordPage />} />
           <Route path="/line-bind-callback" element={<LineBindCallbackPage />} />
+          {/* LIFF / LINE in-app: no bottom nav */}
+          <Route
+            path="/liff/attendance"
+            element={
+              <Protected>
+                <LiffAttendancePage />
+              </Protected>
+            }
+          />
+          <Route
+            path="/liff/location"
+            element={
+              <Protected>
+                <LiffLocationPage />
+              </Protected>
+            }
+          />
           <Route element={<AppShell />}>
             <Route path="/" element={<Protected><HomePage /></Protected>} />
             <Route path="/sites" element={<Protected><SitesPage /></Protected>} />
