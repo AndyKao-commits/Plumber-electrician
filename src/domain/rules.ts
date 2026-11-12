@@ -169,9 +169,9 @@ export const MORE_MENU = [
       },
       {
         id: 'settings',
-        label: '額度設定',
+        label: '收支審核設定',
         path: '/settings',
-        description: '審核門檻與每日上限',
+        description: '現場支出／收支審核門檻',
         bossOnly: true,
       },
       {

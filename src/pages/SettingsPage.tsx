@@ -16,26 +16,21 @@ export function SettingsPage() {
   const isBoss = user?.role === 'boss'
 
   const [reportThreshold, setReportThreshold] = useState('')
-  const [emergencySingle, setEmergencySingle] = useState('')
-  const [emergencyDaily, setEmergencyDaily] = useState('')
-  const [dailyPurchase, setDailyPurchase] = useState('')
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     setReportThreshold(String(settings.reportReviewThresholdNtd))
-    setEmergencySingle(String(settings.emergencySingleLimitNtd))
-    setEmergencyDaily(String(settings.emergencyDailyLimitNtd))
-    setDailyPurchase(String(settings.dailyPurchaseLimitNtd))
   }, [settings])
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
     setSaved(false)
+    // Keep legacy purchase-limit columns unchanged; V1 only edits 收支審核門檻.
     await updateSettings({
       reportReviewThresholdNtd: Number(reportThreshold),
-      emergencySingleLimitNtd: Number(emergencySingle),
-      emergencyDailyLimitNtd: Number(emergencyDaily),
-      dailyPurchaseLimitNtd: Number(dailyPurchase),
+      emergencySingleLimitNtd: settings.emergencySingleLimitNtd,
+      emergencyDailyLimitNtd: settings.emergencyDailyLimitNtd,
+      dailyPurchaseLimitNtd: settings.dailyPurchaseLimitNtd,
     })
     setSaved(true)
   }
@@ -44,9 +39,9 @@ export function SettingsPage() {
     return (
       <div className="stack fade-up">
         <section className="panel stack">
-          <strong>額度設定</strong>
+          <strong>收支審核設定</strong>
           <p className="muted" style={{ margin: 0 }}>
-            僅老闆可調整支出審核門檻與每日上限。
+            僅老闆可調整現場支出／收支審核門檻。
           </p>
           <Link to="/">回首頁</Link>
         </section>
@@ -57,7 +52,10 @@ export function SettingsPage() {
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <strong>額度設定</strong>
+        <strong>收支審核設定</strong>
+        <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
+          材料、吃飯等花費請走「收支」登記與審核；採購模組已不使用。
+        </p>
       </section>
 
       {isLoading ? <div className="empty">載入中…</div> : null}
@@ -70,7 +68,7 @@ export function SettingsPage() {
       <form className="panel stack" onSubmit={(e) => void onSubmit(e)}>
         <div className="field">
           <label htmlFor="report-threshold">
-            回報查核門檻（零用金／現場支出，NT$）
+            收支／現場支出審核門檻（NT$）
           </label>
           <input
             id="report-threshold"
@@ -84,48 +82,6 @@ export function SettingsPage() {
           <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
             未達門檻自動確認；達門檻以上進待審核。
           </p>
-        </div>
-
-        <div className="field">
-          <label htmlFor="daily-purchase">每日採購合計上限（NT$）</label>
-          <input
-            id="daily-purchase"
-            type="number"
-            min={0}
-            step={1}
-            value={dailyPurchase}
-            onChange={(e) => setDailyPurchase(e.target.value)}
-            required
-          />
-          <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-            每人每日一般＋緊急採購合計；填 0 表示不限制。
-          </p>
-        </div>
-
-        <div className="field">
-          <label htmlFor="emergency-single">緊急採購單次上限（NT$）</label>
-          <input
-            id="emergency-single"
-            type="number"
-            min={1}
-            step={1}
-            value={emergencySingle}
-            onChange={(e) => setEmergencySingle(e.target.value)}
-            required
-          />
-        </div>
-
-        <div className="field">
-          <label htmlFor="emergency-daily">緊急採購每日累計上限（NT$）</label>
-          <input
-            id="emergency-daily"
-            type="number"
-            min={1}
-            step={1}
-            value={emergencyDaily}
-            onChange={(e) => setEmergencyDaily(e.target.value)}
-            required
-          />
         </div>
 
         <button className="btn btn-steel" type="submit" disabled={isUpdating}>
