@@ -1,17 +1,49 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { PRODUCT } from '@/domain/rules'
-import { isLikelyLineWebView } from '@/lib/liffApp'
+import {
+  closeLiffWindow,
+  ensureLiffReady,
+  isLiffConfigured,
+  isLikelyLineWebView,
+} from '@/lib/liffApp'
 
 /** Minimal chrome for LINE in-app pages (no bottom tab bar). */
 export function LiffFrame({
   title,
   children,
+  showClose = true,
 }: {
   title: string
   children: ReactNode
+  /** Show「關閉回聊天室」when LIFF can close. */
+  showClose?: boolean
 }) {
   const inLine = isLikelyLineWebView()
+  const [liffReady, setLiffReady] = useState(false)
+  const [closing, setClosing] = useState(false)
+  const [closeHint, setCloseHint] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isLiffConfigured()) return
+    let cancelled = false
+    void ensureLiffReady().then((ok) => {
+      if (!cancelled) setLiffReady(ok)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function onClose() {
+    setClosing(true)
+    setCloseHint(null)
+    const result = await closeLiffWindow()
+    if (!result.ok) {
+      setCloseHint(result.reason ?? '無法關閉')
+      setClosing(false)
+    }
+  }
 
   return (
     <div className="liff-shell">
@@ -30,6 +62,28 @@ export function LiffFrame({
         ) : null}
       </header>
       <main className="liff-main stack">{children}</main>
+      {showClose ? (
+        <div className="stack" style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            className="btn btn-steel"
+            style={{ width: '100%' }}
+            disabled={closing}
+            onClick={() => void onClose()}
+          >
+            {closing ? '關閉中…' : liffReady ? '關閉回聊天室' : '關閉／返回聊天室'}
+          </button>
+          {closeHint ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+              {closeHint}
+            </p>
+          ) : !isLiffConfigured() && inLine ? (
+            <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+              尚未設定 LIFF ID 時，請用 LINE 左上角返回聊天室。
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

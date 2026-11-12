@@ -2044,10 +2044,14 @@ async function handleBind(
 // ----- Location footprints (到點打卡／足跡) -----
 
 function locationLiffUri(): string {
+  const liffId = (Deno.env.get('LIFF_ID') ?? '').trim()
+  if (liffId) return `https://liff.line.me/${liffId}/liff/location`
   return `${appBaseUrl()}/liff/location`
 }
 
 function attendanceLiffUri(): string {
+  const liffId = (Deno.env.get('LIFF_ID') ?? '').trim()
+  if (liffId) return `https://liff.line.me/${liffId}/liff/attendance`
   return `${appBaseUrl()}/liff/attendance`
 }
 
