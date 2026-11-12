@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useUser } from '@/hooks/useUser'
 import { isFormalMode } from '@/lib/dataMode'
@@ -8,7 +8,7 @@ import { reverseGeocode } from '@/lib/reverseGeocode'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { formatTaipei } from '@/lib/time'
 
-type Phase = 'locating' | 'saving' | 'done' | 'error'
+type Phase = 'idle' | 'locating' | 'saving' | 'done' | 'error'
 
 type Result = {
   recordedAt: string
@@ -19,17 +19,18 @@ type Result = {
 }
 
 function readGps(): Promise<GeolocationPosition> {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error('此裝置不支援定位'))
-      return
-    }
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      timeout: 20000,
-      maximumAge: 0,
+  if (!navigator.geolocation) {
+    return Promise.reject(new Error('此裝置不支援定位'))
+  }
+  const tryOnce = (highAccuracy: boolean, timeout: number) =>
+    new Promise<GeolocationPosition>((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: highAccuracy,
+        timeout,
+        maximumAge: highAccuracy ? 0 : 60_000,
+      })
     })
-  })
+  return tryOnce(true, 15000).catch(() => tryOnce(false, 20000))
 }
 
 function geoErrorMessage(err: unknown): string {
@@ -46,77 +47,74 @@ export function LocationCheckinPage() {
   const { user } = useUser()
   const formal = isFormalMode()
   const runId = useRef(0)
-  const [phase, setPhase] = useState<Phase>('locating')
+  const [phase, setPhase] = useState<Phase>('idle')
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<Result | null>(null)
-  const [nonce, setNonce] = useState(0)
 
-  useEffect(() => {
+  async function startLocate() {
     if (!user) return
     const myRun = ++runId.current
-    let cancelled = false
-
-    async function run() {
-      setPhase('locating')
-      setError(null)
-      setResult(null)
+    setPhase('locating')
+    setError(null)
+    setResult(null)
+    try {
+      // User gesture required in LINE / iOS WebView.
+      const pos = await readGps()
+      if (myRun !== runId.current) return
+      setPhase('saving')
+      const latitude = pos.coords.latitude
+      const longitude = pos.coords.longitude
+      let address: string | null = null
+      let label = '目前位置（網站 GPS）'
       try {
-        const pos = await readGps()
-        if (cancelled || myRun !== runId.current) return
-        setPhase('saving')
-        const latitude = pos.coords.latitude
-        const longitude = pos.coords.longitude
         const geo = await reverseGeocode(latitude, longitude)
-        const address = geo?.address ?? null
-        const label = geo?.label || address || '目前位置（網站 GPS）'
-        const saved = formal
-          ? await supabaseRepos.createLocationCheckin(user!, {
+        address = geo?.address ?? null
+        label = geo?.label || address || label
+      } catch {
+        /* address optional */
+      }
+      const saved = formal
+        ? await supabaseRepos.createLocationCheckin(user, {
+            label,
+            address,
+            latitude,
+            longitude,
+            source: 'web_gps',
+          })
+        : (() => {
+            const open = localDb.getOpenAttendance(user.id)
+            const row = {
+              id: crypto.randomUUID(),
+              organizationId: user.organizationId,
+              userId: user.id,
+              recordedAt: new Date().toISOString(),
+              source: 'web_gps' as const,
+              siteId: null,
               label,
               address,
               latitude,
               longitude,
-              source: 'web_gps',
-            })
-          : (() => {
-              const open = localDb.getOpenAttendance(user!.id)
-              const row = {
-                id: crypto.randomUUID(),
-                organizationId: user!.organizationId,
-                userId: user!.id,
-                recordedAt: new Date().toISOString(),
-                source: 'web_gps' as const,
-                siteId: null,
-                label,
-                address,
-                latitude,
-                longitude,
-                note: null,
-                attendanceId: open?.id ?? null,
-              }
-              localDb.saveLocationCheckin(row)
-              return row
-            })()
-        if (cancelled || myRun !== runId.current) return
-        setResult({
-          recordedAt: saved.recordedAt,
-          latitude,
-          longitude,
-          label: saved.label || label,
-          address: saved.address ?? address,
-        })
-        setPhase('done')
-      } catch (err) {
-        if (cancelled || myRun !== runId.current) return
-        setError(geoErrorMessage(err))
-        setPhase('error')
-      }
+              note: null,
+              attendanceId: open?.id ?? null,
+            }
+            localDb.saveLocationCheckin(row)
+            return row
+          })()
+      if (myRun !== runId.current) return
+      setResult({
+        recordedAt: saved.recordedAt,
+        latitude,
+        longitude,
+        label: saved.label || label,
+        address: saved.address ?? address,
+      })
+      setPhase('done')
+    } catch (err) {
+      if (myRun !== runId.current) return
+      setError(geoErrorMessage(err))
+      setPhase('error')
     }
-
-    void run()
-    return () => {
-      cancelled = true
-    }
-  }, [user, formal, nonce])
+  }
 
   if (!user) return <div className="empty">請先登入</div>
 
@@ -127,6 +125,22 @@ export function LocationCheckinPage() {
       </section>
 
       <section className="panel stack">
+        {phase === 'idle' ? (
+          <>
+            <h2 style={{ margin: 0 }}>留下目前位置</h2>
+            <p className="muted" style={{ margin: 0 }}>
+              請按下方按鈕並允許定位。
+            </p>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void startLocate()}
+            >
+              開始定位
+            </button>
+          </>
+        ) : null}
+
         {phase === 'locating' ? (
           <>
             <h2 style={{ margin: 0 }}>定位中…</h2>
@@ -179,7 +193,7 @@ export function LocationCheckinPage() {
             <button
               type="button"
               className="btn btn-steel"
-              onClick={() => setNonce((n) => n + 1)}
+              onClick={() => void startLocate()}
             >
               再試一次
             </button>
