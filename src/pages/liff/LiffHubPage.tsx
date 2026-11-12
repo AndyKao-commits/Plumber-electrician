@@ -4,7 +4,7 @@ import { LiffFrame } from '@/components/LiffFrame'
 /** Landing when LIFF Endpoint opens `/liff` without a subpath. */
 export function LiffHubPage() {
   return (
-    <LiffFrame title="現場操作" showClose>
+    <LiffFrame title="現場操作" showClose liffEntry="hub">
       <section className="panel stack">
         <p className="muted" style={{ margin: 0 }}>
           請選擇要做的事：

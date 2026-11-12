@@ -6,6 +6,7 @@ import {
   ensureLiffReady,
   isLiffConfigured,
   isLikelyLineWebView,
+  type LiffEntry,
 } from '@/lib/liffApp'
 
 /** Minimal chrome for LINE in-app pages (no bottom tab bar). */
@@ -13,11 +14,13 @@ export function LiffFrame({
   title,
   children,
   showClose = true,
+  liffEntry = 'hub',
 }: {
   title: string
   children: ReactNode
-  /** Show「關閉回聊天室」when LIFF can close. */
   showClose?: boolean
+  /** Which LIFF id to init (attendance / location dedicated apps). */
+  liffEntry?: LiffEntry
 }) {
   const inLine = isLikelyLineWebView()
   const [liffReady, setLiffReady] = useState(false)
@@ -25,20 +28,20 @@ export function LiffFrame({
   const [closeHint, setCloseHint] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!isLiffConfigured()) return
+    if (!isLiffConfigured(liffEntry)) return
     let cancelled = false
-    void ensureLiffReady().then((ok) => {
+    void ensureLiffReady(liffEntry).then((ok) => {
       if (!cancelled) setLiffReady(ok)
     })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [liffEntry])
 
   async function onClose() {
     setClosing(true)
     setCloseHint(null)
-    const result = await closeLiffWindow()
+    const result = await closeLiffWindow(liffEntry)
     if (!result.ok) {
       setCloseHint(result.reason ?? '無法關閉')
       setClosing(false)
@@ -77,7 +80,7 @@ export function LiffFrame({
             <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
               {closeHint}
             </p>
-          ) : !isLiffConfigured() && inLine ? (
+          ) : !isLiffConfigured(liffEntry) && inLine ? (
             <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
               尚未設定 LIFF ID 時，請用 LINE 左上角返回聊天室。
             </p>

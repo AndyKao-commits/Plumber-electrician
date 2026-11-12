@@ -61,7 +61,7 @@ export function LiffAttendancePage() {
   }
 
   return (
-    <LiffFrame title="出勤打卡">
+    <LiffFrame title="出勤打卡" liffEntry="attendance">
       <section className="panel stack">
         <p className="muted" style={{ margin: 0 }}>
           {formatTaipei(new Date(), 'yyyy/MM/dd HH:mm')}
