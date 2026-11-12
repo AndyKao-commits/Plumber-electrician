@@ -26,7 +26,7 @@ export function LoginPage() {
   } = useUser()
 
   const [tab, setTab] = useState<AuthTab>('login')
-  const [email, setEmail] = useState('')
+  const [account, setAccount] = useState('')
   const [password, setPassword] = useState('')
   const [name, setName] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -58,7 +58,7 @@ export function LoginPage() {
   async function onPasswordLogin(event: FormEvent) {
     event.preventDefault()
     setFormError(null)
-    await loginWithPassword({ email, password })
+    await loginWithPassword({ account, password })
   }
 
   async function onSignUp(event: FormEvent) {
@@ -74,7 +74,7 @@ export function LoginPage() {
     }
     await signUp({
       name,
-      email,
+      account,
       password,
       organizationName: organizationName.trim() || null,
     })
@@ -94,7 +94,7 @@ export function LoginPage() {
             {isDemoMode
               ? '選擇身分開始'
               : tab === 'login'
-                ? 'Email／密碼登入'
+                ? '帳號／密碼登入'
                 : '建立帳號'}
           </strong>
           {isDemoMode ? (
@@ -133,13 +133,14 @@ export function LoginPage() {
               {tab === 'login' ? (
                 <form className="stack" onSubmit={(e) => void onPasswordLogin(e)}>
                   <div className="field">
-                    <label htmlFor="login-email">Email</label>
+                    <label htmlFor="login-account">帳號</label>
                     <input
-                      id="login-email"
-                      type="email"
+                      id="login-account"
+                      type="text"
                       autoComplete="username"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      value={account}
+                      onChange={(e) => setAccount(e.target.value)}
+                      placeholder="自訂帳號或 Email"
                       required
                     />
                   </div>
@@ -180,15 +181,20 @@ export function LoginPage() {
                     />
                   </div>
                   <div className="field">
-                    <label htmlFor="signup-email">Email</label>
+                    <label htmlFor="signup-account">帳號</label>
                     <input
-                      id="signup-email"
-                      type="email"
+                      id="signup-account"
+                      type="text"
                       autoComplete="username"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      value={account}
+                      onChange={(e) => setAccount(e.target.value)}
+                      placeholder="例如：ming01 或 ming@example.com"
                       required
                     />
+                    <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
+                      可用自訂帳號（英數，如 ming01）或 Email。自訂帳號請關閉
+                      Supabase「Confirm email」。
+                    </p>
                   </div>
                   <div className="field">
                     <label htmlFor="signup-password">密碼（至少 6 碼）</label>

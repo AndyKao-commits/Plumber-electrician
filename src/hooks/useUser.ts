@@ -46,9 +46,9 @@ export function useUser() {
   })
 
   const loginPassword = useMutation({
-    mutationFn: async (input: { email: string; password: string }) => {
+    mutationFn: async (input: { account: string; password: string }) => {
       if (!formal) throw new Error('本機示範模式不支援密碼登入')
-      return supabaseRepos.signIn(input.email, input.password)
+      return supabaseRepos.signIn(input.account, input.password)
     },
     onSuccess: (user) => queryClient.setQueryData(userKeys.me(), user),
   })
@@ -56,7 +56,7 @@ export function useUser() {
   const signUpMutation = useMutation({
     mutationFn: async (input: {
       name: string
-      email: string
+      account: string
       password: string
       organizationName?: string | null
     }) => {

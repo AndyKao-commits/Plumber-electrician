@@ -48,6 +48,7 @@ import {
   normalizeProfileFields,
   normalizeProfileName,
 } from '@/domain/profileFields'
+import { accountToAuthEmail } from '@/domain/loginIdentity'
 import {
   assertBillingDocumentEditable,
   assertCanManageBilling,
@@ -752,7 +753,7 @@ function mapStockReservationRow(row: Record<string, unknown>): StockReservation 
 }
 
 const PROFILE_SELECT_CORE =
-  'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, created_at'
+  'id, organization_id, name, role, email, login_id, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, created_at'
 
 /** Includes role-group columns when migration is applied; falls back to core. */
 const PROFILE_SELECT = `${PROFILE_SELECT_CORE}, role_group_name, role_group_id, access_template, features, permission_overrides`
@@ -766,13 +767,23 @@ async function selectProfileRow(userId: string) {
     .maybeSingle()
   if (
     full.error &&
-    /role_group_name|access_template|column/i.test(full.error.message)
+    /role_group_name|access_template|login_id|column/i.test(full.error.message)
   ) {
-    return client
+    const core = await client
       .from('profiles')
       .select(PROFILE_SELECT_CORE)
       .eq('id', userId)
       .maybeSingle()
+    if (core.error && /login_id|column/i.test(core.error.message)) {
+      return client
+        .from('profiles')
+        .select(
+          'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, account_status, profile_notes, created_at',
+        )
+        .eq('id', userId)
+        .maybeSingle()
+    }
+    return core
   }
   return full
 }
@@ -783,6 +794,7 @@ function mapUser(row: {
   name: string
   role: string
   email: string | null
+  login_id?: string | null
   phone: string | null
   pay_type: AppUser['payType'] | null
   line_user_id: string | null
@@ -812,6 +824,7 @@ function mapUser(row: {
     name: row.name,
     role: row.role as UserRole,
     email: row.email ?? undefined,
+    loginId: row.login_id ?? null,
     phone: row.phone ?? undefined,
     payType: row.pay_type ?? undefined,
     lineUserId: row.line_user_id,
@@ -1022,10 +1035,16 @@ export const supabaseRepos = {
     return mapUser({ ...data, email: data.email ?? auth.user.email ?? null })
   },
 
-  async signIn(email: string, password: string): Promise<AppUser> {
+  async signIn(account: string, password: string): Promise<AppUser> {
     const client = sb()
+    let authEmail: string
+    try {
+      authEmail = accountToAuthEmail(account).authEmail
+    } catch (e) {
+      throw new AppError(e instanceof Error ? e.message : '帳號格式無效')
+    }
     const { data, error } = await client.auth.signInWithPassword({
-      email: email.trim(),
+      email: authEmail,
       password,
     })
     if (error) throw new AppError(toUserMessage(error, '登入失敗'))
@@ -1041,42 +1060,55 @@ export const supabaseRepos = {
 
   /**
    * Self-serve signup: Auth user + complete_signup RPC for org/profile.
+   * Account may be a custom login id or a real email.
    * - organizationName empty → join oldest existing org (or create default)
    * - organizationName set → create new company; first user becomes Owner
    */
   async signUp(input: {
     name: string
-    email: string
+    /** Custom login id or real email. */
+    account: string
     password: string
     organizationName?: string | null
   }): Promise<AppUser> {
     const client = sb()
     const name = input.name.trim()
-    const email = input.email.trim()
     if (!name) throw new AppError('請填寫姓名')
-    if (!email) throw new AppError('請填寫 Email')
     if (input.password.length < 6) throw new AppError('密碼至少 6 碼')
 
+    let authEmail: string
+    let loginId: string | null
+    try {
+      const resolved = accountToAuthEmail(input.account)
+      authEmail = resolved.authEmail
+      loginId = resolved.loginId
+    } catch (e) {
+      throw new AppError(e instanceof Error ? e.message : '帳號格式無效')
+    }
+
     const { data, error } = await client.auth.signUp({
-      email,
+      email: authEmail,
       password: input.password,
       options: {
-        data: { name },
+        data: { name, login_id: loginId },
       },
     })
     if (error) throw new AppError(toUserMessage(error, '建立帳號失敗'))
     if (!data.user) throw new AppError('建立帳號失敗')
 
-    // Email confirmation enabled → no session yet
+    // Email confirmation enabled → no session yet (custom ids need Confirm email OFF)
     if (!data.session) {
       throw new AppError(
-        '帳號已建立，請至信箱完成驗證後再登入（若未收到信，請在 Supabase Auth 關閉「Confirm email」）',
+        loginId
+          ? '帳號已建立，但尚需信箱驗證。請在 Supabase Auth 關閉「Confirm email」後再以自訂帳號註冊，或改用真實 Email。'
+          : '帳號已建立，請至信箱完成驗證後再登入（若未收到信，請在 Supabase Auth 關閉「Confirm email」）',
       )
     }
 
     const { data: profile, error: profileError } = await client.rpc('complete_signup', {
       p_name: name,
       p_org_name: input.organizationName?.trim() || null,
+      p_login_id: loginId,
     })
     if (profileError) {
       throw new AppError(toUserMessage(profileError, '帳號已建立，但無法建立個人資料'))
@@ -1087,7 +1119,8 @@ export const supabaseRepos = {
     if (!row) throw new AppError('帳號已建立，但無法讀取個人資料')
     return mapUser({
       ...row,
-      email: row.email ?? data.user.email ?? email,
+      email: row.email ?? data.user.email ?? authEmail,
+      login_id: row.login_id ?? loginId,
     })
   },
 
