@@ -1,10 +1,13 @@
 /**
  * Boss / account-permission holders create teammate Auth users.
- * Default login + password = phone digits. Sets must_change_password.
+ * Account may be phone digits or a custom login id.
+ * Default password = account. Sets must_change_password.
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 
 const AUTH_LOGIN_EMAIL_DOMAIN = 'login.eg.local'
+const LOGIN_ID_RE = /^[a-z][a-z0-9._-]{2,31}$/
+const PHONE_LOGIN_RE = /^[0-9]{8,15}$/
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -25,13 +28,25 @@ function normalizePhoneDigits(raw: string): string {
   return s.replace(/\D/g, '')
 }
 
-function assertPhone(raw: string): string {
-  const digits = normalizePhoneDigits(raw)
-  if (!/^[0-9]{8,15}$/.test(digits)) {
-    throw new Error('請填寫有效電話（8–15 位數字）')
+function assertAccount(raw: string): { loginId: string; phone: string | null } {
+  const trimmed = String(raw || '').trim()
+  if (!trimmed) throw new Error('請填寫帳號')
+  const digits = normalizePhoneDigits(trimmed)
+  if (PHONE_LOGIN_RE.test(digits) && !/[a-zA-Z@]/.test(trimmed)) {
+    if (digits.length < 6) throw new Error('帳號至少 6 碼（同時作為預設密碼）')
+    return { loginId: digits, phone: digits }
   }
-  if (digits.length < 6) throw new Error('電話過短，無法作為預設密碼')
-  return digits
+  const id = trimmed.toLowerCase()
+  if (id.includes('@')) {
+    throw new Error('帳號請填電話或自訂帳號，勿填 Email')
+  }
+  if (!LOGIN_ID_RE.test(id)) {
+    throw new Error(
+      '帳號可為電話，或 3–32 碼自訂帳號（開頭英文字母，僅小寫英文、數字、. _ -）',
+    )
+  }
+  if (id.length < 6) throw new Error('帳號至少 6 碼（同時作為預設密碼）')
+  return { loginId: id, phone: null }
 }
 
 Deno.serve(async (req) => {
@@ -84,6 +99,8 @@ Deno.serve(async (req) => {
 
   let body: {
     name?: string
+    account?: string
+    /** @deprecated use account */
     phone?: string
     roleGroupName?: string | null
   }
@@ -96,25 +113,28 @@ Deno.serve(async (req) => {
   const name = String(body.name ?? '').trim()
   if (!name) return json({ error: '請填寫姓名' }, 400)
 
-  let phone: string
+  let loginId: string
+  let phone: string | null
   try {
-    phone = assertPhone(String(body.phone ?? ''))
+    const resolved = assertAccount(String(body.account ?? body.phone ?? ''))
+    loginId = resolved.loginId
+    phone = resolved.phone
   } catch (e) {
-    return json({ error: e instanceof Error ? e.message : '電話無效' }, 400)
+    return json({ error: e instanceof Error ? e.message : '帳號無效' }, 400)
   }
 
-  const authEmail = `${phone}@${AUTH_LOGIN_EMAIL_DOMAIN}`
+  const authEmail = `${loginId}@${AUTH_LOGIN_EMAIL_DOMAIN}`
 
   const { data: created, error: createError } = await admin.auth.admin.createUser({
     email: authEmail,
-    password: phone,
+    password: loginId,
     email_confirm: true,
-    user_metadata: { name, login_id: phone },
+    user_metadata: { name, login_id: loginId },
   })
   if (createError || !created.user) {
     const msg = createError?.message || '建立帳號失敗'
     if (/already|registered|exists/i.test(msg)) {
-      return json({ error: '此電話已註冊過帳號' }, 409)
+      return json({ error: '此帳號已註冊過' }, 409)
     }
     return json({ error: msg }, 400)
   }
@@ -128,7 +148,7 @@ Deno.serve(async (req) => {
       role: 'employee',
       email: authEmail,
       phone,
-      login_id: phone,
+      login_id: loginId,
       finance_authorized: false,
       must_change_password: true,
       account_status: 'active',
@@ -141,7 +161,6 @@ Deno.serve(async (req) => {
     .single()
 
   if (profileError) {
-    // Roll back auth user to avoid orphan login.
     await admin.auth.admin.deleteUser(created.user.id)
     return json({ error: profileError.message || '建立個人資料失敗' }, 400)
   }
@@ -160,6 +179,6 @@ Deno.serve(async (req) => {
   return json({
     ok: true,
     user: profile,
-    message: `已建立 ${name}。預設帳號與密碼皆為電話 ${phone}，首次登入需更改密碼。`,
+    message: `已建立 ${name}（帳號 ${loginId}）。預設密碼與帳號相同，首次登入需更改密碼。`,
   })
 })

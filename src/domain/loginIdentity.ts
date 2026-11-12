@@ -59,6 +59,24 @@ export function assertLoginId(raw: string): string {
   return id
 }
 
+/**
+ * Account used when admin provisions a user (also becomes default password).
+ * Accepts phone digits or custom letter-started ids; must be ≥ 6 chars.
+ */
+export function assertAccountForProvisioning(raw: string): {
+  loginId: string
+  phone: string | null
+} {
+  const loginId = assertLoginId(raw)
+  if (loginId.length < 6) {
+    throw new Error('帳號至少 6 碼（同時作為預設密碼）')
+  }
+  return {
+    loginId,
+    phone: isPhoneLoginId(loginId) ? loginId : null,
+  }
+}
+
 /** Map UI account field → Auth email used by Supabase. */
 export function accountToAuthEmail(account: string): {
   authEmail: string

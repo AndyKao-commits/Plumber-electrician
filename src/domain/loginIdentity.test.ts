@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   AUTH_LOGIN_EMAIL_DOMAIN,
   accountToAuthEmail,
+  assertAccountForProvisioning,
   assertLoginId,
   assertPhoneAccount,
   loginIdFromAuthEmail,
@@ -54,5 +55,17 @@ describe('loginIdentity', () => {
       '0912345678',
     )
     expect(loginIdFromAuthEmail('real@example.com')).toBeNull()
+  })
+
+  it('provisions phone or custom accounts (min 6 for default password)', () => {
+    expect(assertAccountForProvisioning('0912345678')).toEqual({
+      loginId: '0912345678',
+      phone: '0912345678',
+    })
+    expect(assertAccountForProvisioning('Worker01')).toEqual({
+      loginId: 'worker01',
+      phone: null,
+    })
+    expect(() => assertAccountForProvisioning('ab1')).toThrow(/至少 6/)
   })
 })
