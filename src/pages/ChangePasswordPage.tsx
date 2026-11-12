@@ -56,7 +56,7 @@ export function ChangePasswordPage() {
         <section className="panel stack">
           <strong>首次登入：請更改密碼</strong>
           <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-            目前使用預設密碼（電話）。請設定個人密碼後才能繼續使用。
+            請設定個人密碼後才能繼續使用。
           </p>
           <form className="stack" onSubmit={(e) => void onSubmit(e)}>
             <div className="field">
