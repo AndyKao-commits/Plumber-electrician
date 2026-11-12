@@ -136,6 +136,8 @@ export function useFieldFinance(userId: string | undefined) {
       sourceNote?: string | null
       locationText?: string | null
       misc?: boolean
+      quotationId?: string | null
+      receivedOn?: string | null
       proofFiles?: File[]
     }) => {
       if (!user) throw new Error('尚未登入')
@@ -154,6 +156,8 @@ export function useFieldFinance(userId: string | undefined) {
         sourceNote: input.sourceNote,
         locationText: input.locationText,
         misc: input.misc,
+        quotationId: input.quotationId,
+        receivedOn: input.receivedOn,
         proofPhotoPath,
       }
       return formal
@@ -173,6 +177,16 @@ export function useFieldFinance(userId: string | undefined) {
       return formal
         ? supabaseRepos.confirmCashReceipt(user, input)
         : localDb.confirmCashReceipt(user, input)
+    },
+    onSuccess: invalidate,
+  })
+
+  const linkReceiptQuote = useMutation({
+    mutationFn: async (input: { id: string; quotationId: string | null }) => {
+      if (!user) throw new Error('尚未登入')
+      return formal
+        ? supabaseRepos.linkCashReceiptQuote(user, input)
+        : localDb.linkCashReceiptQuote(user, input)
     },
     onSuccess: invalidate,
   })
@@ -259,6 +273,8 @@ export function useFieldFinance(userId: string | undefined) {
     isCreatingReceipt: createReceipt.isPending,
     createReceiptError: createReceipt.error,
     confirmReceipt: confirmReceipt.mutateAsync,
+    confirmReceiptError: confirmReceipt.error,
+    linkReceiptQuote: linkReceiptQuote.mutateAsync,
     cancelReceipt: cancelReceipt.mutateAsync,
     createAdvance: createAdvance.mutateAsync,
     isCreatingAdvance: createAdvance.isPending,

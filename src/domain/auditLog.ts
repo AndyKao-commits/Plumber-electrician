@@ -9,6 +9,7 @@ export type AuditAction =
   | 'receipt.confirm'
   | 'receipt.return'
   | 'receipt.cancel'
+  | 'receipt.link_quote'
   | 'advance.create'
   | 'advance.settle'
   | 'advance.cancel'
@@ -53,6 +54,7 @@ export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
   'receipt.confirm': '確認收款',
   'receipt.return': '退回收款',
   'receipt.cancel': '取消收款',
+  'receipt.link_quote': '收款關聯報價',
   'advance.create': '登記代墊',
   'advance.settle': '核銷代墊',
   'advance.cancel': '取消代墊',

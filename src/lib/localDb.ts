@@ -208,6 +208,7 @@ import {
   assertExpenseItem,
   assertPositiveMoney,
   computeCaseFinance,
+  nextSiteReceiptSequence,
   resolveFieldCashTarget,
 } from '@/domain/fieldFinance'
 import {
@@ -241,7 +242,7 @@ import {
   normalizeProfileName,
 } from '@/domain/profileFields'
 import { roundMoney } from '@/domain/money'
-import { formatTaipei } from '@/lib/time'
+import { formatTaipei, taipeiDateString } from '@/lib/time'
 
 const ORG_ID = 'org-demo'
 
@@ -4670,7 +4671,15 @@ export const localDb = {
     status?: CashReceiptReport['status']
     reportedBy?: string
   }): CashReceiptReport[] {
-    let all = read(KEYS.cashReceipts, emptyCashReceipts)
+    let all = read(KEYS.cashReceipts, emptyCashReceipts).map((r) => ({
+      ...r,
+      quotationId: r.quotationId ?? null,
+      receivedOn:
+        r.receivedOn && /^\d{4}-\d{2}-\d{2}$/.test(r.receivedOn)
+          ? r.receivedOn
+          : taipeiDateString(r.reportedAt),
+      siteSequenceNo: r.siteSequenceNo ?? null,
+    }))
     if (filter?.status) all = all.filter((e) => e.status === filter.status)
     if (filter?.reportedBy) {
       all = all.filter((e) => e.reportedBy === filter.reportedBy)
@@ -4687,6 +4696,8 @@ export const localDb = {
       locationText?: string | null
       proofPhotoPath?: string | null
       misc?: boolean
+      quotationId?: string | null
+      receivedOn?: string | null
     },
   ): CashReceiptReport {
     let target = resolveFieldCashTarget({
@@ -4703,12 +4714,27 @@ export const localDb = {
         siteName: site.name,
       }
     }
+    let quotationId = input.quotationId?.trim() || null
+    if (quotationId) {
+      const q = this.getQuotations().find((x) => x.id === quotationId)
+      if (!q || q.deletedAt) throw new Error('找不到報價')
+      if (target.siteId && q.projectId && q.projectId !== target.siteId) {
+        throw new Error('報價不屬於此工地')
+      }
+    }
+    const receivedOn =
+      (input.receivedOn && /^\d{4}-\d{2}-\d{2}$/.test(input.receivedOn)
+        ? input.receivedOn
+        : null) || taipeiDateString()
     const row: CashReceiptReport = {
       id: `cr-${crypto.randomUUID()}`,
       organizationId: ORG_ID,
       siteId: target.siteId,
       siteName: target.siteName,
       locationText: target.locationText,
+      quotationId,
+      receivedOn,
+      siteSequenceNo: null,
       amount: assertPositiveMoney(input.amount, '收款金額'),
       sourceNote: input.sourceNote?.trim() || null,
       proofPhotoPath: input.proofPhotoPath?.trim() || null,
@@ -4756,9 +4782,14 @@ export const localDb = {
         : input.decision === 'return'
           ? 'returned'
           : 'cancelled'
+    const siteSequenceNo =
+      status === 'confirmed' && current.siteId
+        ? nextSiteReceiptSequence(all, current.siteId)
+        : current.siteSequenceNo ?? null
     const updated: CashReceiptReport = {
       ...current,
       status,
+      siteSequenceNo,
       confirmedBy: actor.id,
       confirmedAt: new Date().toISOString(),
       confirmNote: input.note?.trim() || null,
@@ -4772,6 +4803,36 @@ export const localDb = {
           : input.decision === 'return'
             ? 'receipt.return'
             : 'receipt.cancel',
+      targetType: 'cash_receipt',
+      targetId: updated.id,
+      before: current,
+      after: updated,
+    })
+    return updated
+  },
+
+  linkCashReceiptQuote(
+    actor: { id: string; name: string; role: AppUser['role'] },
+    input: { id: string; quotationId: string | null },
+  ): CashReceiptReport {
+    if (actor.role !== 'boss') throw new Error('僅老闆可關聯報價')
+    const all = read(KEYS.cashReceipts, emptyCashReceipts)
+    const idx = all.findIndex((e) => e.id === input.id)
+    if (idx < 0) throw new Error('找不到收款回報')
+    const current = all[idx]
+    let quotationId = input.quotationId?.trim() || null
+    if (quotationId) {
+      const q = this.getQuotations().find((x) => x.id === quotationId)
+      if (!q || q.deletedAt) throw new Error('找不到報價')
+      if (current.siteId && q.projectId && q.projectId !== current.siteId) {
+        throw new Error('報價不屬於此工地')
+      }
+    }
+    const updated: CashReceiptReport = { ...current, quotationId }
+    all[idx] = updated
+    write(KEYS.cashReceipts, all)
+    this.appendAudit(actor, {
+      action: 'receipt.link_quote',
       targetType: 'cash_receipt',
       targetId: updated.id,
       before: current,

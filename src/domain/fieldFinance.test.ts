@@ -6,9 +6,16 @@ import {
   assertBossFinalize,
   assertCanCancelExpense,
   assertCanCancelReceipt,
+  buildCashLedger,
   computeCaseFinance,
+  computeSiteReceiptProgress,
+  filterCashLedger,
   isCaseLinkedCash,
+  nextSiteReceiptSequence,
+  pickAutoQuoteId,
+  receiptConfirmOverContractWarning,
   resolveFieldCashTarget,
+  summarizeLedger,
 } from './fieldFinance'
 
 describe('V1.0 field finance', () => {
@@ -82,5 +89,116 @@ describe('misc field cash target', () => {
   it('case-linked filter ignores misc', () => {
     expect(isCaseLinkedCash({ siteId: 's1' })).toBe(true)
     expect(isCaseLinkedCash({ siteId: null })).toBe(false)
+  })
+})
+
+describe('site receipt progress', () => {
+  it('assigns next sequence from max existing; gaps OK', () => {
+    expect(
+      nextSiteReceiptSequence(
+        [
+          { siteId: 's1', status: 'confirmed', siteSequenceNo: 1 },
+          { siteId: 's1', status: 'cancelled', siteSequenceNo: 2 },
+          { siteId: 's1', status: 'confirmed', siteSequenceNo: 3 },
+          { siteId: 's2', status: 'confirmed', siteSequenceNo: 9 },
+        ],
+        's1',
+      ),
+    ).toBe(4)
+    expect(nextSiteReceiptSequence([], 's1')).toBe(1)
+    expect(nextSiteReceiptSequence([], null)).toBeNull()
+  })
+
+  it('computes amount progress and over-receive warning', () => {
+    const p = computeSiteReceiptProgress({
+      siteId: 's1',
+      contractAmount: 100_000,
+      receipts: [
+        { siteId: 's1', status: 'confirmed', amount: 40_000, siteSequenceNo: 1 },
+        { siteId: 's1', status: 'pending_confirm', amount: 10_000 },
+        { siteId: 's1', status: 'confirmed', amount: 70_000, siteSequenceNo: 2 },
+      ],
+    })
+    expect(p.confirmedTotal).toBe(110_000)
+    expect(p.pendingTotal).toBe(10_000)
+    expect(p.overReceived).toBe(true)
+    expect(p.remaining).toBe(-10_000)
+    expect(p.nextSequence).toBe(3)
+
+    expect(
+      receiptConfirmOverContractWarning({
+        contractAmount: 100_000,
+        alreadyConfirmedTotal: 90_000,
+        confirmingAmount: 20_000,
+      }),
+    ).toMatch(/超收/)
+    expect(
+      receiptConfirmOverContractWarning({
+        contractAmount: 0,
+        alreadyConfirmedTotal: 0,
+        confirmingAmount: 1000,
+      }),
+    ).toBeNull()
+  })
+
+  it('auto-picks quote only when exactly one accepted for site', () => {
+    expect(
+      pickAutoQuoteId(
+        [
+          {
+            id: 'q1',
+            projectId: 's1',
+            workflowStatus: 'accepted',
+          },
+        ],
+        's1',
+      ),
+    ).toBe('q1')
+    expect(
+      pickAutoQuoteId(
+        [
+          { id: 'q1', projectId: 's1', workflowStatus: 'accepted' },
+          { id: 'q2', projectId: 's1', workflowStatus: 'accepted' },
+        ],
+        's1',
+      ),
+    ).toBeNull()
+  })
+
+  it('builds and filters monthly ledger', () => {
+    const rows = buildCashLedger({
+      expenses: [
+        {
+          id: 'e1',
+          siteId: 's1',
+          siteName: 'A工地',
+          item: '水泥',
+          amount: 500,
+          status: 'confirmed',
+          reportedByName: '小明',
+          reportedAt: '2026-11-05T02:00:00.000Z',
+        },
+      ],
+      receipts: [
+        {
+          id: 'r1',
+          siteId: 's1',
+          siteName: 'A工地',
+          amount: 3000,
+          receivedOn: '2026-11-10',
+          siteSequenceNo: 1,
+          status: 'confirmed',
+          reportedByName: '小華',
+          reportedAt: '2026-11-10T04:00:00.000Z',
+          sourceNote: '先收',
+        },
+      ],
+      expenseDate: () => '2026-11-05',
+    })
+    expect(rows).toHaveLength(2)
+    const nov = filterCashLedger(rows, { month: '2026-11', kind: 'all', status: 'all' })
+    expect(summarizeLedger(nov).receiptTotal).toBe(3000)
+    expect(summarizeLedger(nov).expenseTotal).toBe(500)
+    expect(summarizeLedger(nov).net).toBe(2500)
   })
 })
