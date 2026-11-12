@@ -1,11 +1,10 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { selectOpenSites } from '@/domain/siteStatus'
 import { useNotices, noticeKeys } from '@/hooks/useNotices'
 import { useSites } from '@/hooks/useSites'
-import { useTeam } from '@/hooks/useTeam'
-import { useUser } from '@/hooks/useUser'
+import { useUser, userKeys } from '@/hooks/useUser'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
@@ -18,7 +17,6 @@ export function TodosPage() {
   const { todos, complete } = useNotices(user?.id)
   const { sites } = useSites()
   const openSites = useMemo(() => selectOpenSites(sites), [sites])
-  const { members } = useTeam()
   const queryClient = useQueryClient()
   const formal = isFormalMode()
   const [title, setTitle] = useState('')
@@ -26,6 +24,16 @@ export function TodosPage() {
   const [siteId, setSiteId] = useState('')
   const [assigneeId, setAssigneeId] = useState('')
   const [showForm, setShowForm] = useState(false)
+
+  const membersQuery = useQuery({
+    queryKey: [...userKeys.directory(), 'todo-assignees'],
+    enabled: Boolean(user),
+    queryFn: async () => {
+      if (!user) return []
+      if (formal) return supabaseRepos.listActiveOrgMembers(user)
+      return localDb.getUsers().filter((u) => u.accountStatus !== 'disabled')
+    },
+  })
 
   const createTodo = useMutation({
     mutationFn: async () => {
@@ -83,14 +91,15 @@ export function TodosPage() {
     await createTodo.mutateAsync()
   }
 
-  const teammates = members.length
-    ? members
-    : localDb.getUsers().map((u) => ({
-        userId: u.id,
-        name: u.name,
-        clockedIn: false,
-        siteName: null as string | null,
-      }))
+  const teammates = useMemo(() => {
+    const rows = membersQuery.data ?? []
+    // De-dupe by id; keep self even if somehow missing.
+    const byId = new Map(rows.map((u) => [u.id, u]))
+    if (user && !byId.has(user.id)) byId.set(user.id, user)
+    return [...byId.values()].sort((a, b) =>
+      a.name.localeCompare(b.name, 'zh-Hant'),
+    )
+  }, [membersQuery.data, user])
 
   return (
     <div className="stack fade-up">
@@ -142,9 +151,9 @@ export function TodosPage() {
                 onChange={(e) => setAssigneeId(e.target.value)}
               >
                 {teammates.map((t) => (
-                  <option key={t.userId} value={t.userId}>
+                  <option key={t.id} value={t.id}>
                     {t.name}
-                    {t.userId === user?.id ? '（自己）' : ''}
+                    {t.id === user?.id ? '（自己）' : ''}
                   </option>
                 ))}
               </select>
