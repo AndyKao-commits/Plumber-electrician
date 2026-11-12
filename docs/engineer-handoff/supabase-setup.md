@@ -110,7 +110,8 @@ SQL：`20261110_line_bind_code_fix_random.sql`
 3. 圖文選單建議：
    - 上傳照片 → 文字「上傳照片」
    - 待辦事項 → 文字「待辦事項」
-   - 出勤打卡 → 文字「出勤打卡」
+   - 出勤打卡 → URI `{APP}/liff/attendance`（或文字「出勤打卡」）
+   - 紀錄地點 → URI `{APP}/liff/location`（或文字「紀錄地點」）
    - 採購申請 → 文字「採購申請」
    - 我的工地 → `/sites`
    - 報價管理 → `/quotes`
