@@ -36,7 +36,7 @@ begin
 
   v_features := coalesce(v_actor.features, '{}'::jsonb);
   v_overrides := coalesce(v_actor.permission_overrides, '{}'::jsonb);
-  if v_actor.role in ('boss', 'owner') then
+  if v_actor.role::text in ('boss', 'owner') then
     v_allowed := true;
   elsif (v_overrides ? 'account') and (v_overrides->>'account')::boolean is true then
     v_allowed := true;
@@ -59,7 +59,7 @@ begin
   if v_target.id = v_actor.id then
     raise exception '不可刪除自己的帳號';
   end if;
-  if v_target.role in ('boss', 'owner') then
+  if v_target.role::text in ('boss', 'owner') then
     raise exception '不可刪除老闆帳號';
   end if;
   if v_confirm is distinct from trim(v_target.name) then
@@ -107,7 +107,7 @@ begin
       'name', v_target.name,
       'login_id', v_target.login_id,
       'phone', v_target.phone,
-      'role', v_target.role
+      'role', v_target.role::text
     )::text,
     jsonb_build_object('mode', v_mode)::text,
     'ok',
