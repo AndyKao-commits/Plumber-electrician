@@ -3,21 +3,55 @@
 上排：上傳照片｜出勤打卡｜紀錄地點  
 下排：記帳｜待辦事項｜開啟網站
 
-| 按鈕 | LINE 動作建議 | 行為 |
+## 正式 LIFF（可「關閉回聊天室」）
+
+### 1. 建 LIFF（在 **LINE Login** 頻道，不是 Messaging API）
+1. LINE Developers → 同一 Provider 的 **LINE Login** → **LIFF** → Add  
+2. 設定：
+   - Size：Full  
+   - **Endpoint URL（重要）**：`https://plumber-electrician-seven.vercel.app/liff`  
+     - 不要設成網站首頁 `/`  
+     - 不要設成只有 `/liff/attendance`（否則定位會打不開）  
+   - Scope：勾 `profile`  
+   - Add friend：Off  
+3. 複製 **LIFF ID**
+
+### 2. 環境變數
+- Vercel：`VITE_LIFF_ID` = LIFF ID → Redeploy  
+- （可選）Supabase Edge secret：`LIFF_ID` = 同值（讓 bot 回覆按鈕也走 liff.line.me）  
+- （可選）`APP_BASE_URL` = `https://plumber-electrician-seven.vercel.app`
+
+### 3. 圖文選單 URI（Messaging API／官方帳號那邊設定）
+
+把 `{LIFF_ID}` 換成實際 ID：
+
+| 按鈕 | 類型 | URI |
 |---|---|---|
-| 上傳照片 | 傳文字 `上傳照片` | 聊天室現流（選工地→類型→傳圖） |
-| 出勤打卡 | **URI** `{APP}/liff/attendance`（備援文字 `出勤打卡`） | 開啟 LIFF 出勤頁：一鍵上下班、指定工地 |
-| 紀錄地點 | **URI** `{APP}/liff/location`（備援文字 `紀錄地點`） | 開啟 LIFF 定位頁：允許 GPS 即完成 |
-| 記帳 | 傳文字 `記帳` | 選支出／收款現流 |
-| 待辦事項 | 傳文字 `待辦事項` | 查詢／完成 |
-| 開啟網站 | URI `{APP}/` | 開網站主頁（舊文案「進入工地」仍可用） |
+| 出勤打卡 | 連結 | `https://liff.line.me/{LIFF_ID}/attendance` |
+| 紀錄地點 | 連結 | `https://liff.line.me/{LIFF_ID}/location` |
+| 開啟網站 | 連結 | `https://plumber-electrician-seven.vercel.app/` |
+| 上傳照片 | 文字 | `上傳照片` |
+| 記帳 | 文字 | `記帳` |
+| 待辦事項 | 文字 | `待辦事項` |
 
-`{APP}` 預設為正式站，例如 `https://plumber-electrician-seven.vercel.app`。  
-Edge Function 的 `APP_BASE_URL` 需與此一致。
+**路徑對照**（Endpoint = `…/liff` 時）：
 
-請在 LINE Developers → Messaging API → 圖文選單依上表重建並套用。  
+- `…/attendance` → 網站 `/liff/attendance`  
+- `…/location` → 網站 `/liff/location`  
+- 只開 `https://liff.line.me/{LIFF_ID}` → 網站 `/liff` 選單頁（可手動點出勤／定位）
+
+### 4. 常見打不開「紀錄地點」
+- 選單那格還是「傳文字」→ 改成 **連結（URI）**，且網址要含 **`/location`**（不是 `/attendance`）  
+- Endpoint 設成出勤頁 → 改成 `…/liff`  
+- 舊選單沒套用 → 儲存後設為預設選單  
+
 **不主動推播**（DEC-007）。
 
-## 可選：正式 LIFF 頻道
-若之後要接官方 LIFF SDK，於 LINE Developers 建立 LIFF App，Endpoint 指到上述路徑，並在 Vercel 設 `VITE_LIFF_ID`。  
-目前即使未設 LIFF ID，圖文選單 URI 開網站頁在 LINE 內建瀏覽器即可使用。
+## 尚未設 LIFF ID 時（暫用）
+
+| 按鈕 | URI / 文字 |
+|---|---|
+| 出勤打卡 | `https://plumber-electrician-seven.vercel.app/liff/attendance` |
+| 紀錄地點 | `https://plumber-electrician-seven.vercel.app/liff/location` |
+
+聊天室傳「出勤打卡／紀錄地點」也會回短卡片開頁。
