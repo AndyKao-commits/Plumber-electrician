@@ -47,6 +47,7 @@ export function ExpensesPage() {
     createExpenseError,
     reviewExpense,
     cancelExpense,
+    purgeExpense,
     createReceipt,
     isCreatingReceipt,
     createReceiptError,
@@ -54,6 +55,7 @@ export function ExpensesPage() {
     confirmReceiptError,
     linkReceiptQuote,
     cancelReceipt,
+    purgeReceipt,
     createAdvance,
     isCreatingAdvance,
     createAdvanceError,
@@ -84,7 +86,8 @@ export function ExpensesPage() {
 
   const [filterMonth, setFilterMonth] = useState(currentMonth)
   const [filterKind, setFilterKind] = useState<LedgerEntryKind | 'all'>('all')
-  const [filterStatus, setFilterStatus] = useState<string>('all')
+  /** Default: hide voided (cancelled) rows — they are not registered. */
+  const [filterStatus, setFilterStatus] = useState<string>('active')
   const [filterSiteId, setFilterSiteId] = useState<string>('all')
   const [progressSiteId, setProgressSiteId] = useState('')
 
@@ -269,7 +272,7 @@ export function ExpensesPage() {
       <section className="panel stack">
         <strong>收支簿</strong>
         <p className="muted" style={{ margin: 0 }}>
-          預設本月；明細含全部狀態。收款以工地累計第幾次，報價可後補。
+          預設本月、不含已取消。合計只計「已確認」。退回＝請改再送；取消＝作廢不計入。
         </p>
       </section>
 
@@ -277,11 +280,11 @@ export function ExpensesPage() {
         <strong>期間摘要</strong>
         <div className="grid-2">
           <div className="site-link">
-            <p>支出合計（篩選）</p>
+            <p>支出合計（已確認）</p>
             <h3>NT${ledgerSummary.expenseTotal.toLocaleString()}</h3>
           </div>
           <div className="site-link">
-            <p>收款合計（篩選）</p>
+            <p>收款合計（已確認）</p>
             <h3>NT${ledgerSummary.receiptTotal.toLocaleString()}</h3>
           </div>
           <div className="site-link">
@@ -289,7 +292,7 @@ export function ExpensesPage() {
             <h3>NT${ledgerSummary.net.toLocaleString()}</h3>
           </div>
           <div className="site-link">
-            <p>筆數</p>
+            <p>筆數（不含作廢）</p>
             <h3>{ledgerSummary.count}</h3>
           </div>
         </div>
@@ -344,12 +347,13 @@ export function ExpensesPage() {
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
             >
-              <option value="all">全部狀態</option>
+              <option value="active">進行中（不含作廢）</option>
               <option value="pending_review">支出待審核</option>
               <option value="pending_confirm">收款待確認</option>
               <option value="confirmed">已確認</option>
-              <option value="returned">已退回</option>
-              <option value="cancelled">已取消</option>
+              <option value="returned">退回修改</option>
+              <option value="cancelled">已取消（作廢）</option>
+              <option value="all">全部（含作廢）</option>
             </select>
           </div>
           <div className="field">
@@ -456,7 +460,7 @@ export function ExpensesPage() {
                         })
                       }
                     >
-                      退回
+                      退回修改
                     </button>
                   </div>
                 ) : null}
@@ -480,7 +484,7 @@ export function ExpensesPage() {
                         })
                       }
                     >
-                      退回
+                      退回修改
                     </button>
                   </div>
                 ) : null}
@@ -520,15 +524,36 @@ export function ExpensesPage() {
                     onClick={() => {
                       if (
                         !window.confirm(
-                          `確定刪除支出「${exp.item}」NT$${exp.amount.toLocaleString()}？`,
+                          `確定取消（作廢）支出「${exp.item}」NT$${exp.amount.toLocaleString()}？\n作廢後不計入合計，並通知申請人。`,
                         )
                       ) {
                         return
                       }
-                      void cancelExpense({ id: exp.id })
+                      void cancelExpense({
+                        id: exp.id,
+                        note: '老闆取消（作廢）',
+                      })
                     }}
                   >
-                    刪除支出
+                    取消作廢
+                  </button>
+                ) : null}
+                {isBoss && exp?.status === 'cancelled' ? (
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          `永久刪除已作廢支出「${exp.item}」？刪除後無法復原。`,
+                        )
+                      ) {
+                        return
+                      }
+                      void purgeExpense({ id: exp.id })
+                    }}
+                  >
+                    永久刪除
                   </button>
                 ) : null}
                 {isBoss && rc && rc.status !== 'cancelled' ? (
@@ -538,15 +563,36 @@ export function ExpensesPage() {
                     onClick={() => {
                       if (
                         !window.confirm(
-                          `確定刪除收款 NT$${rc.amount.toLocaleString()}？`,
+                          `確定取消（作廢）收款 NT$${rc.amount.toLocaleString()}？\n作廢後不計入合計，並通知申請人。`,
                         )
                       ) {
                         return
                       }
-                      void cancelReceipt({ id: rc.id })
+                      void cancelReceipt({
+                        id: rc.id,
+                        note: '老闆取消（作廢）',
+                      })
                     }}
                   >
-                    刪除收款
+                    取消作廢
+                  </button>
+                ) : null}
+                {isBoss && rc?.status === 'cancelled' ? (
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          `永久刪除已作廢收款 NT$${rc.amount.toLocaleString()}？刪除後無法復原。`,
+                        )
+                      ) {
+                        return
+                      }
+                      void purgeReceipt({ id: rc.id })
+                    }}
+                  >
+                    永久刪除
                   </button>
                 ) : null}
               </div>

@@ -4667,6 +4667,30 @@ export const localDb = {
     return updated
   },
 
+  purgeExpenseReport(
+    actor: { id: string; name: string; role: AppUser['role'] },
+    input: { id: string },
+  ): void {
+    assertBossCancelFinance(actor.role)
+    const all = read(KEYS.expenseReports, emptyExpenseReports)
+    const idx = all.findIndex((e) => e.id === input.id)
+    if (idx < 0) throw new Error('找不到支出回報')
+    const current = all[idx]
+    if (current.status !== 'cancelled') {
+      throw new Error('僅已取消（作廢）的支出可永久刪除')
+    }
+    all.splice(idx, 1)
+    write(KEYS.expenseReports, all)
+    this.appendAudit(actor, {
+      action: 'expense.cancel',
+      targetType: 'expense_report',
+      targetId: current.id,
+      before: current,
+      after: { purged: true },
+      message: '永久刪除已作廢支出',
+    })
+  },
+
   listCashReceipts(filter?: {
     status?: CashReceiptReport['status']
     reportedBy?: string
@@ -4870,6 +4894,30 @@ export const localDb = {
       after: updated,
     })
     return updated
+  },
+
+  purgeCashReceipt(
+    actor: { id: string; name: string; role: AppUser['role'] },
+    input: { id: string },
+  ): void {
+    assertBossCancelFinance(actor.role)
+    const all = read(KEYS.cashReceipts, emptyCashReceipts)
+    const idx = all.findIndex((e) => e.id === input.id)
+    if (idx < 0) throw new Error('找不到收款回報')
+    const current = all[idx]
+    if (current.status !== 'cancelled') {
+      throw new Error('僅已取消（作廢）的收款可永久刪除')
+    }
+    all.splice(idx, 1)
+    write(KEYS.cashReceipts, all)
+    this.appendAudit(actor, {
+      action: 'receipt.cancel',
+      targetType: 'cash_receipt',
+      targetId: current.id,
+      before: current,
+      after: { purged: true },
+      message: '永久刪除已作廢收款',
+    })
   },
 
   getOrgCaseFinanceSummary(acceptedContractTotal = 0) {

@@ -201,6 +201,26 @@ export function useFieldFinance(userId: string | undefined) {
     onSuccess: invalidate,
   })
 
+  const purgeExpense = useMutation({
+    mutationFn: async (input: { id: string }) => {
+      if (!user) throw new Error('尚未登入')
+      return formal
+        ? supabaseRepos.purgeExpenseReport(user, input)
+        : localDb.purgeExpenseReport(user, input)
+    },
+    onSuccess: invalidate,
+  })
+
+  const purgeReceipt = useMutation({
+    mutationFn: async (input: { id: string }) => {
+      if (!user) throw new Error('尚未登入')
+      return formal
+        ? supabaseRepos.purgeCashReceipt(user, input)
+        : localDb.purgeCashReceipt(user, input)
+    },
+    onSuccess: invalidate,
+  })
+
   const createAdvance = useMutation({
     mutationFn: async (input: {
       siteId?: string | null
@@ -269,6 +289,7 @@ export function useFieldFinance(userId: string | undefined) {
     createExpenseError: createExpense.error,
     reviewExpense: reviewExpense.mutateAsync,
     cancelExpense: cancelExpense.mutateAsync,
+    purgeExpense: purgeExpense.mutateAsync,
     createReceipt: createReceipt.mutateAsync,
     isCreatingReceipt: createReceipt.isPending,
     createReceiptError: createReceipt.error,
@@ -276,6 +297,7 @@ export function useFieldFinance(userId: string | undefined) {
     confirmReceiptError: confirmReceipt.error,
     linkReceiptQuote: linkReceiptQuote.mutateAsync,
     cancelReceipt: cancelReceipt.mutateAsync,
+    purgeReceipt: purgeReceipt.mutateAsync,
     createAdvance: createAdvance.mutateAsync,
     isCreatingAdvance: createAdvance.isPending,
     createAdvanceError: createAdvance.error,

@@ -10,6 +10,10 @@ export type LineNotifyEvent =
   | 'attendance.correction_pending'
   | 'attendance.correction_approved'
   | 'attendance.correction_rejected'
+  | 'expense.returned'
+  | 'expense.cancelled'
+  | 'receipt.returned'
+  | 'receipt.cancelled'
   | 'notice.created'
 
 /**

@@ -200,5 +200,28 @@ describe('site receipt progress', () => {
     expect(summarizeLedger(nov).receiptTotal).toBe(3000)
     expect(summarizeLedger(nov).expenseTotal).toBe(500)
     expect(summarizeLedger(nov).net).toBe(2500)
+
+    const withCancelled = buildCashLedger({
+      expenses: [
+        {
+          id: 'e2',
+          siteId: null,
+          siteName: '雜項',
+          item: '吃飯',
+          amount: 5564,
+          status: 'cancelled',
+          reportedByName: '小明',
+          reportedAt: '2026-11-13T02:00:00.000Z',
+        },
+      ],
+      receipts: [],
+      expenseDate: () => '2026-11-13',
+    })
+    const active = filterCashLedger(withCancelled, { status: 'active' })
+    expect(active).toHaveLength(0)
+    const all = filterCashLedger(withCancelled, { status: 'all' })
+    expect(all).toHaveLength(1)
+    expect(summarizeLedger(all).expenseTotal).toBe(0)
+    expect(summarizeLedger(all).cancelledCount).toBe(1)
   })
 })
