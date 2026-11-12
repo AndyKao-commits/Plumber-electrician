@@ -70,22 +70,20 @@ export function LoginPage() {
             </p>
           ) : (
             <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-              帳號由管理者開通。預設帳號與密碼為電話；首次登入需更改密碼。
+              請使用管理者開通的帳號登入。
             </p>
           )}
 
           {!isDemoMode && isSupabaseConfigured ? (
             <form className="stack" onSubmit={(e) => void onPasswordLogin(e)}>
               <div className="field">
-                <label htmlFor="login-account">帳號（電話）</label>
+                <label htmlFor="login-account">帳號</label>
                 <input
                   id="login-account"
                   type="text"
-                  inputMode="tel"
                   autoComplete="username"
                   value={account}
                   onChange={(e) => setAccount(e.target.value)}
-                  placeholder="例如：0912345678"
                   required
                 />
               </div>

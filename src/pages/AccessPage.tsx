@@ -10,7 +10,7 @@ import {
   type FeatureKey,
   type FeatureMap,
 } from '@/domain/featureAccess'
-import { assertPhoneAccount } from '@/domain/loginIdentity'
+import { assertAccountForProvisioning } from '@/domain/loginIdentity'
 import {
   BUILTIN_ROLE_GROUPS,
   ROLE_GROUP_TEMPLATE_LABELS,
@@ -56,7 +56,7 @@ export function AccessPage() {
   const canManageAccounts = hasFeature(user, 'account')
 
   const [newName, setNewName] = useState('')
-  const [newPhone, setNewPhone] = useState('')
+  const [newAccount, setNewAccount] = useState('')
   const [createMessage, setCreateMessage] = useState<string | null>(null)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const [deleteConfirmName, setDeleteConfirmName] = useState('')
@@ -107,15 +107,15 @@ export function AccessPage() {
       if (!user) throw new Error('尚未登入')
       const name = newName.trim()
       if (!name) throw new Error('請填寫姓名')
-      const phone = assertPhoneAccount(newPhone)
+      const { loginId } = assertAccountForProvisioning(newAccount)
       if (!formal) {
         throw new Error('示範模式請直接選擇示範身分；正式開帳需連線資料庫')
       }
-      return supabaseRepos.createMemberAccount(user, { name, phone })
+      return supabaseRepos.createMemberAccount(user, { name, account: loginId })
     },
     onSuccess: (result) => {
       setNewName('')
-      setNewPhone('')
+      setNewAccount('')
       setCreateMessage(result.message)
       void queryClient.invalidateQueries({ queryKey: userKeys.directory() })
       void directoryQuery.refetch()
@@ -310,7 +310,7 @@ export function AccessPage() {
         </Link>
         <strong>帳號與管理</strong>
         <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-          協助註冊或刪除帳號。預設帳號與密碼皆為電話，首次登入後須更改密碼。
+          協助註冊或刪除帳號。預設密碼與帳號相同，首次登入後須更改密碼。
         </p>
       </section>
 
@@ -328,15 +328,16 @@ export function AccessPage() {
             />
           </div>
           <div className="field">
-            <label htmlFor="member-phone">電話（＝帳號／預設密碼）</label>
+            <label htmlFor="member-account">帳號（電話或自訂，至少 6 碼）</label>
             <input
-              id="member-phone"
-              type="tel"
-              inputMode="tel"
-              value={newPhone}
-              onChange={(e) => setNewPhone(e.target.value)}
-              placeholder="例如：0912345678"
+              id="member-account"
+              type="text"
+              autoComplete="off"
+              value={newAccount}
+              onChange={(e) => setNewAccount(e.target.value)}
+              placeholder="電話或自訂帳號"
               required
+              minLength={6}
             />
           </div>
           <button

@@ -389,7 +389,7 @@ export function ProfilePage() {
           </div>
           {!isBoss ? (
             <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-              可協助註冊新帳號（預設帳號與密碼為電話）。
+              可協助註冊新帳號（預設密碼與帳號相同）。
             </p>
           ) : (
             (directoryQuery.data ?? [])

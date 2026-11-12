@@ -1154,17 +1154,17 @@ export const supabaseRepos = {
 
   /**
    * Boss / account-permission holders create a teammate.
-   * Default login id + password = phone digits; must_change_password = true.
+   * Default password = account (phone or custom login id); must_change_password = true.
    */
   async createMemberAccount(
     actor: AppUser,
-    input: { name: string; phone: string; roleGroupName?: string | null },
+    input: { name: string; account: string; roleGroupName?: string | null },
   ): Promise<{ user: AppUser; message: string }> {
     assertFeature(actor, 'account')
     const { data, error } = await sb().functions.invoke('admin-create-member', {
       body: {
         name: input.name,
-        phone: input.phone,
+        account: input.account,
         roleGroupName: input.roleGroupName ?? null,
       },
     })
