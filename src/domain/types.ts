@@ -190,6 +190,15 @@ export interface CashReceiptReport {
   siteId: string | null
   siteName: string
   locationText?: string | null
+  /** Optional quote; may be linked after the fact. */
+  quotationId?: string | null
+  /** YYYY-MM-DD (Asia/Taipei) when money was received. */
+  receivedOn: string
+  /**
+   * Nth confirmed receipt for this site (site-scoped).
+   * Assigned on confirm; never renumbered when quote is linked later.
+   */
+  siteSequenceNo?: number | null
   amount: number
   sourceNote?: string | null
   proofPhotoPath?: string | null

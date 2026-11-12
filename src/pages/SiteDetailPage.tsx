@@ -3,7 +3,12 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { hasFeature } from '@/domain/featureAccess'
 import { SITE_STATUS_LABELS } from '@/domain/siteStatus'
 import type { DefectSeverity } from '@/domain/types'
-import { EXPENSE_STATUS_LABELS, RECEIPT_STATUS_LABELS } from '@/domain/fieldFinance'
+import {
+  EXPENSE_STATUS_LABELS,
+  RECEIPT_STATUS_LABELS,
+  computeSiteReceiptProgress,
+  sumAcceptedContractForSite,
+} from '@/domain/fieldFinance'
 import { useFieldFinance } from '@/hooks/useFieldFinance'
 import { useAttendance } from '@/hooks/useAttendance'
 import { useDailyLogs } from '@/hooks/useDailyLogs'
@@ -79,10 +84,12 @@ export function SiteDetailPage() {
 
   const quotesQuery = useQuery({
     queryKey: ['quotes', 'site', siteId],
-    enabled: formal && Boolean(siteId),
+    enabled: Boolean(siteId),
     queryFn: async () => {
-      const all = await supabaseRepos.listQuotations()
-      return all.filter((q) => q.projectId === siteId).slice(0, 8)
+      const all = formal
+        ? await supabaseRepos.listQuotations()
+        : localDb.getQuotations()
+      return all.filter((q) => q.projectId === siteId)
     },
   })
 
@@ -113,6 +120,17 @@ export function SiteDetailPage() {
   const receiptConfirmed = relatedReceipts
     .filter((r) => r.status === 'confirmed')
     .reduce((s, r) => s + Number(r.amount || 0), 0)
+  const siteReceiptProgress = useMemo(() => {
+    if (!siteId) return null
+    return computeSiteReceiptProgress({
+      siteId,
+      receipts: relatedReceipts,
+      contractAmount: sumAcceptedContractForSite(
+        quotesQuery.data ?? [],
+        siteId,
+      ),
+    })
+  }, [siteId, relatedReceipts, quotesQuery.data])
 
   useEffect(() => {
     if (!site) return
@@ -486,12 +504,20 @@ export function SiteDetailPage() {
           </Link>
         </div>
         <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-          顯示財務資料中標記此工地的紀錄（非複本）。待審支出 NT$
-          {expensePending.toLocaleString()} · 已確認 NT$
+          待審支出 NT${expensePending.toLocaleString()} · 已確認 NT$
           {expenseConfirmed.toLocaleString()}；待確認收款 NT$
           {receiptPending.toLocaleString()} · 已確認 NT$
           {receiptConfirmed.toLocaleString()}
         </p>
+        {siteReceiptProgress ? (
+          <p style={{ margin: 0, fontSize: '0.88rem' }}>
+            工地累計已收 NT$
+            {siteReceiptProgress.confirmedTotal.toLocaleString()}
+            {siteReceiptProgress.contractAmount > 0
+              ? ` · 合約 NT$${siteReceiptProgress.contractAmount.toLocaleString()} · 尚欠 NT$${(siteReceiptProgress.remaining ?? 0).toLocaleString()}（${siteReceiptProgress.progressPct ?? 0}%）${siteReceiptProgress.overReceived ? ' · 超收' : ''}`
+              : ' · 尚無已接受報價（僅顯示累計）'}
+          </p>
+        ) : null}
         {relatedExpenses.length === 0 && relatedReceipts.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>尚無標記此工地的收支</p>
         ) : (
@@ -507,10 +533,15 @@ export function SiteDetailPage() {
             ))}
             {relatedReceipts.slice(0, 8).map((r) => (
               <div key={r.id} className="site-link">
-                <strong style={{ margin: 0 }}>{r.sourceNote || '收款'}</strong>
+                <strong style={{ margin: 0 }}>
+                  {r.siteSequenceNo != null
+                    ? `第 ${r.siteSequenceNo} 次 · `
+                    : ''}
+                  {r.sourceNote || '收款'}
+                </strong>
                 <p className="muted" style={{ margin: 0 }}>
                   收款 · NT${Number(r.amount).toLocaleString()} ·{' '}
-                  {RECEIPT_STATUS_LABELS[r.status]}
+                  {r.receivedOn || ''} · {RECEIPT_STATUS_LABELS[r.status]}
                 </p>
               </div>
             ))}

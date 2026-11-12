@@ -1,22 +1,37 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ADVANCE_STATUS_LABELS,
   sumAdvanceAmounts,
 } from '@/domain/employeeAdvances'
 import {
-  EXPENSE_STATUS_LABELS,
   MISC_EXPENSE_EXAMPLES,
   MISC_SITE_LABEL,
   MISC_SITE_VALUE,
   RECEIPT_STATUS_LABELS,
+  buildCashLedger,
   computeCaseFinance,
+  computeSiteReceiptProgress,
+  filterCashLedger,
+  pickAutoQuoteId,
+  receiptConfirmOverContractWarning,
+  sumAcceptedContractForSite,
+  summarizeLedger,
+  type LedgerEntryKind,
 } from '@/domain/fieldFinance'
 import { useFieldFinance } from '@/hooks/useFieldFinance'
 import { useQuotes } from '@/hooks/useQuotes'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
 import { selectOpenSites } from '@/domain/siteStatus'
-import { formatTaipei } from '@/lib/time'
+import {
+  downloadCashLedgerExcel,
+  downloadCashLedgerPdf,
+} from '@/lib/cashLedgerExport'
+import { formatTaipei, taipeiDateString } from '@/lib/time'
+
+function currentMonth(): string {
+  return taipeiDateString().slice(0, 7)
+}
 
 export function ExpensesPage() {
   const { user } = useUser()
@@ -36,6 +51,7 @@ export function ExpensesPage() {
     isCreatingReceipt,
     createReceiptError,
     confirmReceipt,
+    linkReceiptQuote,
     cancelReceipt,
     createAdvance,
     isCreatingAdvance,
@@ -54,6 +70,8 @@ export function ExpensesPage() {
   const [receiptFiles, setReceiptFiles] = useState<File[]>([])
   const [receiptAmount, setReceiptAmount] = useState('')
   const [sourceNote, setSourceNote] = useState('')
+  const [receivedOn, setReceivedOn] = useState(taipeiDateString())
+  const [quotationId, setQuotationId] = useState('')
   const [proofFiles, setProofFiles] = useState<File[]>([])
   const [advItem, setAdvItem] = useState('')
   const [advAmount, setAdvAmount] = useState('')
@@ -61,6 +79,13 @@ export function ExpensesPage() {
   const [advFiles, setAdvFiles] = useState<File[]>([])
   const [selectedAdvanceIds, setSelectedAdvanceIds] = useState<string[]>([])
   const [settleNote, setSettleNote] = useState('')
+  const [exporting, setExporting] = useState(false)
+
+  const [filterMonth, setFilterMonth] = useState(currentMonth)
+  const [filterKind, setFilterKind] = useState<LedgerEntryKind | 'all'>('all')
+  const [filterStatus, setFilterStatus] = useState<string>('all')
+  const [filterSiteId, setFilterSiteId] = useState<string>('all')
+  const [progressSiteId, setProgressSiteId] = useState('')
 
   const selectedSite =
     siteId === MISC_SITE_VALUE
@@ -72,10 +97,31 @@ export function ExpensesPage() {
 
   const isBoss = user?.role === 'boss'
 
+  const siteQuotes = useMemo(() => {
+    if (isMisc || !selectedSite) return []
+    return (quotes ?? []).filter(
+      (q) =>
+        q.projectId === selectedSite &&
+        q.workflowStatus === 'accepted' &&
+        !q.deletedAt,
+    )
+  }, [quotes, selectedSite, isMisc])
+
+  useEffect(() => {
+    if (isMisc) {
+      setQuotationId('')
+      return
+    }
+    const auto = pickAutoQuoteId(quotes ?? [], selectedSite)
+    if (auto) setQuotationId(auto)
+    else if (!siteQuotes.some((q) => q.id === quotationId)) setQuotationId('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to site/quote list
+  }, [selectedSite, isMisc, siteQuotes.map((q) => q.id).join('|')])
+
   const acceptedContract = useMemo(
     () =>
       (quotes ?? [])
-        .filter((q) => q.workflowStatus === 'accepted')
+        .filter((q) => q.workflowStatus === 'accepted' && !q.deletedAt)
         .reduce((s, q) => s + Number(q.amountAfterTax || 0), 0),
     [quotes],
   )
@@ -109,38 +155,145 @@ export function ExpensesPage() {
   const openAdvances = advances.filter((a) => a.status === 'open')
   const selectedTotal = sumAdvanceAmounts(advances, selectedAdvanceIds)
 
+  const ledgerAll = useMemo(
+    () =>
+      buildCashLedger({
+        expenses: visibleExpenses,
+        receipts: visibleReceipts,
+        expenseDate: (iso) => taipeiDateString(iso),
+      }),
+    [visibleExpenses, visibleReceipts],
+  )
+
+  const ledgerFiltered = useMemo(
+    () =>
+      filterCashLedger(ledgerAll, {
+        month: filterMonth || null,
+        kind: filterKind,
+        status: filterStatus,
+        siteId: filterSiteId,
+      }),
+    [ledgerAll, filterMonth, filterKind, filterStatus, filterSiteId],
+  )
+
+  const ledgerSummary = useMemo(
+    () => summarizeLedger(ledgerFiltered),
+    [ledgerFiltered],
+  )
+
+  const progressSite =
+    progressSiteId && sites.some((s) => s.id === progressSiteId)
+      ? progressSiteId
+      : (openSites[0]?.id ?? sites[0]?.id ?? '')
+
+  const siteProgress = useMemo(() => {
+    if (!progressSite) return null
+    return computeSiteReceiptProgress({
+      siteId: progressSite,
+      receipts,
+      contractAmount: sumAcceptedContractForSite(quotes ?? [], progressSite),
+    })
+  }, [progressSite, receipts, quotes])
+
+  const siteReceiptRows = useMemo(() => {
+    if (!progressSite) return []
+    return receipts
+      .filter((r) => r.siteId === progressSite && r.status !== 'cancelled')
+      .sort((a, b) => {
+        const sa = a.siteSequenceNo ?? 9999
+        const sb = b.siteSequenceNo ?? 9999
+        if (sa !== sb) return sa - sb
+        return a.receivedOn.localeCompare(b.receivedOn)
+      })
+  }, [receipts, progressSite])
+
   function toggleAdvance(id: string) {
     setSelectedAdvanceIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     )
   }
 
+  async function onConfirmReceipt(id: string) {
+    const row = receipts.find((r) => r.id === id)
+    if (!row) return
+    if (row.siteId) {
+      const contract = sumAcceptedContractForSite(quotes ?? [], row.siteId)
+      const already = receipts
+        .filter((r) => r.siteId === row.siteId && r.status === 'confirmed')
+        .reduce((s, r) => s + r.amount, 0)
+      const warn = receiptConfirmOverContractWarning({
+        contractAmount: contract,
+        alreadyConfirmedTotal: already,
+        confirmingAmount: row.amount,
+      })
+      if (warn && !window.confirm(`${warn}\n\n仍要確認嗎？`)) return
+    }
+    await confirmReceipt({ id, decision: 'confirm' })
+  }
+
+  async function exportExcel() {
+    downloadCashLedgerExcel(ledgerFiltered, `收支簿_${filterMonth || '全部'}`, {
+      title: '收支簿',
+      periodLabel: filterMonth ? `${filterMonth}（篩選結果）` : '全部期間',
+    })
+  }
+
+  async function exportPdf() {
+    setExporting(true)
+    try {
+      await downloadCashLedgerPdf(
+        ledgerFiltered,
+        `收支簿_${filterMonth || '全部'}`,
+        {
+          title: '收支簿',
+          periodLabel: filterMonth ? `${filterMonth}（篩選結果）` : '全部期間',
+          generatedAtLabel: formatTaipei(new Date(), 'yyyy/MM/dd HH:mm'),
+        },
+      )
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="stack fade-up">
       <section className="panel stack">
-        <strong>支出／收款／代墊</strong>
+        <strong>收支簿</strong>
+        <p className="muted" style={{ margin: 0 }}>
+          預設本月；明細含全部狀態。收款以工地累計第幾次，報價可後補。
+        </p>
       </section>
 
       <section className="panel stack">
-        <strong>組織統計</strong>
+        <strong>期間摘要</strong>
         <div className="grid-2">
           <div className="site-link">
-            <p>有效合約</p>
-            <h3>NT${summary.acceptedContractAmount.toLocaleString()}</h3>
+            <p>支出合計（篩選）</p>
+            <h3>NT${ledgerSummary.expenseTotal.toLocaleString()}</h3>
           </div>
           <div className="site-link">
-            <p>案件餘額（合約−已確認支出）</p>
-            <h3>NT${summary.caseBalance.toLocaleString()}</h3>
+            <p>收款合計（篩選）</p>
+            <h3>NT${ledgerSummary.receiptTotal.toLocaleString()}</h3>
           </div>
           <div className="site-link">
-            <p>已確認／待審核支出</p>
+            <p>淨額（收−支）</p>
+            <h3>NT${ledgerSummary.net.toLocaleString()}</h3>
+          </div>
+          <div className="site-link">
+            <p>筆數</p>
+            <h3>{ledgerSummary.count}</h3>
+          </div>
+        </div>
+        <div className="grid-2">
+          <div className="site-link">
+            <p>組織已確認／待審支出</p>
             <h3>
               {summary.confirmedExpenseTotal.toLocaleString()} /{' '}
               {summary.pendingExpenseTotal.toLocaleString()}
             </h3>
           </div>
           <div className="site-link">
-            <p>已確認／待確認收款</p>
+            <p>組織已確認／待確認收款</p>
             <h3>
               {summary.confirmedReceiptTotal.toLocaleString()} /{' '}
               {summary.pendingReceiptTotal.toLocaleString()}
@@ -148,6 +301,323 @@ export function ExpensesPage() {
           </div>
         </div>
       </section>
+
+      <section className="panel stack">
+        <strong>篩選／匯出</strong>
+        <div className="grid-2">
+          <div className="field">
+            <label htmlFor="led-month">月份</label>
+            <input
+              id="led-month"
+              type="month"
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="led-kind">類型</label>
+            <select
+              id="led-kind"
+              value={filterKind}
+              onChange={(e) =>
+                setFilterKind(e.target.value as LedgerEntryKind | 'all')
+              }
+            >
+              <option value="all">全部</option>
+              <option value="expense">支出</option>
+              <option value="receipt">收款</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="led-status">狀態</label>
+            <select
+              id="led-status"
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+            >
+              <option value="all">全部狀態</option>
+              <option value="pending_review">支出待審核</option>
+              <option value="pending_confirm">收款待確認</option>
+              <option value="confirmed">已確認</option>
+              <option value="returned">已退回</option>
+              <option value="cancelled">已取消</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="led-site">工地</label>
+            <select
+              id="led-site"
+              value={filterSiteId}
+              onChange={(e) => setFilterSiteId(e.target.value)}
+            >
+              <option value="all">全部工地</option>
+              <option value="">雜項</option>
+              {sites.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => setFilterMonth(currentMonth())}
+          >
+            回到本月
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => setFilterMonth('')}
+          >
+            全部期間
+          </button>
+          <button type="button" className="btn btn-steel" onClick={() => void exportExcel()}>
+            匯出 Excel
+          </button>
+          <button
+            type="button"
+            className="btn btn-steel"
+            disabled={exporting}
+            onClick={() => void exportPdf()}
+          >
+            {exporting ? '匯出中…' : '匯出 PDF'}
+          </button>
+        </div>
+      </section>
+
+      <section className="panel stack">
+        <strong>明細</strong>
+        {ledgerFiltered.length === 0 ? (
+          <div className="empty">此篩選無明細</div>
+        ) : (
+          ledgerFiltered.map((row) => {
+            const isExpense = row.kind === 'expense'
+            const rawId = row.id.replace(/^(exp|rc):/, '')
+            const exp = isExpense
+              ? visibleExpenses.find((e) => e.id === rawId)
+              : null
+            const rc = !isExpense
+              ? visibleReceipts.find((r) => r.id === rawId)
+              : null
+            return (
+              <div key={row.id} className="site-link stack">
+                <div className="row between" style={{ alignItems: 'flex-start' }}>
+                  <div className="stack" style={{ gap: 4 }}>
+                    <strong>
+                      {isExpense ? '支出' : '收款'} · {row.item}
+                      {row.sequenceLabel ? ` · ${row.sequenceLabel}` : ''} · NT$
+                      {row.amount.toLocaleString()}
+                    </strong>
+                    <p style={{ margin: 0 }}>
+                      {row.date} · {row.siteName} · {row.reportedByName}
+                      {row.hasProof ? ' · 有憑證' : ''}
+                      {rc?.quotationId ? ' · 已關聯報價' : ''}
+                    </p>
+                  </div>
+                  <span className="badge">{row.statusLabel}</span>
+                </div>
+                {isBoss && exp?.status === 'pending_review' ? (
+                  <div className="row">
+                    <button
+                      className="btn btn-steel"
+                      type="button"
+                      onClick={() =>
+                        void reviewExpense({ id: exp.id, decision: 'confirm' })
+                      }
+                    >
+                      確認
+                    </button>
+                    <button
+                      className="btn btn-ghost"
+                      type="button"
+                      onClick={() =>
+                        void reviewExpense({
+                          id: exp.id,
+                          decision: 'return',
+                          note: '請補資料',
+                        })
+                      }
+                    >
+                      退回
+                    </button>
+                  </div>
+                ) : null}
+                {isBoss && rc?.status === 'pending_confirm' ? (
+                  <div className="row">
+                    <button
+                      className="btn btn-steel"
+                      type="button"
+                      onClick={() => void onConfirmReceipt(rc.id)}
+                    >
+                      確認收款
+                    </button>
+                    <button
+                      className="btn btn-ghost"
+                      type="button"
+                      onClick={() =>
+                        void confirmReceipt({
+                          id: rc.id,
+                          decision: 'return',
+                          note: '請補證明',
+                        })
+                      }
+                    >
+                      退回
+                    </button>
+                  </div>
+                ) : null}
+                {isBoss && rc && !rc.quotationId && rc.siteId ? (
+                  <div className="field">
+                    <label htmlFor={`link-q-${rc.id}`}>後補關聯報價</label>
+                    <select
+                      id={`link-q-${rc.id}`}
+                      defaultValue=""
+                      onChange={(e) => {
+                        const v = e.target.value
+                        if (!v) return
+                        void linkReceiptQuote({ id: rc.id, quotationId: v })
+                      }}
+                    >
+                      <option value="">選擇報價…</option>
+                      {(quotes ?? [])
+                        .filter(
+                          (q) =>
+                            q.projectId === rc.siteId &&
+                            q.workflowStatus === 'accepted' &&
+                            !q.deletedAt,
+                        )
+                        .map((q) => (
+                          <option key={q.id} value={q.id}>
+                            {q.quoteNumber} · {q.title} · NT$
+                            {Number(q.amountAfterTax || 0).toLocaleString()}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                ) : null}
+                {isBoss && exp && exp.status !== 'cancelled' ? (
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          `確定刪除支出「${exp.item}」NT$${exp.amount.toLocaleString()}？`,
+                        )
+                      ) {
+                        return
+                      }
+                      void cancelExpense({ id: exp.id })
+                    }}
+                  >
+                    刪除支出
+                  </button>
+                ) : null}
+                {isBoss && rc && rc.status !== 'cancelled' ? (
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          `確定刪除收款 NT$${rc.amount.toLocaleString()}？`,
+                        )
+                      ) {
+                        return
+                      }
+                      void cancelReceipt({ id: rc.id })
+                    }}
+                  >
+                    刪除收款
+                  </button>
+                ) : null}
+              </div>
+            )
+          })
+        )}
+      </section>
+
+      {progressSite ? (
+        <section className="panel stack">
+          <strong>工地收款進度</strong>
+          <div className="field">
+            <label htmlFor="prog-site">工地</label>
+            <select
+              id="prog-site"
+              value={progressSite}
+              onChange={(e) => setProgressSiteId(e.target.value)}
+            >
+              {sites.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          {siteProgress ? (
+            <div className="grid-2">
+              <div className="site-link">
+                <p>累計已收（已確認）</p>
+                <h3>NT${siteProgress.confirmedTotal.toLocaleString()}</h3>
+              </div>
+              <div className="site-link">
+                <p>待確認</p>
+                <h3>NT${siteProgress.pendingTotal.toLocaleString()}</h3>
+              </div>
+              {siteProgress.contractAmount > 0 ? (
+                <>
+                  <div className="site-link">
+                    <p>合約總額</p>
+                    <h3>NT${siteProgress.contractAmount.toLocaleString()}</h3>
+                  </div>
+                  <div className="site-link">
+                    <p>
+                      尚欠／進度
+                      {siteProgress.overReceived ? '（超收）' : ''}
+                    </p>
+                    <h3>
+                      NT$
+                      {(siteProgress.remaining ?? 0).toLocaleString()} ·{' '}
+                      {siteProgress.progressPct ?? 0}%
+                    </h3>
+                  </div>
+                </>
+              ) : (
+                <div className="site-link">
+                  <p>合約</p>
+                  <h3>尚未有已接受報價</h3>
+                </div>
+              )}
+            </div>
+          ) : null}
+          <p className="muted" style={{ margin: 0 }}>
+            下一次確認將為第 {siteProgress?.nextSequence ?? 1} 次（以工地連續編號）
+          </p>
+          {siteReceiptRows.length === 0 ? (
+            <div className="empty">此工地尚無收款</div>
+          ) : (
+            siteReceiptRows.map((r) => (
+              <div key={r.id} className="site-link">
+                <strong>
+                  {r.siteSequenceNo != null
+                    ? `第 ${r.siteSequenceNo} 次`
+                    : '待確認'}{' '}
+                  · NT${r.amount.toLocaleString()} ·{' '}
+                  {RECEIPT_STATUS_LABELS[r.status]}
+                </strong>
+                <p style={{ margin: 0 }}>
+                  {r.receivedOn} · {r.reportedByName}
+                  {r.sourceNote ? ` · ${r.sourceNote}` : ''}
+                </p>
+              </div>
+            ))
+          )}
+        </section>
+      ) : null}
 
       <section className="panel stack">
         <strong>回報支出</strong>
@@ -187,9 +657,6 @@ export function ExpensesPage() {
                 </option>
               ))}
             </select>
-            <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
-              加油、買飯、飲料、臨時支援等請選雜項。
-            </p>
           </div>
           {isMisc ? (
             <div className="field">
@@ -198,7 +665,7 @@ export function ExpensesPage() {
                 id="exp-loc"
                 value={locationText}
                 onChange={(e) => setLocationText(e.target.value)}
-                placeholder="例如：中油忠孝站、工地附近超商"
+                placeholder="例如：中油忠孝站"
               />
             </div>
           ) : null}
@@ -234,7 +701,7 @@ export function ExpensesPage() {
             />
           </div>
           <div className="field">
-            <label htmlFor="exp-receipts">收據／憑證照片（可多選）</label>
+            <label htmlFor="exp-receipts">收據／憑證照片</label>
             <input
               id="exp-receipts"
               type="file"
@@ -244,11 +711,6 @@ export function ExpensesPage() {
                 setReceiptFiles(Array.from(e.target.files ?? []))
               }
             />
-            {receiptFiles.length > 0 ? (
-              <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-                已選 {receiptFiles.length} 張（第一張寫入支出回報）
-              </p>
-            ) : null}
           </div>
           {createExpenseError ? (
             <p style={{ color: 'var(--danger)', margin: 0 }}>
@@ -267,6 +729,9 @@ export function ExpensesPage() {
 
       <section className="panel stack">
         <strong>回報收款</strong>
+        <p className="muted" style={{ margin: 0 }}>
+          填金額與日期即可；不一定要有報價。單一已接受報價會自動帶入。
+        </p>
         <form
           className="stack"
           onSubmit={(e) => {
@@ -278,10 +743,13 @@ export function ExpensesPage() {
               locationText: isMisc ? locationText : null,
               amount: Number(receiptAmount) || 0,
               sourceNote,
+              receivedOn,
+              quotationId: isMisc ? null : quotationId || null,
               proofFiles,
             }).then(() => {
               setReceiptAmount('')
               setSourceNote('')
+              setReceivedOn(taipeiDateString())
               setProofFiles([])
             })
           }}
@@ -293,11 +761,20 @@ export function ExpensesPage() {
                 id="rc-loc"
                 value={locationText}
                 onChange={(e) => setLocationText(e.target.value)}
-                placeholder="例如：客戶住處、臨時會合點"
               />
             </div>
           ) : null}
           <div className="grid-2">
+            <div className="field">
+              <label htmlFor="rc-on">收款日期</label>
+              <input
+                id="rc-on"
+                type="date"
+                value={receivedOn}
+                onChange={(e) => setReceivedOn(e.target.value)}
+                required
+              />
+            </div>
             <div className="field">
               <label htmlFor="rc-amt">收到金額</label>
               <input
@@ -309,17 +786,36 @@ export function ExpensesPage() {
                 required
               />
             </div>
+          </div>
+          {!isMisc ? (
             <div className="field">
-              <label htmlFor="rc-src">來源／備註</label>
-              <input
-                id="rc-src"
-                value={sourceNote}
-                onChange={(e) => setSourceNote(e.target.value)}
-              />
+              <label htmlFor="rc-quote">關聯報價（選填）</label>
+              <select
+                id="rc-quote"
+                value={quotationId}
+                onChange={(e) => setQuotationId(e.target.value)}
+              >
+                <option value="">不關聯（可後補）</option>
+                {siteQuotes.map((q) => (
+                  <option key={q.id} value={q.id}>
+                    {q.quoteNumber} · {q.title} · NT$
+                    {Number(q.amountAfterTax || 0).toLocaleString()}
+                  </option>
+                ))}
+              </select>
             </div>
+          ) : null}
+          <div className="field">
+            <label htmlFor="rc-src">備註（口頭約定等）</label>
+            <input
+              id="rc-src"
+              value={sourceNote}
+              onChange={(e) => setSourceNote(e.target.value)}
+              placeholder="例如：先收三萬"
+            />
           </div>
           <div className="field">
-            <label htmlFor="rc-proof">收款憑證照片（可多選，取第一張）</label>
+            <label htmlFor="rc-proof">收款憑證照片</label>
             <input
               id="rc-proof"
               type="file"
@@ -372,7 +868,6 @@ export function ExpensesPage() {
                 id="adv-item"
                 value={advItem}
                 onChange={(e) => setAdvItem(e.target.value)}
-                placeholder="例如：水泥、五金、加油"
                 required
               />
             </div>
@@ -397,7 +892,7 @@ export function ExpensesPage() {
             />
           </div>
           <div className="field">
-            <label htmlFor="adv-receipt">收據照片（選填）</label>
+            <label htmlFor="adv-receipt">收據照片</label>
             <input
               id="adv-receipt"
               type="file"
@@ -434,7 +929,7 @@ export function ExpensesPage() {
                   {selectedTotal.toLocaleString()}
                 </p>
                 <div className="field">
-                  <label htmlFor="settle-note">核銷備註（選填）</label>
+                  <label htmlFor="settle-note">核銷備註</label>
                   <input
                     id="settle-note"
                     value={settleNote}
@@ -507,13 +1002,9 @@ export function ExpensesPage() {
                     type="button"
                     className="btn btn-danger"
                     onClick={() => {
-                      const settledHint =
-                        a.status === 'settled'
-                          ? '\n（已核銷代墊會一併取消對應支出）'
-                          : ''
                       if (
                         !window.confirm(
-                          `確定刪除代墊「${a.item}」NT$${a.amount.toLocaleString()}？${settledHint}`,
+                          `確定刪除代墊「${a.item}」NT$${a.amount.toLocaleString()}？`,
                         )
                       ) {
                         return
@@ -527,140 +1018,6 @@ export function ExpensesPage() {
               </div>
             ))}
           </>
-        )}
-      </section>
-
-      <section className="panel stack">
-        <strong>支出清單</strong>
-        {visibleExpenses.length === 0 ? (
-          <div className="empty">尚無支出回報</div>
-        ) : (
-          visibleExpenses.map((e) => (
-            <div key={e.id} className="site-link stack">
-              <div className="row between">
-                <strong>
-                  {e.item} · NT${e.amount.toLocaleString()}
-                </strong>
-                <span className="badge">{EXPENSE_STATUS_LABELS[e.status]}</span>
-              </div>
-              <p style={{ margin: 0 }}>
-                {e.siteName}
-                {e.locationText ? `（${e.locationText}）` : ''} ·{' '}
-                {e.reportedByName} · {formatTaipei(e.reportedAt, 'MM/dd HH:mm')}
-                {e.receiptPhotoPath ? ' · 已附收據' : ''}
-              </p>
-              {isBoss && e.status === 'pending_review' ? (
-                <div className="row">
-                  <button
-                    className="btn btn-steel"
-                    type="button"
-                    onClick={() =>
-                      void reviewExpense({ id: e.id, decision: 'confirm' })
-                    }
-                  >
-                    確認
-                  </button>
-                  <button
-                    className="btn btn-ghost"
-                    type="button"
-                    onClick={() =>
-                      void reviewExpense({
-                        id: e.id,
-                        decision: 'return',
-                        note: '請補資料',
-                      })
-                    }
-                  >
-                    退回
-                  </button>
-                </div>
-              ) : null}
-              {isBoss && e.status !== 'cancelled' ? (
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        `確定刪除支出「${e.item}」NT$${e.amount.toLocaleString()}？\n刪除後不再計入案件統計（紀錄會保留為已取消）。`,
-                      )
-                    ) {
-                      return
-                    }
-                    void cancelExpense({ id: e.id })
-                  }}
-                >
-                  刪除支出
-                </button>
-              ) : null}
-            </div>
-          ))
-        )}
-      </section>
-
-      <section className="panel stack">
-        <strong>收款清單</strong>
-        {visibleReceipts.length === 0 ? (
-          <div className="empty">尚無收款回報</div>
-        ) : (
-          visibleReceipts.map((r) => (
-            <div key={r.id} className="site-link stack">
-              <div className="row between">
-                <strong>NT${r.amount.toLocaleString()}</strong>
-                <span className="badge">{RECEIPT_STATUS_LABELS[r.status]}</span>
-              </div>
-              <p style={{ margin: 0 }}>
-                {r.siteName}
-                {r.locationText ? `（${r.locationText}）` : ''} ·{' '}
-                {r.reportedByName} · {formatTaipei(r.reportedAt, 'MM/dd HH:mm')}
-                {r.sourceNote ? ` · ${r.sourceNote}` : ''}
-              </p>
-              {isBoss && r.status === 'pending_confirm' ? (
-                <div className="row">
-                  <button
-                    className="btn btn-steel"
-                    type="button"
-                    onClick={() =>
-                      void confirmReceipt({ id: r.id, decision: 'confirm' })
-                    }
-                  >
-                    確認收款
-                  </button>
-                  <button
-                    className="btn btn-ghost"
-                    type="button"
-                    onClick={() =>
-                      void confirmReceipt({
-                        id: r.id,
-                        decision: 'return',
-                        note: '請補證明',
-                      })
-                    }
-                  >
-                    退回
-                  </button>
-                </div>
-              ) : null}
-              {isBoss && r.status !== 'cancelled' ? (
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        `確定刪除收款 NT$${r.amount.toLocaleString()}？\n刪除後不再計入統計（紀錄會保留為已取消）。`,
-                      )
-                    ) {
-                      return
-                    }
-                    void cancelReceipt({ id: r.id })
-                  }}
-                >
-                  刪除收款
-                </button>
-              ) : null}
-            </div>
-          ))
         )}
       </section>
     </div>

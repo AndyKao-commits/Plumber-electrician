@@ -141,6 +141,7 @@ import {
   assertCanReviewExpense,
   assertExpenseItem,
   assertPositiveMoney,
+  nextSiteReceiptSequence,
   resolveFieldCashTarget,
 } from '@/domain/fieldFinance'
 import {
@@ -262,6 +263,39 @@ import { supabase } from '@/lib/supabase'
 function sb() {
   if (!supabase) throw new AppError('尚未設定 Supabase，無法使用正式模式')
   return supabase
+}
+
+const CASH_RECEIPT_SELECT =
+  'id, organization_id, site_id, site_name, location_text, quotation_id, received_on, site_sequence_no, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note'
+
+function mapCashReceiptRow(row: Record<string, unknown>): CashReceiptReport {
+  const reportedAt = String(row.reported_at)
+  const receivedRaw = (row.received_on as string | null) ?? null
+  const receivedOn =
+    receivedRaw && /^\d{4}-\d{2}-\d{2}/.test(receivedRaw)
+      ? receivedRaw.slice(0, 10)
+      : taipeiDateString(reportedAt)
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    siteId: row.site_id ? String(row.site_id) : null,
+    siteName: String(row.site_name),
+    locationText: (row.location_text as string | null) ?? null,
+    quotationId: row.quotation_id ? String(row.quotation_id) : null,
+    receivedOn,
+    siteSequenceNo:
+      row.site_sequence_no == null ? null : Number(row.site_sequence_no),
+    amount: Number(row.amount),
+    sourceNote: (row.source_note as string | null) ?? null,
+    proofPhotoPath: (row.proof_photo_path as string | null) ?? null,
+    status: row.status as CashReceiptReport['status'],
+    reportedBy: String(row.reported_by),
+    reportedByName: String(row.reported_by_name),
+    reportedAt,
+    confirmedBy: (row.confirmed_by as string | null) ?? null,
+    confirmedAt: (row.confirmed_at as string | null) ?? null,
+    confirmNote: (row.confirm_note as string | null) ?? null,
+  }
 }
 
 const QUOTE_SELECT =
@@ -6617,29 +6651,11 @@ export const supabaseRepos = {
   async listCashReceipts(actor: AppUser): Promise<CashReceiptReport[]> {
     let q = sb()
       .from('cash_receipt_reports')
-      .select(
-        'id, organization_id, site_id, site_name, location_text, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note',
-      )
+      .select(CASH_RECEIPT_SELECT)
     if (actor.role !== 'boss') q = q.eq('reported_by', actor.id)
     const { data, error } = await q.order('reported_at', { ascending: false })
     if (error) throw new AppError(toUserMessage(error, '無法載入收款'))
-    return (data ?? []).map((row) => ({
-      id: String(row.id),
-      organizationId: String(row.organization_id),
-      siteId: row.site_id ? String(row.site_id) : null,
-      siteName: String(row.site_name),
-      locationText: (row.location_text as string | null) ?? null,
-      amount: Number(row.amount),
-      sourceNote: (row.source_note as string | null) ?? null,
-      proofPhotoPath: (row.proof_photo_path as string | null) ?? null,
-      status: row.status as CashReceiptReport['status'],
-      reportedBy: String(row.reported_by),
-      reportedByName: String(row.reported_by_name),
-      reportedAt: String(row.reported_at),
-      confirmedBy: (row.confirmed_by as string | null) ?? null,
-      confirmedAt: (row.confirmed_at as string | null) ?? null,
-      confirmNote: (row.confirm_note as string | null) ?? null,
-    }))
+    return (data ?? []).map((row) => mapCashReceiptRow(row))
   },
 
   async createCashReceipt(
@@ -6651,6 +6667,8 @@ export const supabaseRepos = {
       locationText?: string | null
       proofPhotoPath?: string | null
       misc?: boolean
+      quotationId?: string | null
+      receivedOn?: string | null
     },
   ): Promise<CashReceiptReport> {
     let target = resolveFieldCashTarget({
@@ -6665,12 +6683,28 @@ export const supabaseRepos = {
       if (!site) throw new AppError('找不到工地／案件')
       target = { ...target, siteId: site.id, siteName: site.name }
     }
+    let quotationId: string | null = null
+    if (input.quotationId?.trim()) {
+      quotationId = requireUuid(input.quotationId, '報價')
+      const quotes = await this.listQuotations()
+      const q = quotes.find((x) => x.id === quotationId)
+      if (!q || q.deletedAt) throw new AppError('找不到報價')
+      if (target.siteId && q.projectId && q.projectId !== target.siteId) {
+        throw new AppError('報價不屬於此工地')
+      }
+    }
+    const receivedOn =
+      (input.receivedOn && /^\d{4}-\d{2}-\d{2}$/.test(input.receivedOn)
+        ? input.receivedOn
+        : null) || taipeiDateString()
     const { data, error } = await sb()
       .from('cash_receipt_reports')
       .insert({
         site_id: target.siteId,
         site_name: target.siteName,
         location_text: target.locationText,
+        quotation_id: quotationId,
+        received_on: receivedOn,
         amount: assertPositiveMoney(input.amount, '收款金額'),
         source_note: input.sourceNote?.trim() || null,
         proof_photo_path: input.proofPhotoPath?.trim() || null,
@@ -6678,28 +6712,10 @@ export const supabaseRepos = {
         reported_by: actor.id,
         reported_by_name: actor.name,
       })
-      .select(
-        'id, organization_id, site_id, site_name, location_text, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note',
-      )
+      .select(CASH_RECEIPT_SELECT)
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法建立收款'))
-    const row = {
-      id: String(data.id),
-      organizationId: String(data.organization_id),
-      siteId: data.site_id ? String(data.site_id) : null,
-      siteName: String(data.site_name),
-      locationText: (data.location_text as string | null) ?? null,
-      amount: Number(data.amount),
-      sourceNote: (data.source_note as string | null) ?? null,
-      proofPhotoPath: (data.proof_photo_path as string | null) ?? null,
-      status: data.status as CashReceiptReport['status'],
-      reportedBy: String(data.reported_by),
-      reportedByName: String(data.reported_by_name),
-      reportedAt: String(data.reported_at),
-      confirmedBy: (data.confirmed_by as string | null) ?? null,
-      confirmedAt: (data.confirmed_at as string | null) ?? null,
-      confirmNote: (data.confirm_note as string | null) ?? null,
-    }
+    const row = mapCashReceiptRow(data)
     await this.appendAuditLog(actor, {
       action: 'receipt.create',
       targetType: 'cash_receipt',
@@ -6718,7 +6734,14 @@ export const supabaseRepos = {
     },
   ): Promise<CashReceiptReport> {
     const id = requireUuid(input.id, '收款')
-    const current = (await this.listCashReceipts(actor)).find((e) => e.id === id)
+    // Boss needs all site rows to compute sequence (not only own reports).
+    const { data: siteRows, error: listErr } = await sb()
+      .from('cash_receipt_reports')
+      .select(CASH_RECEIPT_SELECT)
+      .order('reported_at', { ascending: false })
+    if (listErr) throw new AppError(toUserMessage(listErr, '無法載入收款'))
+    const all = (siteRows ?? []).map((row) => mapCashReceiptRow(row))
+    const current = all.find((e) => e.id === id)
     if (!current) throw new AppError('找不到收款回報')
     assertBossFinalize({
       actorRole: actor.role,
@@ -6732,36 +6755,24 @@ export const supabaseRepos = {
         : input.decision === 'return'
           ? 'returned'
           : 'cancelled'
+    const siteSequenceNo =
+      status === 'confirmed' && current.siteId
+        ? nextSiteReceiptSequence(all, current.siteId)
+        : current.siteSequenceNo ?? null
     const { data, error } = await sb()
       .from('cash_receipt_reports')
       .update({
         status,
+        site_sequence_no: siteSequenceNo,
         confirmed_by: actor.id,
         confirmed_at: new Date().toISOString(),
         confirm_note: input.note?.trim() || null,
       })
       .eq('id', id)
-      .select(
-        'id, organization_id, site_id, site_name, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note',
-      )
+      .select(CASH_RECEIPT_SELECT)
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法確認收款'))
-    const row = {
-      id: String(data.id),
-      organizationId: String(data.organization_id),
-      siteId: String(data.site_id),
-      siteName: String(data.site_name),
-      amount: Number(data.amount),
-      sourceNote: (data.source_note as string | null) ?? null,
-      proofPhotoPath: (data.proof_photo_path as string | null) ?? null,
-      status: data.status as CashReceiptReport['status'],
-      reportedBy: String(data.reported_by),
-      reportedByName: String(data.reported_by_name),
-      reportedAt: String(data.reported_at),
-      confirmedBy: (data.confirmed_by as string | null) ?? null,
-      confirmedAt: (data.confirmed_at as string | null) ?? null,
-      confirmNote: (data.confirm_note as string | null) ?? null,
-    }
+    const row = mapCashReceiptRow(data)
     await this.appendAuditLog(actor, {
       action:
         input.decision === 'confirm'
@@ -6769,6 +6780,42 @@ export const supabaseRepos = {
           : input.decision === 'return'
             ? 'receipt.return'
             : 'receipt.cancel',
+      targetType: 'cash_receipt',
+      targetId: row.id,
+      before: current,
+      after: row,
+    })
+    return row
+  },
+
+  async linkCashReceiptQuote(
+    actor: AppUser,
+    input: { id: string; quotationId: string | null },
+  ): Promise<CashReceiptReport> {
+    if (actor.role !== 'boss') throw new AppError('僅老闆可關聯報價')
+    const id = requireUuid(input.id, '收款')
+    const current = (await this.listCashReceipts(actor)).find((e) => e.id === id)
+    if (!current) throw new AppError('找不到收款回報')
+    let quotationId: string | null = null
+    if (input.quotationId?.trim()) {
+      quotationId = requireUuid(input.quotationId, '報價')
+      const quotes = await this.listQuotations()
+      const q = quotes.find((x) => x.id === quotationId)
+      if (!q || q.deletedAt) throw new AppError('找不到報價')
+      if (current.siteId && q.projectId && q.projectId !== current.siteId) {
+        throw new AppError('報價不屬於此工地')
+      }
+    }
+    const { data, error } = await sb()
+      .from('cash_receipt_reports')
+      .update({ quotation_id: quotationId })
+      .eq('id', id)
+      .select(CASH_RECEIPT_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法關聯報價'))
+    const row = mapCashReceiptRow(data)
+    await this.appendAuditLog(actor, {
+      action: 'receipt.link_quote',
       targetType: 'cash_receipt',
       targetId: row.id,
       before: current,
@@ -6798,28 +6845,10 @@ export const supabaseRepos = {
         confirm_note: note,
       })
       .eq('id', id)
-      .select(
-        'id, organization_id, site_id, site_name, location_text, amount, source_note, proof_photo_path, status, reported_by, reported_by_name, reported_at, confirmed_by, confirmed_at, confirm_note',
-      )
+      .select(CASH_RECEIPT_SELECT)
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法刪除收款'))
-    const row: CashReceiptReport = {
-      id: String(data.id),
-      organizationId: String(data.organization_id),
-      siteId: data.site_id ? String(data.site_id) : null,
-      siteName: String(data.site_name),
-      locationText: (data.location_text as string | null) ?? null,
-      amount: Number(data.amount),
-      sourceNote: (data.source_note as string | null) ?? null,
-      proofPhotoPath: (data.proof_photo_path as string | null) ?? null,
-      status: data.status as CashReceiptReport['status'],
-      reportedBy: String(data.reported_by),
-      reportedByName: String(data.reported_by_name),
-      reportedAt: String(data.reported_at),
-      confirmedBy: (data.confirmed_by as string | null) ?? null,
-      confirmedAt: (data.confirmed_at as string | null) ?? null,
-      confirmNote: (data.confirm_note as string | null) ?? null,
-    }
+    const row = mapCashReceiptRow(data)
     await this.appendAuditLog(actor, {
       action: 'receipt.cancel',
       targetType: 'cash_receipt',

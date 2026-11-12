@@ -42,13 +42,28 @@ describe('V1.0 field finance local', () => {
       siteId: site.id,
       amount: 2000,
       sourceNote: '客戶現金',
+      receivedOn: '2026-11-12',
     })
+    expect(rc.receivedOn).toBe('2026-11-12')
+    expect(rc.siteSequenceNo).toBeNull()
     expect(() =>
       localDb.confirmCashReceipt(b, {
         id: rc.id,
         decision: 'confirm',
       }),
     ).not.toThrow()
+    const confirmed = localDb.listCashReceipts().find((r) => r.id === rc.id)!
+    expect(confirmed.status).toBe('confirmed')
+    expect(confirmed.siteSequenceNo).toBeGreaterThanOrEqual(1)
+
+    const rc2 = localDb.createCashReceipt(w, {
+      siteId: site.id,
+      amount: 1500,
+      sourceNote: '第二次',
+    })
+    localDb.confirmCashReceipt(b, { id: rc2.id, decision: 'confirm' })
+    const second = localDb.listCashReceipts().find((r) => r.id === rc2.id)!
+    expect(second.siteSequenceNo).toBe((confirmed.siteSequenceNo ?? 0) + 1)
     expect(localDb.listAuditLogs().length).toBeGreaterThan(0)
   })
 
