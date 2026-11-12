@@ -53,12 +53,21 @@ create table if not exists public.profiles (
   name text not null,
   role public.user_role not null default 'employee',
   email text,
+  login_id text,
   phone text,
   pay_type public.pay_type,
   line_user_id text unique,
   finance_authorized boolean not null default false,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint profiles_login_id_format check (
+    login_id is null
+    or login_id ~ '^[a-z][a-z0-9._-]{2,31}$'
+  )
 );
+
+create unique index if not exists profiles_login_id_unique
+  on public.profiles (login_id)
+  where login_id is not null;
 
 create table if not exists public.sites (
   id uuid primary key default gen_random_uuid(),
@@ -944,9 +953,13 @@ comment on column public.notification_outbox.error is
 -- Open self-serve signup: auth user completes profile via security definer RPC.
 -- First member of an org becomes boss (Owner); later joiners become employee (Member).
 
+drop function if exists public.complete_signup(text, text);
+drop function if exists public.complete_signup(text, text, text);
+
 create or replace function public.complete_signup(
   p_name text,
-  p_org_name text default null
+  p_org_name text default null,
+  p_login_id text default null
 )
 returns public.profiles
 language plpgsql
@@ -959,6 +972,7 @@ declare
   v_org uuid;
   v_name text := nullif(trim(coalesce(p_name, '')), '');
   v_org_name text := nullif(trim(coalesce(p_org_name, '')), '');
+  v_login text := nullif(lower(trim(coalesce(p_login_id, ''))), '');
   v_count integer;
   v_role public.user_role;
   v_finance boolean;
@@ -970,12 +984,21 @@ begin
   if v_name is null then
     raise exception '請填寫姓名';
   end if;
+  if v_login is not null and v_login !~ '^[a-z][a-z0-9._-]{2,31}$' then
+    raise exception '帳號格式無效';
+  end if;
 
   select email into v_email from auth.users where id = v_uid;
 
   -- Idempotent: already has profile
   select * into v_row from public.profiles where id = v_uid;
   if found then
+    if v_login is not null and v_row.login_id is null then
+      update public.profiles
+      set login_id = v_login
+      where id = v_uid
+      returning * into v_row;
+    end if;
     return v_row;
   end if;
 
@@ -1006,9 +1029,9 @@ begin
   end if;
 
   insert into public.profiles (
-    id, organization_id, name, role, email, finance_authorized
+    id, organization_id, name, role, email, login_id, finance_authorized
   ) values (
-    v_uid, v_org, v_name, v_role, v_email, v_finance
+    v_uid, v_org, v_name, v_role, v_email, v_login, v_finance
   )
   returning * into v_row;
 
@@ -1016,11 +1039,11 @@ begin
 end;
 $$;
 
-revoke all on function public.complete_signup(text, text) from public;
-grant execute on function public.complete_signup(text, text) to authenticated;
+revoke all on function public.complete_signup(text, text, text) from public;
+grant execute on function public.complete_signup(text, text, text) to authenticated;
 
-comment on function public.complete_signup(text, text) is
-  'After auth.signUp/signIn, create profile. Empty org name joins oldest org (or creates default). Named org creates new company as first Owner.';
+comment on function public.complete_signup(text, text, text) is
+  'After auth.signUp/signIn, create profile. Optional login_id for custom accounts.';
 
 -- ===== LINE bind code =====
 -- Personal LINE ↔ profile binding via short-lived code (reply-only flow).

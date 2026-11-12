@@ -98,6 +98,8 @@ export interface AppUser {
   name: string
   role: UserRole
   email?: string
+  /** Custom account name (optional; may map to synthetic Auth email). */
+  loginId?: string | null
   phone?: string
   /** V1.0 profile */
   nickname?: string | null
