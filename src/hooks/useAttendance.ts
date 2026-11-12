@@ -251,6 +251,19 @@ export function useAttendance(userId: string | undefined) {
             if (!open) throw new Error('請先上班再選擇工地')
             const updated = { ...open, siteId, jobType }
             localDb.saveAttendance(updated)
+            const siteName =
+              localDb.getSites().find((s) => s.id === siteId)?.name ?? null
+            localDb.saveLocationCheckin({
+              id: `loc-${crypto.randomUUID()}`,
+              organizationId: open.organizationId,
+              userId,
+              recordedAt: new Date().toISOString(),
+              source: 'attendance_site',
+              siteId,
+              siteName,
+              label: siteName,
+              attendanceId: open.id,
+            })
             return updated
           }
           return {
@@ -269,6 +282,19 @@ export function useAttendance(userId: string | undefined) {
         if (!open) throw new Error('請先上班再選擇工地')
         const updated = { ...open, siteId, jobType }
         localDb.saveAttendance(updated)
+        const siteName =
+          localDb.getSites().find((s) => s.id === siteId)?.name ?? null
+        localDb.saveLocationCheckin({
+          id: `loc-${crypto.randomUUID()}`,
+          organizationId: open.organizationId,
+          userId,
+          recordedAt: new Date().toISOString(),
+          source: 'attendance_site',
+          siteId,
+          siteName,
+          label: siteName,
+          attendanceId: open.id,
+        })
         return updated
       } catch (e) {
         throw new Error(toUserMessage(e, '無法更新目前工地'))
