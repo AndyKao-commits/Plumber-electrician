@@ -146,6 +146,9 @@ export function AccessPage() {
       setDeleteConfirmName('')
       setDeleteMessage(result.message)
       void queryClient.invalidateQueries({ queryKey: userKeys.directory() })
+      void queryClient.invalidateQueries({ queryKey: ['team'] })
+      void queryClient.invalidateQueries({ queryKey: ['site-members'] })
+      void queryClient.invalidateQueries({ queryKey: ['org-users-for-sites'] })
       void directoryQuery.refetch()
     },
   })
@@ -280,7 +283,8 @@ export function AccessPage() {
 
   const members = (directoryQuery.data ?? []).filter((m) => {
     if (m.id === user.id) return false
-    // Hide soft-purged accounts (login cleared).
+    // Soft-purged shells already filtered in listOrgProfiles; keep belt-and-suspenders.
+    if ((m.name ?? '').includes('（已刪除）')) return false
     if (m.accountStatus === 'disabled' && !m.loginId && !m.phone) return false
     return true
   })

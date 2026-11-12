@@ -174,8 +174,14 @@ export function SiteDetailPage() {
     enabled: Boolean(user && isBoss),
     queryFn: async () => {
       if (!user) return []
-      if (formal) return supabaseRepos.listOrgProfiles(user)
-      return localDb.getUsers()
+      if (formal) return supabaseRepos.listActiveOrgMembers(user)
+      return localDb
+        .getUsers()
+        .filter(
+          (u) =>
+            u.accountStatus !== 'disabled' &&
+            !(u.name ?? '').includes('（已刪除）'),
+        )
     },
   })
 

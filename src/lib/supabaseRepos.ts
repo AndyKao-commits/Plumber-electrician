@@ -759,6 +759,13 @@ const PROFILE_SELECT_CORE =
 /** Includes role-group columns when migration is applied; falls back to core. */
 const PROFILE_SELECT = `${PROFILE_SELECT_CORE}, role_group_name, role_group_id, access_template, features, permission_overrides`
 
+/** Soft-purged shells: keep for history FKs but never show in live member UIs. */
+function isPurgedDirectoryMember(m: AppUser): boolean {
+  if ((m.name ?? '').includes('（已刪除）')) return true
+  if (m.accountStatus === 'disabled' && !m.loginId && !m.phone) return true
+  return false
+}
+
 async function selectProfileRow(userId: string) {
   const client = sb()
   const full = await client
@@ -1383,10 +1390,14 @@ export const supabaseRepos = {
       if (fallback.error) {
         throw new AppError(toUserMessage(fallback.error, '無法載入名冊'))
       }
-      return (fallback.data ?? []).map((row) => mapUser(row))
+      return (fallback.data ?? [])
+        .map((row) => mapUser(row))
+        .filter((m) => !isPurgedDirectoryMember(m))
     }
     if (full.error) throw new AppError(toUserMessage(full.error, '無法載入名冊'))
-    return (full.data ?? []).map((row) => mapUser(row))
+    return (full.data ?? [])
+      .map((row) => mapUser(row))
+      .filter((m) => !isPurgedDirectoryMember(m))
   },
 
   async deleteMemberAccount(
@@ -5393,6 +5404,7 @@ export const supabaseRepos = {
     const activeProfiles = (profiles ?? []).filter((p) => {
       const status = String(p.account_status ?? 'active')
       if (status === 'disabled') return false
+      if (String(p.name ?? '').includes('（已刪除）')) return false
       return true
     })
     const activeIds = new Set(activeProfiles.map((p) => String(p.id)))
@@ -5514,7 +5526,9 @@ export const supabaseRepos = {
     }
     return (data ?? [])
       .map((row) => mapUser(row))
-      .filter((m) => m.accountStatus !== 'disabled')
+      .filter(
+        (m) => m.accountStatus !== 'disabled' && !isPurgedDirectoryMember(m),
+      )
   },
 
   async listLocationCheckins(input: {
