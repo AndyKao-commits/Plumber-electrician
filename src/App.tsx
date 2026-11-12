@@ -38,6 +38,7 @@ import { PettyCashPage } from '@/pages/PettyCashPage'
 import { SuppliersPage } from '@/pages/SuppliersPage'
 import { TodosPage } from '@/pages/TodosPage'
 import { LiffAttendancePage } from '@/pages/liff/LiffAttendancePage'
+import { LiffExpensePage } from '@/pages/liff/LiffExpensePage'
 import { LiffHubPage } from '@/pages/liff/LiffHubPage'
 import { LiffLocationPage } from '@/pages/liff/LiffLocationPage'
 
@@ -83,6 +84,14 @@ export default function App() {
             element={
               <Protected>
                 <LiffLocationPage />
+              </Protected>
+            }
+          />
+          <Route
+            path="/liff/expense"
+            element={
+              <Protected>
+                <LiffExpensePage />
               </Protected>
             }
           />

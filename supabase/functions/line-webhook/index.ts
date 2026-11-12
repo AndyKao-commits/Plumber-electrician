@@ -687,8 +687,7 @@ async function startFlow(
   }
 
   if (flowType === 'purchase') {
-    const draft = await createDraft(admin, profile, 'purchase', 'select_kind', {})
-    return promptCashKind()
+    return handoffExpenseToLiff()
   }
 
   if (flowType === 'location') {
@@ -721,7 +720,8 @@ async function resumeDraft(
   }
 
   if (draft.flow_type === 'purchase') {
-    return resumePurchase(admin, profile, draft)
+    await finalizeDraft(admin, draft.id, 'cancelled')
+    return handoffExpenseToLiff()
   }
 
   if (draft.flow_type === 'location') {
@@ -2063,6 +2063,14 @@ function attendanceLiffUri(): string {
   return `${appBaseUrl()}/liff/attendance`
 }
 
+function expenseLiffUri(): string {
+  const dedicated = (Deno.env.get('LIFF_ID_EXPENSE') ?? '').trim()
+  if (dedicated) return `https://liff.line.me/${dedicated}`
+  const shared = (Deno.env.get('LIFF_ID') ?? '').trim()
+  if (shared) return `https://liff.line.me/${shared}/expense`
+  return `${appBaseUrl()}/liff/expense`
+}
+
 /** Prefer LIFF page over multi-step chat for attendance. */
 function handoffAttendanceToLiff(): LineMessage[] {
   return [
@@ -2088,6 +2096,21 @@ function handoffLocationToLiff(): LineMessage[] {
       body: '開啟後會自動定位。',
       buttons: [
         { label: '開啟定位', uri: locationLiffUri(), style: 'primary' },
+      ],
+    }),
+  ]
+}
+
+/** One-page expense/receipt form instead of multi-step chat. */
+function handoffExpenseToLiff(): LineMessage[] {
+  return [
+    flexMenu({
+      altText: '記帳',
+      eyebrow: '記帳',
+      title: '記帳',
+      body: '一頁填金額送出，不用一步步輸入。',
+      buttons: [
+        { label: '開啟記帳', uri: expenseLiffUri(), style: 'primary' },
       ],
     }),
   ]
