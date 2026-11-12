@@ -45,7 +45,8 @@ create table if not exists public.organizations (
 );
 
 create table if not exists public.profiles (
-  id uuid primary key references auth.users (id) on delete cascade,
+  -- Same UUID as auth.users while login exists; may outlive Auth after soft-delete.
+  id uuid primary key,
   organization_id uuid not null references public.organizations (id),
   name text not null,
   role public.user_role not null default 'employee',

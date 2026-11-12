@@ -16,11 +16,6 @@ function json(body: unknown, status = 200) {
   })
 }
 
-function randomPassword(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(24))
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return json({ ok: true })
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405)
@@ -99,8 +94,8 @@ Deno.serve(async (req) => {
   }
 
   // Purge profile first (hard delete when possible; otherwise soft-clear login fields).
-  // Auth user is handled afterward — profiles.id references auth.users ON DELETE CASCADE,
-  // so deleting Auth while a soft-kept profile remains would fail on history FKs.
+  // profiles.id is no longer FK-bound to auth.users, so Auth can be fully deleted even
+  // when a soft-kept profile shell remains for attendance / audit history.
   const { data: purged, error: purgeError } = await userClient.rpc(
     'admin_purge_member_profile',
     {
@@ -121,47 +116,19 @@ Deno.serve(async (req) => {
       : 'unknown'
   const name = String(target.name)
 
-  if (mode === 'hard') {
-    const { error: authDeleteError } = await admin.auth.admin.deleteUser(
-      targetUserId,
-    )
-    if (authDeleteError && !/not\s*found|user.*exist/i.test(authDeleteError.message)) {
-      return json({
-        ok: true,
-        mode,
-        id: targetUserId,
-        name,
-        message: `已刪除「${name}」的個人資料，但登入帳號清除失敗：${authDeleteError.message}`,
-      })
-    }
-    return json({
-      ok: true,
-      mode,
-      id: targetUserId,
-      name,
-      message: `已刪除帳號「${name}」`,
-    })
-  }
-
-  // Soft mode: keep profile row for history FKs; tombstone Auth so phone can be reused.
-  const tombstoneEmail = `deleted+${targetUserId.replace(/-/g, '')}@login.eg.local`
-  const { error: authUpdateError } = await admin.auth.admin.updateUserById(
+  const { error: authDeleteError } = await admin.auth.admin.deleteUser(
     targetUserId,
-    {
-      email: tombstoneEmail,
-      password: randomPassword(),
-      ban_duration: '876600h',
-      email_confirm: true,
-      user_metadata: { deleted: true, former_name: name },
-    },
   )
-  if (authUpdateError) {
+  if (authDeleteError && !/not\s*found|user.*exist/i.test(authDeleteError.message)) {
     return json({
       ok: true,
       mode,
       id: targetUserId,
       name,
-      message: `已停用「${name}」並清除登入欄位，但 Auth 作廢失敗：${authUpdateError.message}`,
+      message:
+        mode === 'hard'
+          ? `已刪除「${name}」的個人資料，但登入帳號清除失敗：${authDeleteError.message}`
+          : `已停用「${name}」並清除登入欄位，但 Auth 刪除失敗：${authDeleteError.message}`,
     })
   }
 
@@ -170,6 +137,9 @@ Deno.serve(async (req) => {
     mode,
     id: targetUserId,
     name,
-    message: `已刪除「${name}」的登入權限（歷史資料仍保留關聯，帳號已停用）`,
+    message:
+      mode === 'hard'
+        ? `已刪除帳號「${name}」`
+        : `已刪除「${name}」的登入帳號（歷史出勤／紀錄仍保留，App 內不再顯示）`,
   })
 })

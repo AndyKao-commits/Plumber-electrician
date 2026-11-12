@@ -48,7 +48,8 @@ create table if not exists public.organizations (
 );
 
 create table if not exists public.profiles (
-  id uuid primary key references auth.users (id) on delete cascade,
+  -- Same UUID as auth.users while login exists; may outlive Auth after soft-delete.
+  id uuid primary key,
   organization_id uuid not null references public.organizations (id),
   name text not null,
   role public.user_role not null default 'employee',
@@ -4777,5 +4778,18 @@ where account_status = 'disabled'
   and phone is null
   and coalesce(email, '') = ''
   and name not like '%（已刪除）';
+
+notify pgrst, 'reload schema';
+
+-- ===== 20261112_detach_profiles_auth_fk =====
+-- Allow soft-deleted member shells to keep history while Auth users are fully removed.
+-- Previously profiles.id → auth.users(id) ON DELETE CASCADE blocked Auth cleanup
+-- (and would cascade-wipe history if Auth were force-deleted).
+
+alter table public.profiles
+  drop constraint if exists profiles_id_fkey;
+
+comment on column public.profiles.id is
+  'Same UUID as auth.users when the login still exists; may outlive Auth after soft-delete.';
 
 notify pgrst, 'reload schema';
