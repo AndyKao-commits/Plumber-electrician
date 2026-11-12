@@ -20,15 +20,22 @@ export type CashReceiptStatus =
 export const EXPENSE_STATUS_LABELS: Record<ExpenseReportStatus, string> = {
   pending_review: '待審核',
   confirmed: '已確認',
+  /** Ask reporter to fix; still active, not voided. */
   returned: '退回修改',
-  cancelled: '已取消',
+  /** Voided / incorrect — must not count in ledger totals. */
+  cancelled: '已取消（作廢）',
 }
 
 export const RECEIPT_STATUS_LABELS: Record<CashReceiptStatus, string> = {
   pending_confirm: '待確認',
   confirmed: '已確認',
   returned: '退回修改',
-  cancelled: '已取消',
+  cancelled: '已取消（作廢）',
+}
+
+/** Active = still in workflow; cancelled is void and excluded by default. */
+export function isActiveFinanceStatus(status: string): boolean {
+  return status !== 'cancelled'
 }
 
 export function assertPositiveMoney(amount: number, label = '金額'): number {
@@ -415,7 +422,12 @@ export function filterCashLedger(
     /** YYYY-MM */
     month?: string | null
     kind?: LedgerEntryKind | 'all'
-    status?: string | 'all'
+    /**
+     * `active` (default): exclude cancelled.
+     * `all`: every status including cancelled.
+     * Or a specific status string.
+     */
+    status?: string | 'all' | 'active'
     siteId?: string | 'all' | null
   },
 ): LedgerEntry[] {
@@ -424,7 +436,9 @@ export function filterCashLedger(
     if (filter.kind && filter.kind !== 'all' && r.kind !== filter.kind) {
       return false
     }
-    if (filter.status && filter.status !== 'all' && r.status !== filter.status) {
+    if (filter.status === 'active' || filter.status == null || filter.status === '') {
+      if (!isActiveFinanceStatus(r.status)) return false
+    } else if (filter.status !== 'all' && r.status !== filter.status) {
       return false
     }
     if (
@@ -438,25 +452,38 @@ export function filterCashLedger(
   })
 }
 
+/**
+ * Money totals ignore cancelled (void) rows — they are not "registered".
+ * Confirmed-only money is used for 合計; count still reflects visible rows.
+ */
 export function summarizeLedger(rows: LedgerEntry[]): {
   expenseTotal: number
   receiptTotal: number
   net: number
   count: number
+  cancelledCount: number
 } {
   let expenseTotal = 0
   let receiptTotal = 0
+  let cancelledCount = 0
   for (const r of rows) {
-    if (r.kind === 'expense') {
-      expenseTotal = roundMoney(expenseTotal + r.amount)
-    } else {
-      receiptTotal = roundMoney(receiptTotal + r.amount)
+    if (r.status === 'cancelled') {
+      cancelledCount += 1
+      continue
+    }
+    if (r.status === 'confirmed') {
+      if (r.kind === 'expense') {
+        expenseTotal = roundMoney(expenseTotal + r.amount)
+      } else {
+        receiptTotal = roundMoney(receiptTotal + r.amount)
+      }
     }
   }
   return {
     expenseTotal,
     receiptTotal,
     net: roundMoney(receiptTotal - expenseTotal),
-    count: rows.length,
+    count: rows.filter((r) => r.status !== 'cancelled').length,
+    cancelledCount,
   }
 }

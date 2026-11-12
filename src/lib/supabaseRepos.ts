@@ -6385,6 +6385,21 @@ export const supabaseRepos = {
       before: current,
       after: row,
     })
+    if (input.decision === 'return' || input.decision === 'cancel') {
+      const reason = input.note?.trim() || ''
+      void safeNotify({
+        recipientIds: [current.reportedBy],
+        eventType:
+          input.decision === 'return' ? 'expense.returned' : 'expense.cancelled',
+        title:
+          input.decision === 'return'
+            ? `支出已退回修改：${current.item}`
+            : `支出已取消（作廢）：${current.item}`,
+        detail: `NT$${current.amount.toLocaleString()} · ${current.siteName}${reason ? ` · ${reason}` : ''}`,
+        href: '/expenses',
+        asTodo: input.decision === 'return',
+      })
+    }
     return row
   },
 
@@ -6439,7 +6454,39 @@ export const supabaseRepos = {
       before: current,
       after: row,
     })
+    void safeNotify({
+      recipientIds: [current.reportedBy],
+      eventType: 'expense.cancelled',
+      title: `支出已取消（作廢）：${current.item}`,
+      detail: `NT$${current.amount.toLocaleString()} · ${current.siteName} · ${note}`,
+      href: '/expenses',
+      asTodo: false,
+    })
     return row
+  },
+
+  /** Permanently remove a cancelled expense (boss only). */
+  async purgeExpenseReport(
+    actor: AppUser,
+    input: { id: string },
+  ): Promise<void> {
+    assertBossCancelFinance(actor.role)
+    const id = requireUuid(input.id, '支出')
+    const current = (await this.listExpenseReports(actor)).find((e) => e.id === id)
+    if (!current) throw new AppError('找不到支出回報')
+    if (current.status !== 'cancelled') {
+      throw new AppError('僅已取消（作廢）的支出可永久刪除')
+    }
+    const { error } = await sb().from('expense_reports').delete().eq('id', id)
+    if (error) throw new AppError(toUserMessage(error, '無法永久刪除支出'))
+    await this.appendAuditLog(actor, {
+      action: 'expense.cancel',
+      targetType: 'expense_report',
+      targetId: id,
+      before: current,
+      after: { purged: true },
+      message: '永久刪除已作廢支出',
+    })
   },
 
   async listEmployeeAdvances(actor: AppUser): Promise<EmployeeAdvance[]> {
@@ -6785,6 +6832,21 @@ export const supabaseRepos = {
       before: current,
       after: row,
     })
+    if (input.decision === 'return' || input.decision === 'cancel') {
+      const reason = input.note?.trim() || ''
+      void safeNotify({
+        recipientIds: [current.reportedBy],
+        eventType:
+          input.decision === 'return' ? 'receipt.returned' : 'receipt.cancelled',
+        title:
+          input.decision === 'return'
+            ? `收款已退回修改：NT$${current.amount.toLocaleString()}`
+            : `收款已取消（作廢）：NT$${current.amount.toLocaleString()}`,
+        detail: `${current.siteName}${current.sourceNote ? ` · ${current.sourceNote}` : ''}${reason ? ` · ${reason}` : ''}`,
+        href: '/expenses',
+        asTodo: input.decision === 'return',
+      })
+    }
     return row
   },
 
@@ -6856,7 +6918,42 @@ export const supabaseRepos = {
       before: current,
       after: row,
     })
+    void safeNotify({
+      recipientIds: [current.reportedBy],
+      eventType: 'receipt.cancelled',
+      title: `收款已取消（作廢）：NT$${current.amount.toLocaleString()}`,
+      detail: `${current.siteName}${current.sourceNote ? ` · ${current.sourceNote}` : ''} · ${note}`,
+      href: '/expenses',
+      asTodo: false,
+    })
     return row
+  },
+
+  /** Permanently remove a cancelled receipt (boss only). */
+  async purgeCashReceipt(
+    actor: AppUser,
+    input: { id: string },
+  ): Promise<void> {
+    assertBossCancelFinance(actor.role)
+    const id = requireUuid(input.id, '收款')
+    const current = (await this.listCashReceipts(actor)).find((e) => e.id === id)
+    if (!current) throw new AppError('找不到收款回報')
+    if (current.status !== 'cancelled') {
+      throw new AppError('僅已取消（作廢）的收款可永久刪除')
+    }
+    const { error } = await sb()
+      .from('cash_receipt_reports')
+      .delete()
+      .eq('id', id)
+    if (error) throw new AppError(toUserMessage(error, '無法永久刪除收款'))
+    await this.appendAuditLog(actor, {
+      action: 'receipt.cancel',
+      targetType: 'cash_receipt',
+      targetId: id,
+      before: current,
+      after: { purged: true },
+      message: '永久刪除已作廢收款',
+    })
   },
 
   async listSuppliers(): Promise<Supplier[]> {
