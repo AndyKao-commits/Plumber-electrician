@@ -1399,7 +1399,11 @@ export const localDb = {
   listTeamPresenceToday(): TeamPresence[] {
     const day = formatTaipei(new Date(), 'yyyy-MM-dd')
     const sites = this.getSites()
-    const users = this.getUsers()
+    const users = this.getUsers().filter(
+      (u) =>
+        u.accountStatus !== 'disabled' &&
+        !(u.name ?? '').includes('（已刪除）'),
+    )
     const out: TeamPresence[] = []
     for (const user of users) {
       const shifts = this.getAttendance()

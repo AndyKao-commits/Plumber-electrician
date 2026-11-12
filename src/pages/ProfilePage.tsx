@@ -393,7 +393,12 @@ export function ProfilePage() {
             </p>
           ) : (
             (directoryQuery.data ?? [])
-              .filter((m) => m.id !== user.id)
+              .filter(
+                (m) =>
+                  m.id !== user.id &&
+                  !(m.name ?? '').includes('（已刪除）') &&
+                  !(m.accountStatus === 'disabled' && !m.loginId && !m.phone),
+              )
               .map((m) => (
                 <div key={m.id} className="row between" style={{ gap: 8 }}>
                   <div>

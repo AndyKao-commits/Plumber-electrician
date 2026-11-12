@@ -45,7 +45,8 @@ create table if not exists public.organizations (
 );
 
 create table if not exists public.profiles (
-  id uuid primary key references auth.users (id) on delete cascade,
+  -- Same UUID as auth.users while login exists; may outlive Auth after soft-delete.
+  id uuid primary key,
   organization_id uuid not null references public.organizations (id),
   name text not null,
   role public.user_role not null default 'employee',
@@ -247,7 +248,7 @@ create policy "repair_cases_org_all"
 create table if not exists public.quotations (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations (id),
-  project_id uuid references public.sites (id) on delete restrict,
+  project_id uuid references public.sites (id) on delete set null,
   repair_case_id uuid references public.repair_cases (id) on delete restrict,
   title text not null,
   status public.quote_status not null default 'draft',
