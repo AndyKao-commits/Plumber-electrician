@@ -5386,11 +5386,18 @@ export const supabaseRepos = {
     const userIds = [...latestByUser.keys()]
     const { data: profiles, error: profileError } = await sb()
       .from('profiles')
-      .select('id, name')
+      .select('id, name, account_status, login_id, phone')
       .in('id', userIds)
     if (profileError) throw new AppError(toUserMessage(profileError, '無法載入團隊'))
+    // Hide soft-deleted / disabled shells so they don't look like duplicate teammates.
+    const activeProfiles = (profiles ?? []).filter((p) => {
+      const status = String(p.account_status ?? 'active')
+      if (status === 'disabled') return false
+      return true
+    })
+    const activeIds = new Set(activeProfiles.map((p) => String(p.id)))
     const nameById = new Map(
-      (profiles ?? []).map((p) => [String(p.id), String(p.name)]),
+      activeProfiles.map((p) => [String(p.id), String(p.name)]),
     )
 
     const { data: checkins, error: locError } = await sb()
@@ -5440,6 +5447,7 @@ export const supabaseRepos = {
     }
 
     return userIds
+      .filter((uid) => activeIds.has(uid))
       .map((uid) => {
         const shift = latestByUser.get(uid)!
         const clockedIn = String(shift.status) === 'clocked_in'
@@ -5477,6 +5485,36 @@ export const supabaseRepos = {
         } satisfies TeamPresence
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'))
+  },
+
+  /** Active org members for pickers (todos, assignees). Excludes disabled / soft-deleted. */
+  async listActiveOrgMembers(actor: AppUser): Promise<AppUser[]> {
+    const { data, error } = await sb()
+      .from('profiles')
+      .select(PROFILE_SELECT_CORE)
+      .eq('organization_id', actor.organizationId)
+      .neq('account_status', 'disabled')
+      .order('name')
+    if (error) {
+      // Fallback without account_status filter if column missing.
+      if (/account_status|column/i.test(error.message)) {
+        const fallback = await sb()
+          .from('profiles')
+          .select(
+            'id, organization_id, name, role, email, login_id, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, profile_notes, created_at',
+          )
+          .eq('organization_id', actor.organizationId)
+          .order('name')
+        if (fallback.error) {
+          throw new AppError(toUserMessage(fallback.error, '無法載入成員'))
+        }
+        return (fallback.data ?? []).map((row) => mapUser(row))
+      }
+      throw new AppError(toUserMessage(error, '無法載入成員'))
+    }
+    return (data ?? [])
+      .map((row) => mapUser(row))
+      .filter((m) => m.accountStatus !== 'disabled')
   },
 
   async listLocationCheckins(input: {
