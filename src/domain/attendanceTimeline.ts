@@ -47,11 +47,12 @@ export function buildAttendanceTimeline(input: {
   })
 
   for (const c of input.checkins) {
+    const isAttendanceSite = c.source === 'attendance_site'
     events.push({
       id: c.id,
       kind: 'location',
       at: c.recordedAt,
-      title: '紀錄地點',
+      title: isAttendanceSite ? '到訪工地' : '紀錄地點',
       placeLabel: siteFromCheckin(c),
       address: c.address ?? null,
       note: c.note ?? null,

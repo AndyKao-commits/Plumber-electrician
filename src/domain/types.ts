@@ -1044,6 +1044,7 @@ export type LocationCheckinSource =
   | 'line_location'
   | 'line_site'
   | 'web_gps'
+  | 'attendance_site'
 
 export interface LocationCheckin {
   id: string

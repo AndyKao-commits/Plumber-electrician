@@ -3,6 +3,8 @@ import {
   EXPIRE_AFTER_MS,
   PAUSE_AFTER_MS,
   classifyActivityAge,
+  flowTypeFromPostbackAction,
+  isImmediateCompleteFlow,
   parseMenuIntent,
   parsePostbackData,
   photoTypeFromLabelOrCode,
@@ -55,6 +57,17 @@ describe('LINE menu / postback parse', () => {
       a: 'switch',
       to: 'todos',
     })
+  })
+
+  it('maps postback actions to flow types', () => {
+    expect(flowTypeFromPostbackAction('att_in')).toBe('attendance')
+    expect(flowTypeFromPostbackAction('photo_done')).toBe('photo_upload')
+    expect(flowTypeFromPostbackAction('cash_confirm')).toBe('purchase')
+    expect(flowTypeFromPostbackAction('loc_site')).toBe('location')
+    expect(flowTypeFromPostbackAction('todo_done')).toBe('todos')
+    expect(flowTypeFromPostbackAction('resume')).toBeNull()
+    expect(isImmediateCompleteFlow('todos')).toBe(true)
+    expect(isImmediateCompleteFlow('photo_upload')).toBe(false)
   })
 
   it('maps photo type labels', () => {

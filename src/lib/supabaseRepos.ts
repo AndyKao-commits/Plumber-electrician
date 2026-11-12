@@ -2130,7 +2130,28 @@ export const supabaseRepos = {
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法更新目前工地'))
-    return mapAttendance(data)
+    const record = mapAttendance(data)
+
+    // Each site pick appends a visit row (do not only overwrite attendance.site_id).
+    const { data: siteRow } = await sb()
+      .from('sites')
+      .select('name')
+      .eq('id', sid)
+      .maybeSingle()
+    const siteName = siteRow?.name ? String(siteRow.name) : null
+    const { error: visitError } = await sb().from('location_checkins').insert({
+      organization_id: record.organizationId,
+      user_id: uid,
+      recorded_at: new Date().toISOString(),
+      source: 'attendance_site',
+      site_id: sid,
+      label: siteName,
+      attendance_id: open.id,
+    })
+    if (visitError) {
+      console.warn('[assignSite] visit insert failed', visitError.message)
+    }
+    return record
   },
 
   async listAttendanceCorrections(actor: AppUser): Promise<AttendanceCorrection[]> {

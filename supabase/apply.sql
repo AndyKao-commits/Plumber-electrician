@@ -3676,7 +3676,7 @@ create table if not exists public.location_checkins (
   user_id uuid not null references public.profiles (id) on delete cascade,
   recorded_at timestamptz not null default now(),
   source text not null default 'manual'
-    check (source in ('manual', 'line_location', 'line_site', 'web_gps')),
+    check (source in ('manual', 'line_location', 'line_site', 'web_gps', 'attendance_site')),
   site_id uuid references public.sites (id) on delete set null,
   label text,
   address text,
@@ -3771,7 +3771,7 @@ alter table public.location_checkins
 
 alter table public.location_checkins
   add constraint location_checkins_source_check
-  check (source in ('manual', 'line_location', 'line_site', 'web_gps'));
+  check (source in ('manual', 'line_location', 'line_site', 'web_gps', 'attendance_site'));
 
 -- Keep create-table source list in sync for fresh installs
 alter table public.location_checkins

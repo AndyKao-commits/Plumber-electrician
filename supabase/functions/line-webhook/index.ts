@@ -56,6 +56,44 @@ function isFlowIntent(v: string | null | undefined): v is FlowType {
   )
 }
 
+function flowTypeFromPostbackAction(action: string): FlowType | null {
+  if (
+    action === 'att_in' ||
+    action === 'att_out' ||
+    action === 'att_site' ||
+    action === 'att_site_pick'
+  ) {
+    return 'attendance'
+  }
+  if (
+    action === 'photo_site' ||
+    action === 'photo_type' ||
+    action === 'photo_done' ||
+    action === 'photo_cancel'
+  ) {
+    return 'photo_upload'
+  }
+  if (
+    action === 'cash_kind' ||
+    action === 'cash_site' ||
+    action === 'cash_misc' ||
+    action === 'cash_loc_skip' ||
+    action === 'cash_receipt_skip' ||
+    action === 'cash_confirm'
+  ) {
+    return 'purchase'
+  }
+  if (
+    action === 'loc_share' ||
+    action === 'loc_site' ||
+    action === 'loc_site_pick'
+  ) {
+    return 'location'
+  }
+  if (action === 'todo_done' || action === 'todo_view') return 'todos'
+  return null
+}
+
 type DraftRow = {
   id: string
   organization_id: string
@@ -256,15 +294,7 @@ async function handleTextCommand(
   // Paused: same feature → resume prompt path; other feature → switch guard
   if (gate.age === 'paused' && gate.draft) {
     if (intent === 'cancel') {
-      await finalizeDraft(admin, gate.draft.id, 'cancelled')
-      return [
-        flexMenu({
-          altText: '已取消目前操作',
-          eyebrow: '操作取消',
-          title: '已取消',
-          body: '請再點圖文選單開始新功能',
-        }),
-      ]
+      return cancelDraftWithCleanup(admin, gate.draft)
     }
     if (intent === 'resume' || intent === gate.draft.flow_type) {
       return resumeDraft(admin, profile, gate.draft)
@@ -286,15 +316,7 @@ async function handleTextCommand(
         }),
       ]
     }
-    await finalizeDraft(admin, gate.draft.id, 'cancelled')
-    return [
-      flexMenu({
-        altText: '已取消目前操作',
-        eyebrow: '操作取消',
-        title: '已取消',
-        body: '可再從圖文選單開始新功能',
-      }),
-    ]
+    return cancelDraftWithCleanup(admin, gate.draft)
   }
 
   if (intent === 'resume') {
@@ -342,24 +364,29 @@ async function handlePostback(
   if ('error' in profile) return [textMsg(profile.error)]
 
   const gate = await prepareActiveDraft(admin, profile)
-  if (gate.messages && action !== 'resume' && action !== 'cancel' && action !== 'switch') {
-    // expired/paused prompts already returned when needed
-    if (gate.age === 'expired' || gate.age === 'paused') return gate.messages
-  }
-  if (gate.messages && (gate.age === 'expired' || gate.age === 'paused') && action !== 'resume' && action !== 'cancel' && action !== 'switch') {
+  if (
+    gate.messages &&
+    (gate.age === 'expired' || gate.age === 'paused') &&
+    action !== 'resume' &&
+    action !== 'cancel' &&
+    action !== 'switch' &&
+    action !== 'photo_cancel'
+  ) {
     return gate.messages
   }
 
   if (action === 'cancel') {
-    if (gate.draft) await finalizeDraft(admin, gate.draft.id, 'cancelled')
-    return [
-      flexMenu({
-        altText: '已取消目前操作',
-        eyebrow: '操作取消',
-        title: '已取消',
-        body: '可再從圖文選單開始新功能',
-      }),
-    ]
+    if (!gate.draft) {
+      return [
+        flexMenu({
+          altText: '沒有進行中的操作',
+          eyebrow: '操作取消',
+          title: '沒有進行中的操作',
+          body: '可從圖文選單開始功能',
+        }),
+      ]
+    }
+    return cancelDraftWithCleanup(admin, gate.draft)
   }
 
   if (action === 'resume') {
@@ -380,8 +407,45 @@ async function handlePostback(
     if (!isFlowIntent(to)) {
       return [textMsg('無法辨識要切換的功能。')]
     }
-    if (gate.draft) await finalizeDraft(admin, gate.draft.id, 'cancelled')
+    if (gate.draft) {
+      const cleanup = await cleanupDraftMedia(admin, gate.draft)
+      if (!cleanup.ok) {
+        return [
+          flexMenu({
+            altText: '切換前請先清除',
+            eyebrow: '切換功能',
+            title: '尚有資料未清除',
+            body: cleanup.message || '請先成功取消目前操作再切換',
+            buttons: [
+              { label: '再試取消', data: 'a=cancel', style: 'primary' },
+              { label: '繼續目前操作', data: 'a=resume', style: 'secondary' },
+            ],
+          }),
+        ]
+      }
+      await finalizeDraft(admin, gate.draft.id, 'cancelled')
+    }
     return startFlow(admin, profile, to)
+  }
+
+  // Consistent unfinished-flow guard for feature postbacks
+  const targetFlow = flowTypeFromPostbackAction(action)
+  if (
+    targetFlow &&
+    gate.draft &&
+    gate.draft.flow_type !== targetFlow &&
+    action !== 'todo_done' &&
+    action !== 'todo_view'
+  ) {
+    return switchGuardMessages(gate.draft, targetFlow)
+  }
+  // Todos are one-shot; if another draft is open, ask before interrupting
+  if (
+    (action === 'todo_done' || action === 'todo_view') &&
+    gate.draft &&
+    gate.draft.flow_type !== 'todos'
+  ) {
+    return switchGuardMessages(gate.draft, 'todos')
   }
 
   if (action === 'att_in') {
@@ -393,38 +457,26 @@ async function handlePostback(
   }
 
   if (action === 'att_out') {
-    if (!gate.draft || gate.draft.flow_type !== 'attendance') {
-      return [textMsg('請先點「出勤打卡」。')]
-    }
-    return clockOutLine(admin, profile, gate.draft)
+    const draft =
+      gate.draft?.flow_type === 'attendance'
+        ? gate.draft
+        : await createDraft(admin, profile, 'attendance', 'menu', {})
+    return clockOutLine(admin, profile, draft)
   }
 
   if (action === 'att_site') {
-    if (!gate.draft || gate.draft.flow_type !== 'attendance') {
-      return [textMsg('請先點「出勤打卡」。')]
-    }
-    return promptAttendanceSite(admin, profile, gate.draft)
+    const draft =
+      gate.draft?.flow_type === 'attendance'
+        ? gate.draft
+        : await createDraft(admin, profile, 'attendance', 'select_site', {})
+    return promptAttendanceSite(admin, profile, draft)
   }
 
   if (action === 'att_site_pick') {
-    if (!gate.draft || gate.draft.flow_type !== 'attendance') {
-      return [textMsg('請先點「出勤打卡」。')]
-    }
-    return assignAttendanceSite(admin, profile, gate.draft, params.id || '')
-  }
-
-  if (action === 'att_done') {
-    if (gate.draft?.flow_type === 'attendance') {
-      await finalizeDraft(admin, gate.draft.id, 'completed')
-    }
-    return [
-      flexMenu({
-        altText: '已結束出勤選單',
-        eyebrow: '出勤打卡',
-        title: '已結束',
-        body: '出勤選單已關閉，可再從圖文選單開始',
-      }),
-    ]
+    // Site pick works even without an open attendance draft (after clock-in carousel).
+    const draft =
+      gate.draft?.flow_type === 'attendance' ? gate.draft : null
+    return assignAttendanceSite(admin, profile, draft, params.id || '')
   }
 
   if (action === 'loc_share') {
@@ -451,15 +503,10 @@ async function handlePostback(
   }
 
   if (action === 'photo_cancel') {
-    if (gate.draft) await finalizeDraft(admin, gate.draft.id, 'cancelled')
-    return [
-      flexMenu({
-        altText: '已取消上傳',
-        eyebrow: '上傳照片',
-        title: '已取消上傳',
-        body: '可再從圖文選單重新開始',
-      }),
-    ]
+    if (!gate.draft || gate.draft.flow_type !== 'photo_upload') {
+      return [textMsg('目前沒有進行中的上傳照片流程。')]
+    }
+    return cancelDraftWithCleanup(admin, gate.draft)
   }
 
   if (action === 'cash_kind') {
@@ -593,7 +640,14 @@ async function handleImageEvent(
   })
 
   if (!result.ok) {
-    return [textMsg(result.error)]
+    const failed = Number(payload.receiveFailed ?? 0) + 1
+    await touchDraft(admin, gate.draft.id, {
+      current_step: 'receiving',
+      draft_payload: { ...payload, receiveFailed: failed },
+    })
+    return [
+      textMsg(`${result.error}\n（目前收圖失敗累計 ${failed} 張；可再傳圖或按取消上傳）`),
+    ]
   }
 
   const count = Number(payload.photoCount ?? 0) + 1
@@ -604,13 +658,12 @@ async function handleImageEvent(
 
   return [
     flexMenu({
-      altText: `已加入第 ${count} 張照片`,
+      altText: `已收到 ${count} 張照片`,
       eyebrow: '上傳照片',
-      title: `已加入第 ${count} 張`,
-      body: '可繼續傳圖，或點下方按鈕完成／取消',
+      title: `已收到 ${count} 張`,
+      body: '可直接繼續傳圖；傳完請按「完成上傳」。若要放棄此批請按「取消上傳」。',
       buttons: [
-        { label: '繼續上傳', data: 'a=resume', style: 'primary' },
-        { label: '完成上傳', data: 'a=photo_done', style: 'secondary' },
+        { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
         { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
       ],
     }),
@@ -708,15 +761,7 @@ async function handlePhotoText(
 ): Promise<LineMessage[]> {
   if (/完成上傳|完成/.test(text)) return completePhotoBatch(admin, draft)
   if (/取消上傳|取消/.test(text)) {
-    await finalizeDraft(admin, draft.id, 'cancelled')
-    return [
-      flexMenu({
-        altText: '已取消上傳',
-        eyebrow: '上傳照片',
-        title: '已取消上傳',
-        body: '可再從圖文選單重新開始',
-      }),
-    ]
+    return cancelDraftWithCleanup(admin, draft)
   }
   if (/繼續上傳|繼續/.test(text)) return resumeDraft(admin, profile, draft)
 
@@ -855,8 +900,8 @@ async function selectPhotoType(
 async function completePhotoBatch(admin: Sb, draft: DraftRow): Promise<LineMessage[]> {
   const payload = draft.draft_payload || {}
   const batchId = String(payload.batchId ?? '')
-  const count = Number(payload.photoCount ?? 0)
-  if (!batchId || count <= 0) {
+  const expected = Number(payload.photoCount ?? 0)
+  if (!batchId || expected <= 0) {
     return [
       flexMenu({
         altText: '尚未收到照片',
@@ -870,20 +915,67 @@ async function completePhotoBatch(admin: Sb, draft: DraftRow): Promise<LineMessa
     ]
   }
 
-  // Mark batch photos linked (site already set on insert)
-  const { error } = await admin
+  const { data: beforeRows, error: beforeError } = await admin
     .from('photo_uploads')
-    .update({ status: 'linked' })
+    .select('id, status')
     .eq('batch_id', batchId)
-    .eq('status', 'pending')
-  if (error) {
-    console.warn('[line-webhook] complete batch failed', error.message)
+  if (beforeError) {
+    console.warn('[line-webhook] list batch failed', beforeError.message)
     return [
       flexMenu({
         altText: '完成上傳失敗',
         eyebrow: '上傳照片',
-        title: '寫入失敗',
+        title: '讀取失敗',
         body: '草稿仍保留，請稍後再試完成上傳',
+        buttons: [
+          { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
+          { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
+        ],
+      }),
+    ]
+  }
+
+  const pendingCount = (beforeRows ?? []).filter((r) => r.status === 'pending').length
+  if (pendingCount > 0) {
+    const { error } = await admin
+      .from('photo_uploads')
+      .update({ status: 'linked' })
+      .eq('batch_id', batchId)
+      .eq('status', 'pending')
+    if (error) {
+      console.warn('[line-webhook] complete batch failed', error.message)
+      return [
+        flexMenu({
+          altText: '完成上傳失敗',
+          eyebrow: '上傳照片',
+          title: '寫入失敗',
+          body: '草稿仍保留，請稍後再試完成上傳',
+          buttons: [
+            { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
+            { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
+          ],
+        }),
+      ]
+    }
+  }
+
+  const { data: afterRows } = await admin
+    .from('photo_uploads')
+    .select('id, status')
+    .eq('batch_id', batchId)
+  const success = (afterRows ?? []).filter((r) => r.status === 'linked').length
+  const stillPending = (afterRows ?? []).filter((r) => r.status === 'pending').length
+  const receiveFailed = Number(payload.receiveFailed ?? 0)
+  // expected = successfully received into DB; receiveFailed = download/upload failures
+  const failed = Math.max(0, expected - success) + Math.max(0, receiveFailed)
+
+  if (stillPending > 0) {
+    return [
+      flexMenu({
+        altText: '部分照片尚未完成',
+        eyebrow: '上傳照片',
+        title: '部分尚未連結',
+        body: `成功：${success} 張\n失敗：${failed} 張\n請再按一次完成上傳，或取消並重傳`,
         buttons: [
           { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
           { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
@@ -899,7 +991,7 @@ async function completePhotoBatch(admin: Sb, draft: DraftRow): Promise<LineMessa
       altText: '上傳完成',
       eyebrow: '上傳照片',
       title: '上傳完成',
-      body: `成功：${count} 張\n失敗：0 張\n工地：${payload.siteName}\n類型：${
+      body: `成功：${success} 張\n失敗：${failed} 張\n工地：${payload.siteName}\n類型：${
         PHOTO_TYPE_LABELS[String(payload.photoType)] || payload.photoType
       }`,
       buttons: [{ label: '查看照片', uri: photosUri, style: 'primary' }],
@@ -1229,11 +1321,17 @@ async function prepareActiveDraft(
   if (age === 'fresh') return { draft, age }
 
   if (age === 'expired') {
+    const cleanup = await cleanupDraftMedia(admin, draft)
     await finalizeDraft(admin, draft.id, 'expired')
+    const extra = cleanup.ok
+      ? ''
+      : `\n（提醒：部分暫存媒體未能自動清除：${cleanup.message || '請到網站照片頁檢查'}）`
     return {
       draft: null,
       age: 'expired',
-      messages: [textMsg('原本未完成的操作已超過保留時間，草稿已清除。')],
+      messages: [
+        textMsg(`原本未完成的操作已超過保留時間，草稿已清除。${extra}`),
+      ],
     }
   }
 
@@ -1471,6 +1569,140 @@ async function listSites(
     return []
   }
   return (data ?? []).map((s) => ({ id: String(s.id), name: String(s.name) }))
+}
+
+/**
+ * Hard-delete a photo batch (DB rows + storage). Used by cancel / expire / switch.
+ */
+async function deletePhotoBatch(
+  admin: Sb,
+  batchId: string,
+): Promise<{ deleted: number; failed: number; error?: string }> {
+  if (!batchId) return { deleted: 0, failed: 0 }
+  const { data: rows, error: loadError } = await admin
+    .from('photo_uploads')
+    .select('id, storage_path')
+    .eq('batch_id', batchId)
+  if (loadError) {
+    console.warn('[line-webhook] load batch failed', loadError.message)
+    return { deleted: 0, failed: 0, error: '無法讀取待刪照片' }
+  }
+  const list = rows ?? []
+  if (list.length === 0) return { deleted: 0, failed: 0 }
+
+  const paths = list
+    .map((r) => String(r.storage_path || ''))
+    .filter(Boolean)
+  if (paths.length > 0) {
+    const { error: storageError } = await admin.storage
+      .from('site-photos')
+      .remove(paths)
+    if (storageError) {
+      console.warn('[line-webhook] storage remove failed', storageError.message)
+      return {
+        deleted: 0,
+        failed: list.length,
+        error: '雲端檔案刪除失敗，請再按一次「取消上傳」重試',
+      }
+    }
+  }
+
+  const ids = list.map((r) => String(r.id))
+  const { error: delError } = await admin
+    .from('photo_uploads')
+    .delete()
+    .in('id', ids)
+  if (delError) {
+    console.warn('[line-webhook] photo row delete failed', delError.message)
+    return {
+      deleted: 0,
+      failed: list.length,
+      error: '照片資料刪除失敗，請再按一次「取消上傳」重試',
+    }
+  }
+  return { deleted: ids.length, failed: 0 }
+}
+
+async function cleanupDraftMedia(
+  admin: Sb,
+  draft: DraftRow,
+): Promise<{ ok: boolean; message?: string }> {
+  const payload = draft.draft_payload || {}
+  if (draft.flow_type === 'photo_upload') {
+    const batchId = String(payload.batchId ?? '')
+    if (!batchId) return { ok: true }
+    const result = await deletePhotoBatch(admin, batchId)
+    if (result.failed > 0 || result.error) {
+      return {
+        ok: false,
+        message:
+          result.error ||
+          `尚有 ${result.failed} 張照片未能刪除，請再按「取消上傳」重試`,
+      }
+    }
+    return { ok: true }
+  }
+  if (draft.flow_type === 'purchase') {
+    const paths = Array.isArray(payload.receiptPaths)
+      ? (payload.receiptPaths as string[]).filter(Boolean)
+      : []
+    if (paths.length === 0) return { ok: true }
+    const { error: storageError } = await admin.storage
+      .from('site-photos')
+      .remove(paths)
+    if (storageError) {
+      console.warn('[line-webhook] receipt cleanup failed', storageError.message)
+      return { ok: false, message: '收據照片刪除失敗，請再取消一次重試' }
+    }
+    await admin.from('photo_uploads').delete().in('storage_path', paths)
+    return { ok: true }
+  }
+  return { ok: true }
+}
+
+async function cancelDraftWithCleanup(
+  admin: Sb,
+  draft: DraftRow,
+): Promise<LineMessage[]> {
+  const cleanup = await cleanupDraftMedia(admin, draft)
+  if (!cleanup.ok) {
+    return [
+      flexMenu({
+        altText: '取消未完成',
+        eyebrow: FLOW_LABELS[draft.flow_type],
+        title: '刪除未完成',
+        body: cleanup.message || '部分資料未能清除，請再試一次取消',
+        buttons: [
+          {
+            label: draft.flow_type === 'photo_upload' ? '再試取消上傳' : '再試取消',
+            data:
+              draft.flow_type === 'photo_upload' ? 'a=photo_cancel' : 'a=cancel',
+            style: 'primary',
+          },
+          { label: '繼續操作', data: 'a=resume', style: 'secondary' },
+        ],
+      }),
+    ]
+  }
+  await finalizeDraft(admin, draft.id, 'cancelled')
+  if (draft.flow_type === 'photo_upload') {
+    return [
+      flexMenu({
+        altText: '已取消並刪除照片',
+        eyebrow: '上傳照片',
+        title: '已取消並刪除照片',
+        body: '此批次照片資料與雲端檔案已清除，可再從圖文選單重新開始',
+      }),
+    ]
+  }
+  return [
+    flexMenu({
+      altText: '已取消目前操作',
+      eyebrow: '操作取消',
+      title: '已取消',
+      body: '可再從圖文選單開始新功能',
+    }),
+  ]
 }
 
 async function storeLineImage(
@@ -1747,6 +1979,19 @@ function formatTaipei(iso: string): string {
   }
 }
 
+function formatTaipeiTime(iso: string): string {
+  try {
+    return new Intl.DateTimeFormat('zh-TW', {
+      timeZone: 'Asia/Taipei',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(new Date(iso))
+  } catch {
+    return iso
+  }
+}
+
 function extractBindCode(text: string): string | null {
   const normalized = text
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
@@ -1872,6 +2117,12 @@ async function handleLocationMessage(
   if (!admin) return [textMsg('伺服器尚未設定資料庫。')]
 
   const gate = await prepareActiveDraft(admin, profile)
+  if (gate.messages && (gate.age === 'paused' || gate.age === 'expired')) {
+    return gate.messages
+  }
+  if (gate.draft && gate.draft.flow_type !== 'location') {
+    return switchGuardMessages(gate.draft, 'location')
+  }
   let draft = gate.draft
   if (!draft || draft.flow_type !== 'location') {
     draft = await createDraft(admin, profile, 'location', 'await_location', {})
@@ -2033,13 +2284,13 @@ async function promptAttendanceMenu(
     const siteLabel = open.site_id
       ? (await listSites(admin, profile.organization_id)).find((s) => s.id === open.site_id)
           ?.name || '未知工地'
-      : '尚未補登工地'
+      : '尚未登記工地'
     return [
       flexMenu({
         altText: '出勤打卡：上班中',
         eyebrow: '出勤打卡',
         title: '目前上班中',
-        body: `上班時間：${formatTaipei(open.clock_in_at)}\n工地：${siteLabel}`,
+        body: `上班時間：${formatTaipei(open.clock_in_at)}\n目前工地：${siteLabel}\n切換工地會新增一筆到訪紀錄`,
         buttons: [
           { label: '下班打卡', data: 'a=att_out', style: 'primary' },
           { label: '切換工地', data: 'a=att_site', style: 'secondary' },
@@ -2116,21 +2367,28 @@ async function clockInLine(
     return [textMsg('上班打卡失敗，請稍後再試。草稿仍保留。')]
   }
 
-  await touchDraft(admin, draft.id, {
-    current_step: 'after_clock_in',
-    draft_payload: { openShift: true, attendanceId: data.id },
-  })
+  // Clock-in itself finishes the draft — site pick is optional and must not block other LINE features.
+  await finalizeDraft(admin, draft.id, 'completed')
+
+  const timeLabel = formatTaipeiTime(String(data.clock_in_at))
+  const sites = await listSites(admin, profile.organization_id)
+  if (sites.length === 0) {
+    return [
+      textMsg(
+        `上班打卡完成｜${timeLabel}\n目前沒有可選工地，可稍後到網站建立後再切換。`,
+      ),
+    ]
+  }
 
   return [
-    flexMenu({
-      altText: '上班打卡完成',
+    textMsg(
+      `上班打卡完成｜${timeLabel}\n如要登記目前工地，請直接選擇：`,
+    ),
+    ...siteCarousel({
+      altText: '選擇目前工地',
       eyebrow: '出勤打卡',
-      title: '上班打卡完成',
-      body: `時間：${formatTaipei(String(data.clock_in_at))}\n目前尚未指定工地，可稍後紀錄。`,
-      buttons: [
-        { label: '補登工地', data: 'a=att_site', style: 'primary' },
-        { label: '結束', data: 'a=att_done', style: 'secondary' },
-      ],
+      sites,
+      actionPrefix: 'a=att_site_pick&id=',
     }),
   ]
 }
@@ -2204,7 +2462,7 @@ async function promptAttendanceSite(
 async function assignAttendanceSite(
   admin: Sb,
   profile: Profile,
-  draft: DraftRow,
+  draft: DraftRow | null,
   siteId: string,
 ): Promise<LineMessage[]> {
   const open = await getOpenAttendance(admin, profile.id)
@@ -2215,10 +2473,18 @@ async function assignAttendanceSite(
   if (!site) {
     return [
       textMsg('找不到工地。'),
-      ...(await promptAttendanceSite(admin, profile, draft)),
+      ...(draft
+        ? await promptAttendanceSite(admin, profile, draft)
+        : siteCarousel({
+            altText: '請選擇工地',
+            eyebrow: '出勤打卡',
+            sites,
+            actionPrefix: 'a=att_site_pick&id=',
+          })),
     ]
   }
 
+  const now = new Date().toISOString()
   const { error } = await admin
     .from('attendance')
     .update({ site_id: site.id, job_type: 'project' })
@@ -2229,13 +2495,32 @@ async function assignAttendanceSite(
     return [textMsg('更新工地失敗，請稍後再試。')]
   }
 
-  await finalizeDraft(admin, draft.id, 'completed')
+  // Append a visit record every time (never only overwrite attendance.site_id).
+  const { error: visitError } = await admin.from('location_checkins').insert({
+    organization_id: profile.organization_id,
+    user_id: profile.id,
+    recorded_at: now,
+    source: 'attendance_site',
+    site_id: site.id,
+    label: site.name,
+    attendance_id: open.id,
+  })
+  if (visitError) {
+    console.warn('[line-webhook] attendance visit insert failed', visitError.message)
+    return [
+      textMsg(
+        `工地欄位已更新為「${site.name}」，但到訪紀錄寫入失敗，請再選一次或到網站補登。`,
+      ),
+    ]
+  }
+
+  if (draft) await finalizeDraft(admin, draft.id, 'completed')
   return [
     flexMenu({
-      altText: `已切換工地：${site.name}`,
+      altText: `已登記工地：${site.name}`,
       eyebrow: '出勤打卡',
-      title: '已切換工地',
-      body: site.name,
+      title: '已登記工地到訪',
+      body: `工地：${site.name}\n時間：${formatTaipei(now)}\n（每次切換都會新增一筆到訪紀錄）`,
     }),
   ]
 }

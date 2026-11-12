@@ -117,6 +117,52 @@ export function parsePostbackData(data: string): Record<string, string> {
   return out
 }
 
+/** Map LINE postback action codes to a flow type for unfinished-draft guards. */
+export function flowTypeFromPostbackAction(
+  action: string,
+): LineFlowType | null {
+  if (
+    action === 'att_in' ||
+    action === 'att_out' ||
+    action === 'att_site' ||
+    action === 'att_site_pick'
+  ) {
+    return 'attendance'
+  }
+  if (
+    action === 'photo_site' ||
+    action === 'photo_type' ||
+    action === 'photo_done' ||
+    action === 'photo_cancel'
+  ) {
+    return 'photo_upload'
+  }
+  if (
+    action === 'cash_kind' ||
+    action === 'cash_site' ||
+    action === 'cash_misc' ||
+    action === 'cash_loc_skip' ||
+    action === 'cash_receipt_skip' ||
+    action === 'cash_confirm'
+  ) {
+    return 'purchase'
+  }
+  if (
+    action === 'loc_share' ||
+    action === 'loc_site' ||
+    action === 'loc_site_pick'
+  ) {
+    return 'location'
+  }
+  if (action === 'todo_done' || action === 'todo_view') return 'todos'
+  return null
+}
+
+/** Flows that finish in one shot and must not leave an open draft. */
+export function isImmediateCompleteFlow(flowType: LineFlowType): boolean {
+  return flowType === 'todos'
+}
+
 export function summarizePhotoDraft(payload: {
   siteName?: string | null
   photoType?: string | null

@@ -24,20 +24,32 @@ describe('attendance timeline', () => {
       organizationId: 'o1',
       userId: 'u1',
       recordedAt: '2026-11-11T02:15:00.000Z',
-      source: 'line_site',
+      source: 'attendance_site',
       siteName: '松江路案場',
       label: '松江路案場',
     },
+    {
+      id: 'l2',
+      organizationId: 'o1',
+      userId: 'u1',
+      recordedAt: '2026-11-11T05:00:00.000Z',
+      source: 'attendance_site',
+      siteName: '福德一路',
+      label: '福德一路',
+    },
   ]
 
-  it('orders clock in / location / clock out', () => {
+  it('orders clock in / site visits / clock out', () => {
     const events = buildAttendanceTimeline({ attendance, checkins })
     expect(events.map((e) => e.kind)).toEqual([
       'clock_in',
       'location',
+      'location',
       'clock_out',
     ])
+    expect(events[1].title).toBe('到訪工地')
     expect(events[1].placeLabel).toContain('松江')
+    expect(events[2].placeLabel).toContain('福德')
   })
 
   it('summarizes work duration', () => {
