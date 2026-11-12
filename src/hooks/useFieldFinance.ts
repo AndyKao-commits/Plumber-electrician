@@ -273,6 +273,7 @@ export function useFieldFinance(userId: string | undefined) {
     isCreatingReceipt: createReceipt.isPending,
     createReceiptError: createReceipt.error,
     confirmReceipt: confirmReceipt.mutateAsync,
+    confirmReceiptError: confirmReceipt.error,
     linkReceiptQuote: linkReceiptQuote.mutateAsync,
     cancelReceipt: cancelReceipt.mutateAsync,
     createAdvance: createAdvance.mutateAsync,

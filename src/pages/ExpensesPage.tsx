@@ -51,6 +51,7 @@ export function ExpensesPage() {
     isCreatingReceipt,
     createReceiptError,
     confirmReceipt,
+    confirmReceiptError,
     linkReceiptQuote,
     cancelReceipt,
     createAdvance,
@@ -216,6 +217,10 @@ export function ExpensesPage() {
   async function onConfirmReceipt(id: string) {
     const row = receipts.find((r) => r.id === id)
     if (!row) return
+    if (row.reportedBy === user?.id) {
+      window.alert('不可確認自己回報的收款，請用另一位老闆帳號，或請員工回報後再確認。')
+      return
+    }
     if (row.siteId) {
       const contract = sumAcceptedContractForSite(quotes ?? [], row.siteId)
       const already = receipts
@@ -228,7 +233,11 @@ export function ExpensesPage() {
       })
       if (warn && !window.confirm(`${warn}\n\n仍要確認嗎？`)) return
     }
-    await confirmReceipt({ id, decision: 'confirm' })
+    try {
+      await confirmReceipt({ id, decision: 'confirm' })
+    } catch (e) {
+      window.alert((e as Error).message || '確認失敗')
+    }
   }
 
   async function exportExcel() {
@@ -391,6 +400,11 @@ export function ExpensesPage() {
 
       <section className="panel stack">
         <strong>明細</strong>
+        {confirmReceiptError ? (
+          <p style={{ color: 'var(--danger)', margin: 0 }}>
+            {(confirmReceiptError as Error).message}
+          </p>
+        ) : null}
         {ledgerFiltered.length === 0 ? (
           <div className="empty">此篩選無明細</div>
         ) : (
