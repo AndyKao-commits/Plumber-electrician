@@ -40,10 +40,13 @@ beforeEach(() => {
 })
 
 describe('離線操作分類', () => {
-  it('允許施工回報／待辦／出勤暫存', () => {
+  it('允許施工回報／待辦／出勤／定位／記帳暫存', () => {
     expect(isOfflineAllowed('construction_report')).toBe(true)
     expect(isOfflineAllowed('manual_todo')).toBe(true)
     expect(isOfflineAllowed('attendance_clock_in')).toBe(true)
+    expect(isOfflineAllowed('location_checkin')).toBe(true)
+    expect(isOfflineAllowed('expense_report')).toBe(true)
+    expect(isOfflineAllowed('cash_receipt')).toBe(true)
   })
 
   it('採購核准／庫存／報價發布必須連線', () => {

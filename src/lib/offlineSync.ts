@@ -8,6 +8,7 @@ import {
   type OfflineQueueItem,
 } from '@/lib/offlineQueue'
 import { isFormalMode } from '@/lib/dataMode'
+import { removeFormalAttendanceDraftByClientOp } from '@/lib/formalOfflineDrafts'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { localDb } from '@/lib/localDb'
 
@@ -136,6 +137,59 @@ async function executeItem(item: OfflineQueueItem): Promise<string | null> {
       }
       break
     }
+    case 'location_checkin': {
+      if (!formal) throw new AppError('本機示範模式不需離線定位同步')
+      const me = await supabaseRepos.getCurrentUser()
+      if (!me) throw new AppError('同步定位前請先登入')
+      const row = await supabaseRepos.createLocationCheckin(me, {
+        label: typeof payload.label === 'string' ? payload.label : '目前位置',
+        address: typeof payload.address === 'string' ? payload.address : null,
+        latitude: typeof payload.latitude === 'number' ? payload.latitude : null,
+        longitude:
+          typeof payload.longitude === 'number' ? payload.longitude : null,
+        source: 'web_gps',
+      })
+      serverResourceId = row.id
+      break
+    }
+    case 'expense_report': {
+      if (!formal) throw new AppError('本機示範模式不需離線支出同步')
+      const me = await supabaseRepos.getCurrentUser()
+      if (!me) throw new AppError('同步支出前請先登入')
+      const row = await supabaseRepos.createExpenseReport(me, {
+        siteId: payload.misc ? null : (payload.siteId as string | null),
+        misc: Boolean(payload.misc),
+        locationText:
+          typeof payload.locationText === 'string' ? payload.locationText : null,
+        item: String(payload.item ?? ''),
+        amount: Number(payload.amount ?? 0),
+        note: typeof payload.note === 'string' ? payload.note : null,
+        receiptPhotoPath: null,
+      })
+      serverResourceId = row.id
+      break
+    }
+    case 'cash_receipt': {
+      if (!formal) throw new AppError('本機示範模式不需離線收款同步')
+      const me = await supabaseRepos.getCurrentUser()
+      if (!me) throw new AppError('同步收款前請先登入')
+      const row = await supabaseRepos.createCashReceipt(me, {
+        siteId: payload.misc ? null : (payload.siteId as string | null),
+        misc: Boolean(payload.misc),
+        locationText:
+          typeof payload.locationText === 'string' ? payload.locationText : null,
+        amount: Number(payload.amount ?? 0),
+        sourceNote:
+          typeof payload.sourceNote === 'string' ? payload.sourceNote : null,
+        receivedOn:
+          typeof payload.receivedOn === 'string' ? payload.receivedOn : null,
+        quotationId:
+          typeof payload.quotationId === 'string' ? payload.quotationId : null,
+        proofPhotoPath: null,
+      })
+      serverResourceId = row.id
+      break
+    }
     default:
       throw new AppError('未知離線操作')
   }
@@ -146,6 +200,13 @@ async function executeItem(item: OfflineQueueItem): Promise<string | null> {
       serverResourceId,
       status: 'accepted',
     })
+    if (
+      item.operationType === 'attendance_clock_in' ||
+      item.operationType === 'attendance_clock_out' ||
+      item.operationType === 'attendance_assign_site'
+    ) {
+      removeFormalAttendanceDraftByClientOp(item.clientOperationId)
+    }
   }
 
   return serverResourceId

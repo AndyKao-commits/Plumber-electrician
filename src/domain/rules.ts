@@ -55,7 +55,8 @@ export const DEFAULT_PURCHASE_RULES: PurchaseRuleSnapshot = {
 export const FEATURE_FLAGS = {
   /** V1.0：簡化現場流程；複雜 ERP 入口隱藏 */
   v1Simplified: true,
-  offlineFirst: false,
+  /** 現場離線先記、恢復網路後同步（正式上線必要） */
+  offlineFirst: true,
   gpsOptionalOnClockIn: true,
   autoDeductBreak: false,
   payrollMonthly: true,
@@ -135,6 +136,12 @@ export const MORE_MENU = [
         path: '/reports',
         description: '文字回報列表',
       },
+      {
+        id: 'offline-queue',
+        label: '離線佇列',
+        path: '/offline-queue',
+        description: '離線草稿與連線後同步',
+      },
     ],
   },
   {
@@ -195,7 +202,6 @@ export const ADVANCED_ERP_PATHS = [
   '/repairs',
   '/complaints',
   '/purchases',
-  '/offline-queue',
 ] as const
 
 export type FinalPayableInput = {

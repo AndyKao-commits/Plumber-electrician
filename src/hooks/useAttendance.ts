@@ -5,6 +5,12 @@ import type { AttendanceCorrection, AttendanceRecord, JobType } from '@/domain/t
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
+import {
+  getFormalOpenAttendanceDraft,
+  listFormalAttendanceDrafts,
+  patchFormalAttendanceDraft,
+  upsertFormalAttendanceDraft,
+} from '@/lib/formalOfflineDrafts'
 import { enqueueOfflineOp, isBrowserOnline } from '@/lib/offlineQueue'
 import { notifyOfflineQueueChanged } from '@/lib/offlineSync'
 import { supabaseRepos } from '@/lib/supabaseRepos'
@@ -49,9 +55,17 @@ export function useAttendance(userId: string | undefined) {
     queryFn: async (): Promise<AttendanceRecord | null> => {
       if (!userId) return null
       try {
-        return formal
-          ? await supabaseRepos.getOpenAttendance(userId)
-          : localDb.getOpenAttendance(userId)
+        if (!formal) return localDb.getOpenAttendance(userId)
+        if (!isBrowserOnline()) {
+          return getFormalOpenAttendanceDraft(userId)
+        }
+        try {
+          const remote = await supabaseRepos.getOpenAttendance(userId)
+          if (remote) return remote
+          return getFormalOpenAttendanceDraft(userId)
+        } catch {
+          return getFormalOpenAttendanceDraft(userId)
+        }
       } catch (e) {
         throw new Error(toUserMessage(e, '無法讀取出勤狀態'))
       }
@@ -64,11 +78,26 @@ export function useAttendance(userId: string | undefined) {
     queryFn: async (): Promise<AttendanceRecord[]> => {
       if (!userId) return []
       try {
-        if (formal) return await supabaseRepos.listAttendance(userId)
-        return localDb
-          .getAttendance()
-          .filter((a) => a.userId === userId)
-          .sort((a, b) => b.clockInAt.localeCompare(a.clockInAt))
+        if (!formal) {
+          return localDb
+            .getAttendance()
+            .filter((a) => a.userId === userId)
+            .sort((a, b) => b.clockInAt.localeCompare(a.clockInAt))
+        }
+        const drafts = listFormalAttendanceDrafts(userId)
+        if (!isBrowserOnline()) return drafts
+        try {
+          const remote = await supabaseRepos.listAttendance(userId)
+          const remoteIds = new Set(remote.map((r) => r.id))
+          const pendingOnly = drafts.filter(
+            (d) => d.id.startsWith('pending-') && !remoteIds.has(d.id),
+          )
+          return [...pendingOnly, ...remote].sort((a, b) =>
+            b.clockInAt.localeCompare(a.clockInAt),
+          )
+        } catch {
+          return drafts
+        }
       } catch (e) {
         throw new Error(toUserMessage(e, '無法讀取出勤紀錄'))
       }
@@ -147,11 +176,11 @@ export function useAttendance(userId: string | undefined) {
             },
           })
           notifyOfflineQueueChanged()
-          // Local optimistic pending shift (demo + formal offline draft)
-          const user = localDb.getUser(userId)
+          const orgUser = formal ? user : localDb.getUser(userId)
           const record: AttendanceRecord = {
             id: `pending-${item.clientOperationId}`,
-            organizationId: user?.organizationId ?? localDb.orgId,
+            organizationId:
+              orgUser?.organizationId ?? localDb.orgId,
             userId,
             status: 'clocked_in',
             clockInAt,
@@ -159,7 +188,8 @@ export function useAttendance(userId: string | undefined) {
             longitude: pos.longitude,
             note: '離線待驗證',
           }
-          if (!formal) localDb.saveAttendance(record)
+          if (formal) upsertFormalAttendanceDraft(record)
+          else localDb.saveAttendance(record)
           return record
         }
         if (formal) {
@@ -211,15 +241,14 @@ export function useAttendance(userId: string | undefined) {
             localDb.saveAttendance(closed)
             return closed
           }
-          return {
-            id: `pending-out-${crypto.randomUUID()}`,
-            organizationId: '',
-            userId,
-            status: 'clocked_out' as const,
-            clockInAt: clockOutAt,
+          const closed = patchFormalAttendanceDraft(userId, {
+            matchOpen: true,
+            status: 'clocked_out',
             clockOutAt,
             note: '離線待驗證',
-          }
+          })
+          if (!closed) throw new Error('目前沒有進行中的班次（離線草稿）')
+          return closed
         }
         if (formal) return await supabaseRepos.clockOut(userId)
         const open = localDb.getOpenAttendance(userId)
@@ -250,6 +279,15 @@ export function useAttendance(userId: string | undefined) {
             payload: { userId, siteId, jobType },
           })
           notifyOfflineQueueChanged()
+          if (formal) {
+            const updated = patchFormalAttendanceDraft(userId, {
+              matchOpen: true,
+              siteId,
+              jobType,
+            })
+            if (!updated) throw new Error('請先上班再選擇工地（離線草稿）')
+            return updated
+          }
           if (!formal) {
             const open = localDb.getOpenAttendance(userId)
             if (!open) throw new Error('請先上班再選擇工地')
@@ -269,16 +307,6 @@ export function useAttendance(userId: string | undefined) {
               attendanceId: open.id,
             })
             return updated
-          }
-          return {
-            id: `pending-site-${crypto.randomUUID()}`,
-            organizationId: '',
-            userId,
-            status: 'clocked_in' as const,
-            clockInAt: new Date().toISOString(),
-            siteId,
-            jobType,
-            note: '離線待驗證',
           }
         }
         if (formal) return await supabaseRepos.assignSite(userId, siteId)

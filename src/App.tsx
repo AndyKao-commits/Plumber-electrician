@@ -125,7 +125,7 @@ export default function App() {
             <Route path="/inventory" element={<Advanced><InventoryPage /></Advanced>} />
             <Route path="/petty-cash" element={<Advanced><PettyCashPage /></Advanced>} />
             <Route path="/suppliers" element={<Advanced><SuppliersPage /></Advanced>} />
-            <Route path="/offline-queue" element={<Advanced><OfflineQueuePage /></Advanced>} />
+            <Route path="/offline-queue" element={<Protected><OfflineQueuePage /></Protected>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
