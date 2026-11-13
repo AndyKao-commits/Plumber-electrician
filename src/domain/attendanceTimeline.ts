@@ -102,3 +102,113 @@ export function formatWorkDuration(ms: number | null): string {
   if (h <= 0) return `${m} 分`
   return `${h} 小時 ${m} 分`
 }
+
+export type DayShiftSegment = {
+  id: string
+  clockInAt: string
+  clockOutAt?: string | null
+  siteId?: string | null
+  status: AttendanceRecord['status']
+  workMs: number | null
+}
+
+/**
+ * Merge same-day shift fragments into one summary for the day card UI.
+ * Segments stay available for the expanded timeline.
+ */
+export function summarizeDayShifts(
+  records: Array<
+    Pick<
+      AttendanceRecord,
+      'id' | 'clockInAt' | 'clockOutAt' | 'siteId' | 'status'
+    >
+  >,
+  nowMs: number = Date.now(),
+): {
+  segments: DayShiftSegment[]
+  segmentCount: number
+  hasOpen: boolean
+  earliestIn: string | null
+  latestOut: string | null
+  totalWorkMs: number
+  primarySiteId: string | null
+  missingSiteCount: number
+  /** Prefer open shift; else longest closed; else earliest. */
+  primaryRecordId: string | null
+} {
+  const sorted = [...records].sort((a, b) =>
+    a.clockInAt.localeCompare(b.clockInAt),
+  )
+  const segments: DayShiftSegment[] = sorted.map((r) => {
+    const start = new Date(r.clockInAt).getTime()
+    const end = r.clockOutAt
+      ? new Date(r.clockOutAt).getTime()
+      : r.status === 'clocked_in'
+        ? nowMs
+        : NaN
+    let workMs: number | null = null
+    if (!Number.isNaN(start) && !Number.isNaN(end) && end >= start) {
+      workMs = end - start
+    }
+    return {
+      id: r.id,
+      clockInAt: r.clockInAt,
+      clockOutAt: r.clockOutAt ?? null,
+      siteId: r.siteId ?? null,
+      status: r.status,
+      workMs,
+    }
+  })
+
+  let totalWorkMs = 0
+  let hasOpen = false
+  let missingSiteCount = 0
+  let primarySiteId: string | null = null
+  let longestClosed: DayShiftSegment | null = null
+
+  for (const s of segments) {
+    if (s.status === 'clocked_in') hasOpen = true
+    if (!s.siteId) missingSiteCount += 1
+    if (s.siteId && !primarySiteId) primarySiteId = s.siteId
+    if (s.workMs != null) totalWorkMs += s.workMs
+    if (s.status !== 'clocked_in' && s.workMs != null) {
+      if (!longestClosed || (longestClosed.workMs ?? 0) < s.workMs) {
+        longestClosed = s
+      }
+    }
+  }
+
+  // Prefer last non-null site (most recent assignment) when multiple exist.
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const sid = segments[i].siteId
+    if (sid) {
+      primarySiteId = sid
+      break
+    }
+  }
+
+  const openSeg = segments.find((s) => s.status === 'clocked_in')
+  const primaryRecordId =
+    openSeg?.id ?? longestClosed?.id ?? segments[0]?.id ?? null
+
+  const closedOuts = segments
+    .map((s) => s.clockOutAt)
+    .filter((x): x is string => Boolean(x))
+    .sort()
+
+  return {
+    segments,
+    segmentCount: segments.length,
+    hasOpen,
+    earliestIn: segments[0]?.clockInAt ?? null,
+    latestOut: hasOpen
+      ? null
+      : closedOuts.length
+        ? closedOuts[closedOuts.length - 1]
+        : null,
+    totalWorkMs,
+    primarySiteId,
+    missingSiteCount,
+    primaryRecordId,
+  }
+}
