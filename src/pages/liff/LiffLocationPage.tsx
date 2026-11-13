@@ -4,6 +4,8 @@ import { useUser } from '@/hooks/useUser'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
+import { enqueueOfflineOp, isBrowserOnline } from '@/lib/offlineQueue'
+import { notifyOfflineQueueChanged } from '@/lib/offlineSync'
 import { reverseGeocode } from '@/lib/reverseGeocode'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { formatTaipei } from '@/lib/time'
@@ -61,45 +63,67 @@ export function LiffLocationPage() {
         const longitude = pos.coords.longitude
         let address: string | null = null
         let label = '目前位置'
-        try {
-          const geo = await reverseGeocode(latitude, longitude)
-          address = geo?.address ?? null
-          label = geo?.label || address || label
-        } catch {
-          /* address optional */
+        if (isBrowserOnline()) {
+          try {
+            const geo = await reverseGeocode(latitude, longitude)
+            address = geo?.address ?? null
+            label = geo?.label || address || label
+          } catch {
+            /* address optional */
+          }
+        } else {
+          label = `離線座標 ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`
         }
-        const saved = formal
-          ? await supabaseRepos.createLocationCheckin(user!, {
+        const recordedAt = new Date().toISOString()
+        let saved: { recordedAt: string; label?: string | null; address?: string | null }
+        if (formal && !isBrowserOnline()) {
+          enqueueOfflineOp({
+            operationType: 'location_checkin',
+            payload: {
+              userId: user!.id,
+              organizationId: user!.organizationId,
               label,
               address,
               latitude,
               longitude,
-              source: 'web_gps',
-            })
-          : (() => {
-              const open = localDb.getOpenAttendance(user!.id)
-              const row = {
-                id: crypto.randomUUID(),
-                organizationId: user!.organizationId,
-                userId: user!.id,
-                recordedAt: new Date().toISOString(),
-                source: 'web_gps' as const,
-                siteId: null,
-                label,
-                address,
-                latitude,
-                longitude,
-                note: null,
-                attendanceId: open?.id ?? null,
-              }
-              localDb.saveLocationCheckin(row)
-              return row
-            })()
+              recordedAt,
+            },
+          })
+          notifyOfflineQueueChanged()
+          saved = { recordedAt, label, address }
+        } else if (formal) {
+          saved = await supabaseRepos.createLocationCheckin(user!, {
+            label,
+            address,
+            latitude,
+            longitude,
+            source: 'web_gps',
+          })
+        } else {
+          const open = localDb.getOpenAttendance(user!.id)
+          const row = {
+            id: crypto.randomUUID(),
+            organizationId: user!.organizationId,
+            userId: user!.id,
+            recordedAt,
+            source: 'web_gps' as const,
+            siteId: null,
+            label,
+            address,
+            latitude,
+            longitude,
+            note: null,
+            attendanceId: open?.id ?? null,
+          }
+          localDb.saveLocationCheckin(row)
+          saved = row
+        }
         if (cancelled || myRun !== runId.current) return
+        const place = saved.address?.trim() || saved.label || label
+        const offlineTag =
+          formal && !isBrowserOnline() ? '已暫存（離線） · ' : ''
         setSummary(
-          `${formatTaipei(saved.recordedAt, 'HH:mm')} · ${
-            saved.address?.trim() || saved.label || label
-          }`,
+          `${formatTaipei(saved.recordedAt, 'HH:mm')} · ${offlineTag}${place}`,
         )
         setPhase('done')
       } catch (err) {

@@ -6,6 +6,9 @@ export const OFFLINE_ALLOWED_OPS = [
   'attendance_clock_in',
   'attendance_clock_out',
   'attendance_assign_site',
+  'location_checkin',
+  'expense_report',
+  'cash_receipt',
 ] as const
 
 export type OfflineAllowedOp = (typeof OFFLINE_ALLOWED_OPS)[number]
@@ -49,6 +52,9 @@ export const OFFLINE_OP_LABELS: Record<OfflineAllowedOp, string> = {
   attendance_clock_in: '上班打卡（待驗證）',
   attendance_clock_out: '下班打卡（待驗證）',
   attendance_assign_site: '補登工地（待驗證）',
+  location_checkin: '定位回報（待同步）',
+  expense_report: '支出回報（待同步）',
+  cash_receipt: '收款回報（待同步）',
 }
 
 /** Stable request hash for INT-10 idempotency (same key + different body → conflict). */

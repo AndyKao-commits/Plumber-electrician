@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
+import { enqueueOfflineOp, isBrowserOnline } from '@/lib/offlineQueue'
+import { notifyOfflineQueueChanged } from '@/lib/offlineSync'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { useUser } from '@/hooks/useUser'
 
@@ -74,6 +76,42 @@ export function useFieldFinance(userId: string | undefined) {
       receiptFiles?: File[]
     }) => {
       if (!user) throw new Error('尚未登入')
+      if (formal && !isBrowserOnline()) {
+        if (input.receiptFiles?.length) {
+          throw new Error(
+            '離線暫存支出不含照片；請先送出金額／項目，連線後再補傳憑證，或連線後再送。',
+          )
+        }
+        enqueueOfflineOp({
+          operationType: 'expense_report',
+          payload: {
+            userId: user.id,
+            userName: user.name,
+            organizationId: user.organizationId,
+            siteId: input.siteId ?? null,
+            misc: Boolean(input.misc),
+            locationText: input.locationText ?? null,
+            item: input.item,
+            amount: input.amount,
+            note: input.note ?? null,
+          },
+        })
+        notifyOfflineQueueChanged()
+        return {
+          id: `pending-exp-${crypto.randomUUID()}`,
+          organizationId: user.organizationId,
+          siteId: input.misc ? null : (input.siteId ?? null),
+          siteName: input.misc ? '雜項（無工地）' : '工地',
+          locationText: input.locationText ?? null,
+          item: input.item,
+          amount: input.amount,
+          note: input.note ?? null,
+          status: 'pending_review' as const,
+          reportedBy: user.id,
+          reportedByName: user.name,
+          reportedAt: new Date().toISOString(),
+        }
+      }
       let receiptPhotoPath = input.receiptPhotoPath ?? null
       if (formal && input.receiptFiles?.length) {
         const paths: string[] = []
@@ -141,6 +179,43 @@ export function useFieldFinance(userId: string | undefined) {
       proofFiles?: File[]
     }) => {
       if (!user) throw new Error('尚未登入')
+      if (formal && !isBrowserOnline()) {
+        if (input.proofFiles?.length) {
+          throw new Error(
+            '離線暫存收款不含照片；請先送出金額，連線後再補傳憑證，或連線後再送。',
+          )
+        }
+        enqueueOfflineOp({
+          operationType: 'cash_receipt',
+          payload: {
+            userId: user.id,
+            userName: user.name,
+            organizationId: user.organizationId,
+            siteId: input.siteId ?? null,
+            misc: Boolean(input.misc),
+            locationText: input.locationText ?? null,
+            amount: input.amount,
+            sourceNote: input.sourceNote ?? null,
+            receivedOn: input.receivedOn ?? null,
+            quotationId: input.quotationId ?? null,
+          },
+        })
+        notifyOfflineQueueChanged()
+        return {
+          id: `pending-rc-${crypto.randomUUID()}`,
+          organizationId: user.organizationId,
+          siteId: input.misc ? null : (input.siteId ?? null),
+          siteName: input.misc ? '雜項（無工地）' : '工地',
+          locationText: input.locationText ?? null,
+          receivedOn: input.receivedOn ?? new Date().toISOString().slice(0, 10),
+          amount: input.amount,
+          sourceNote: input.sourceNote ?? null,
+          status: 'pending_confirm' as const,
+          reportedBy: user.id,
+          reportedByName: user.name,
+          reportedAt: new Date().toISOString(),
+        }
+      }
       let proofPhotoPath: string | null = null
       if (formal && input.proofFiles?.length) {
         proofPhotoPath = await supabaseRepos.uploadReceiptPhoto({

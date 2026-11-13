@@ -8,6 +8,7 @@ import {
 } from '@/domain/fieldFinance'
 import { selectOpenSites } from '@/domain/siteStatus'
 import { useFieldFinance } from '@/hooks/useFieldFinance'
+import { isBrowserOnline } from '@/lib/offlineQueue'
 import { useQuotes } from '@/hooks/useQuotes'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
@@ -70,6 +71,7 @@ export function LiffExpensePage() {
     const n = Number(amount)
     if (!Number.isFinite(n) || n <= 0) return
 
+    const offline = !isBrowserOnline()
     if (kind === 'expense') {
       await createExpense({
         siteId: isMisc ? null : siteId,
@@ -80,7 +82,11 @@ export function LiffExpensePage() {
         note: note.trim() || null,
         receiptFiles: file ? [file] : [],
       })
-      setDoneMsg(`已送出支出 NT$${n.toLocaleString()}`)
+      setDoneMsg(
+        offline
+          ? `已暫存支出 NT$${n.toLocaleString()}（離線，連線後自動同步）`
+          : `已送出支出 NT$${n.toLocaleString()}`,
+      )
     } else {
       await createReceipt({
         siteId: isMisc ? null : siteId,
@@ -92,7 +98,11 @@ export function LiffExpensePage() {
         quotationId: isMisc ? null : quotationId || null,
         proofFiles: file ? [file] : [],
       })
-      setDoneMsg(`已送出收款 NT$${n.toLocaleString()}（待老闆確認）`)
+      setDoneMsg(
+        offline
+          ? `已暫存收款 NT$${n.toLocaleString()}（離線，連線後自動同步）`
+          : `已送出收款 NT$${n.toLocaleString()}（待老闆確認）`,
+      )
     }
     setItem('')
     setAmount('')
