@@ -101,10 +101,10 @@ export function AttendancePage() {
       .sort((a, b) => a.clockInAt.localeCompare(b.clockInAt))
   }, [history, selectedDay])
 
-  const daySummary = useMemo(
-    () => (dayRecords.length ? summarizeDayShifts(dayRecords) : null),
-    [dayRecords],
-  )
+  // Recompute each render so in-progress duration stays current.
+  const daySummary = dayRecords.length
+    ? summarizeDayShifts(dayRecords)
+    : null
 
   const ownPendingCorrections = useMemo(
     () =>
