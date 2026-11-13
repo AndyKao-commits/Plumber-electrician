@@ -534,14 +534,14 @@ button {
 }
 
 .attendance-cal-day.has-work {
-  border-color: rgba(198, 40, 40, 0.55);
-  background: rgba(198, 40, 40, 0.06);
+  background: transparent;
 }
 
 .attendance-cal-day.selected {
-  border-color: var(--steel);
-  background: rgba(15, 61, 85, 0.1);
-  box-shadow: inset 0 0 0 1px var(--steel);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--steel) 14%, white);
+  color: var(--steel-deep);
+  font-weight: 700;
 }
 
 .attendance-cal-day .cal-num {
@@ -551,10 +551,61 @@ button {
 }
 
 .attendance-cal-day .cal-dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   background: var(--danger);
+}
+
+.attendance-day-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 14px 0 4px;
+  border: none;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  border-radius: 0;
+}
+
+.attendance-day-card.is-open {
+  border-left: 3px solid var(--ok);
+  padding-left: 12px;
+}
+
+.attendance-day-time {
+  margin: 10px 0 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.01em;
+}
+
+.attendance-day-site {
+  margin: 8px 0 0;
+  font-size: 0.95rem;
+  color: var(--ink-muted);
+}
+
+.attendance-day-site.is-missing {
+  color: color-mix(in srgb, var(--amber-hot) 80%, var(--ink));
+  font-weight: 600;
+}
+
+.attendance-day-detail {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  gap: 10px;
+}
+
+.attendance-segment {
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.attendance-segment:last-of-type {
+  border-bottom: none;
 }
 
 /* LINE LIFF / in-app pages */

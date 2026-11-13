@@ -12,6 +12,7 @@ import {
   buildAttendanceTimeline,
   formatWorkDuration,
   summarizeAttendanceDay,
+  summarizeDayShifts,
 } from '@/domain/attendanceTimeline'
 import { selectOpenSites } from '@/domain/siteStatus'
 import { useAttendance } from '@/hooks/useAttendance'
@@ -77,7 +78,7 @@ export function AttendancePage() {
   const [proposedSiteId, setProposedSiteId] = useState('')
   const [reason, setReason] = useState('')
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({})
-  const [timelineId, setTimelineId] = useState<string | null>(null)
+  const [dayTimelineOpen, setDayTimelineOpen] = useState(false)
   const initialYm = currentTaipeiYearMonth()
   const [calYear, setCalYear] = useState(initialYm.year)
   const [calMonth, setCalMonth] = useState(initialYm.monthIndex)
@@ -86,7 +87,7 @@ export function AttendancePage() {
   )
 
   const siteName = (id?: string | null) =>
-    sites.find((s) => s.id === id)?.name ?? (id ? '未知工地' : '尚未補登工地')
+    sites.find((s) => s.id === id)?.name ?? (id ? '未知工地' : null)
 
   const daysWithWork = useMemo(() => groupAttendanceDays(history), [history])
   const monthCells = useMemo(
@@ -95,13 +96,16 @@ export function AttendancePage() {
   )
   const dayRecords = useMemo(() => {
     if (!selectedDay) return []
-    return history.filter((r) => taipeiDateString(r.clockInAt) === selectedDay)
+    return history
+      .filter((r) => taipeiDateString(r.clockInAt) === selectedDay)
+      .sort((a, b) => a.clockInAt.localeCompare(b.clockInAt))
   }, [history, selectedDay])
 
-  const timelineRecord = history.find((h) => h.id === timelineId) ?? null
-  const timelineDay = timelineRecord
-    ? taipeiDateString(timelineRecord.clockInAt)
-    : null
+  const daySummary = useMemo(
+    () => (dayRecords.length ? summarizeDayShifts(dayRecords) : null),
+    [dayRecords],
+  )
+
   const ownPendingCorrections = useMemo(
     () =>
       corrections.filter(
@@ -111,17 +115,17 @@ export function AttendancePage() {
   )
 
   const timelineQuery = useQuery({
-    queryKey: ['attendance-timeline', user?.id, timelineId, timelineDay],
-    enabled: Boolean(user?.id && timelineRecord && timelineDay),
+    queryKey: ['attendance-timeline', user?.id, selectedDay, dayTimelineOpen],
+    enabled: Boolean(user?.id && selectedDay && dayTimelineOpen),
     queryFn: async () => {
-      if (!user || !timelineRecord || !timelineDay) return []
+      if (!user || !selectedDay) return []
       if (isFormalMode()) {
         return supabaseRepos.listLocationCheckins({
           userId: user.id,
-          day: timelineDay,
+          day: selectedDay,
         })
       }
-      return localDb.listLocationCheckinsForDay(user.id, timelineDay)
+      return localDb.listLocationCheckinsForDay(user.id, selectedDay)
     },
   })
 
@@ -162,8 +166,8 @@ export function AttendancePage() {
 
         {openShift ? (
           <>
-            <div className="site-link">
-              <div className="row between">
+            <div className="attendance-day-card is-open">
+              <div className="row between" style={{ alignItems: 'center' }}>
                 <span className="badge ok">上班中</span>
                 <span className="muted">
                   已打卡{' '}
@@ -172,13 +176,17 @@ export function AttendancePage() {
                   })}
                 </span>
               </div>
-              <h3 style={{ marginTop: 10 }}>{siteName(openShift.siteId)}</h3>
-              <p>
-                上班時間 {formatTaipei(openShift.clockInAt, 'yyyy/MM/dd HH:mm')}
+              <p className="attendance-day-time" style={{ marginTop: 10 }}>
+                {formatTaipei(openShift.clockInAt, 'yyyy/MM/dd HH:mm')} 上班
                 {openShift.latitude != null
                   ? ` · GPS ${openShift.latitude.toFixed(4)}, ${openShift.longitude?.toFixed(4)}`
-                  : ' · 無 GPS'}
+                  : ''}
               </p>
+              {openShift.siteId ? (
+                <p className="attendance-day-site">{siteName(openShift.siteId)}</p>
+              ) : (
+                <p className="attendance-day-site is-missing">尚未指定工地</p>
+              )}
             </div>
 
             <div className="field">
@@ -448,7 +456,7 @@ export function AttendancePage() {
       <section className="panel stack">
         <strong>最近出勤</strong>
         <p className="muted" style={{ margin: 0 }}>
-          有上班的日期會紅點並框起來；點日期可看當天時間軸。
+          有出勤的日期會標點；點日期看當天摘要。
         </p>
         <div className="row between" style={{ gap: 8 }}>
           <button
@@ -498,7 +506,7 @@ export function AttendancePage() {
                 className={`attendance-cal-day${hasWork ? ' has-work' : ''}${selected ? ' selected' : ''}`}
                 onClick={() => {
                   setSelectedDay(cell.day)
-                  setTimelineId(null)
+                  setDayTimelineOpen(false)
                 }}
               >
                 <span className="cal-num">{Number(cell.day.slice(8))}</span>
@@ -510,131 +518,171 @@ export function AttendancePage() {
 
         {!selectedDay ? (
           <div className="empty">請選擇日期</div>
-        ) : dayRecords.length === 0 ? (
-          <div className="empty">
-            {selectedDay} 尚無出勤紀錄
-          </div>
+        ) : dayRecords.length === 0 || !daySummary ? (
+          <div className="empty">{selectedDay} 尚無出勤紀錄</div>
         ) : (
-          dayRecords.map((record) => {
-            const open = timelineId === record.id
-            const dayLabel = formatTaipei(record.clockInAt, 'yyyy/MM/dd EEEE')
-            const checkins = open ? (timelineQuery.data ?? []) : []
-            const events = open
-              ? buildAttendanceTimeline({
-                  attendance: {
-                    ...record,
-                  },
-                  checkins: checkins.map((c) => ({
-                    ...c,
-                    siteName:
-                      c.siteName ||
-                      (c.siteId ? siteName(c.siteId) : null),
-                  })),
-                }).map((ev) =>
-                  ev.kind === 'clock_in' && record.siteId
-                    ? {
-                        ...ev,
-                        placeLabel: siteName(record.siteId),
-                      }
-                    : ev.kind === 'clock_in'
-                      ? { ...ev, placeLabel: '出發上工' }
-                      : ev,
-                )
-              : []
-            const summary = open
-              ? summarizeAttendanceDay({
-                  clockInAt: record.clockInAt,
-                  clockOutAt: record.clockOutAt,
-                  locationCount: checkins.length,
-                })
-              : null
+          <div
+            className={`attendance-day-card${daySummary.hasOpen ? ' is-open' : ''}`}
+          >
+            <div className="row between" style={{ alignItems: 'center' }}>
+              <span className={`badge ${daySummary.hasOpen ? 'ok' : 'steel'}`}>
+                {daySummary.hasOpen ? '進行中' : '已下班'}
+              </span>
+              <span className="muted" style={{ fontSize: '0.85rem' }}>
+                {formatTaipei(`${selectedDay}T00:00:00+08:00`, 'MM/dd EEEE')}
+              </span>
+            </div>
 
-            return (
-              <div key={record.id} className="site-link stack">
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  style={{ textAlign: 'left', padding: 0 }}
-                  onClick={() =>
-                    setTimelineId((cur) => (cur === record.id ? null : record.id))
+            <p className="attendance-day-time">
+              {daySummary.earliestIn
+                ? formatTaipei(daySummary.earliestIn, 'HH:mm')
+                : '—'}
+              {' → '}
+              {daySummary.hasOpen
+                ? '尚未下班'
+                : daySummary.latestOut
+                  ? formatTaipei(daySummary.latestOut, 'HH:mm')
+                  : '—'}
+            </p>
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: '0.9rem' }}>
+              今日累計 {formatWorkDuration(daySummary.totalWorkMs)}
+              {daySummary.segmentCount > 1
+                ? ` · 共 ${daySummary.segmentCount} 段`
+                : ''}
+            </p>
+
+            {daySummary.primarySiteId ? (
+              <p className="attendance-day-site">
+                {siteName(daySummary.primarySiteId)}
+              </p>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-steel"
+                style={{ marginTop: 10, alignSelf: 'flex-start' }}
+                onClick={() => {
+                  if (openShift && daySummary.hasOpen) {
+                    document
+                      .getElementById('assign-site')
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                    return
                   }
-                >
-                  <div className="row between">
-                    <span className="badge steel">
-                      {record.status === 'clocked_in' ? '進行中' : '已下班'}
-                    </span>
-                    <span className="muted">{siteName(record.siteId)}</span>
-                  </div>
-                  <p style={{ marginTop: 8 }}>
-                    {formatTaipei(record.clockInAt, 'MM/dd HH:mm')}
-                    {record.clockOutAt
-                      ? ` → ${formatTaipei(record.clockOutAt, 'HH:mm')}`
-                      : ' → 尚未下班'}
-                  </p>
-                  <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-                    {open ? '收合時間軸' : '展開時間軸'}
-                  </p>
-                </button>
+                  if (daySummary.primaryRecordId) {
+                    fillFromRecord(daySummary.primaryRecordId)
+                  }
+                }}
+              >
+                補登工地
+              </button>
+            )}
 
-                {open ? (
-                  <div className="stack" style={{ gap: 8 }}>
-                    <strong style={{ margin: 0 }}>{dayLabel}</strong>
-                    {summary ? (
-                      <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-                        上班時間：{formatTaipei(record.clockInAt, 'HH:mm')}
-                        {record.clockOutAt
-                          ? `　下班時間：${formatTaipei(record.clockOutAt, 'HH:mm')}`
-                          : ''}
-                        <br />
-                        工作時數：{formatWorkDuration(summary.workMs)}
-                        <br />
-                        地點紀錄：
-                        {summary.locationCount > 0
-                          ? `${summary.locationCount} 筆`
-                          : '當天沒有其他地點紀錄'}
-                      </p>
-                    ) : null}
-                    {timelineQuery.isLoading ? (
-                      <p className="muted" style={{ margin: 0 }}>
-                        載入足跡…
-                      </p>
-                    ) : (
-                      events.map((ev) => (
-                        <div key={ev.id}>
-                          <p style={{ margin: 0 }}>
-                            <strong>{formatTaipei(ev.at, 'HH:mm')}</strong>　
-                            {ev.title}
-                          </p>
-                          {ev.placeLabel ? (
-                            <p className="muted" style={{ margin: '2px 0 0' }}>
-                              {ev.placeLabel}
-                            </p>
-                          ) : null}
-                          {ev.address ? (
-                            <p className="muted" style={{ margin: '2px 0 0' }}>
-                              {ev.address}
-                            </p>
-                          ) : null}
-                          {ev.note ? (
-                            <p className="muted" style={{ margin: '2px 0 0' }}>
-                              {ev.note}
-                            </p>
-                          ) : null}
-                        </div>
-                      ))
-                    )}
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ marginTop: 8, paddingLeft: 0, alignSelf: 'flex-start' }}
+              onClick={() => setDayTimelineOpen((v) => !v)}
+            >
+              {dayTimelineOpen ? '收合明細' : '展開明細'}
+            </button>
+
+            {dayTimelineOpen ? (
+              <div className="attendance-day-detail stack">
+                <strong style={{ margin: 0, fontSize: '0.9rem' }}>班次段落</strong>
+                {daySummary.segments.map((seg) => (
+                  <div key={seg.id} className="attendance-segment">
+                    <div className="row between">
+                      <span>
+                        {formatTaipei(seg.clockInAt, 'HH:mm')}
+                        {' → '}
+                        {seg.clockOutAt
+                          ? formatTaipei(seg.clockOutAt, 'HH:mm')
+                          : '進行中'}
+                      </span>
+                      <span className="muted">
+                        {formatWorkDuration(seg.workMs)}
+                      </span>
+                    </div>
+                    <p className="muted" style={{ margin: '2px 0 0' }}>
+                      {seg.siteId
+                        ? siteName(seg.siteId)
+                        : '未指定工地'}
+                    </p>
                     <button
                       type="button"
-                      className="btn"
-                      onClick={() => fillFromRecord(record.id)}
+                      className="btn btn-ghost"
+                      style={{ padding: 0, marginTop: 4 }}
+                      onClick={() => fillFromRecord(seg.id)}
                     >
                       申請更正
                     </button>
                   </div>
-                ) : null}
+                ))}
+
+                <strong style={{ margin: '8px 0 0', fontSize: '0.9rem' }}>
+                  地點足跡
+                </strong>
+                {timelineQuery.isLoading ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    載入足跡…
+                  </p>
+                ) : (
+                  (() => {
+                    const checkins = timelineQuery.data ?? []
+                    const primary =
+                      dayRecords.find(
+                        (r) => r.id === daySummary.primaryRecordId,
+                      ) ?? dayRecords[0]
+                    const events = buildAttendanceTimeline({
+                      attendance: primary,
+                      checkins: checkins.map((c) => ({
+                        ...c,
+                        siteName:
+                          c.siteName ||
+                          (c.siteId ? siteName(c.siteId) : null),
+                      })),
+                    })
+                    const locOnly = events.filter((e) => e.kind === 'location')
+                    const locSummary = summarizeAttendanceDay({
+                      clockInAt: daySummary.earliestIn,
+                      clockOutAt: daySummary.latestOut,
+                      locationCount: locOnly.length,
+                    })
+                    return (
+                      <>
+                        <p
+                          className="muted"
+                          style={{ margin: 0, fontSize: '0.85rem' }}
+                        >
+                          地點紀錄：
+                          {locSummary.locationCount > 0
+                            ? `${locSummary.locationCount} 筆`
+                            : '當天沒有其他地點紀錄'}
+                        </p>
+                        {locOnly.map((ev) => (
+                          <div key={ev.id}>
+                            <p style={{ margin: 0 }}>
+                              <strong>{formatTaipei(ev.at, 'HH:mm')}</strong>　
+                              {ev.title}
+                            </p>
+                            {ev.placeLabel ? (
+                              <p className="muted" style={{ margin: '2px 0 0' }}>
+                                {ev.placeLabel}
+                              </p>
+                            ) : null}
+                            {ev.address ? (
+                              <p className="muted" style={{ margin: '2px 0 0' }}>
+                                {ev.address}
+                              </p>
+                            ) : null}
+                          </div>
+                        ))}
+                      </>
+                    )
+                  })()
+                )}
               </div>
-            )
-          })
+            ) : null}
+          </div>
         )}
       </section>
     </div>

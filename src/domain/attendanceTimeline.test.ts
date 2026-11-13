@@ -4,6 +4,7 @@ import {
   formatWorkDuration,
   locationPlaceLabel,
   summarizeAttendanceDay,
+  summarizeDayShifts,
 } from './attendanceTimeline'
 import type { AttendanceRecord, LocationCheckin } from './types'
 
@@ -67,5 +68,40 @@ describe('attendance timeline', () => {
     expect(locationPlaceLabel({ latitude: 25.1, longitude: 121.5 })).toMatch(
       /25\.10000/,
     )
+  })
+
+  it('merges same-day fragments into one summary', () => {
+    const s = summarizeDayShifts(
+      [
+        {
+          id: 'a',
+          status: 'clocked_out',
+          clockInAt: '2026-11-12T16:02:00.000Z',
+          clockOutAt: '2026-11-12T16:21:00.000Z',
+          siteId: null,
+        },
+        {
+          id: 'b',
+          status: 'clocked_out',
+          clockInAt: '2026-11-12T16:21:00.000Z',
+          clockOutAt: '2026-11-13T00:29:00.000Z',
+          siteId: null,
+        },
+        {
+          id: 'c',
+          status: 'clocked_in',
+          clockInAt: '2026-11-13T00:29:00.000Z',
+          clockOutAt: null,
+          siteId: null,
+        },
+      ],
+      Date.parse('2026-11-13T02:00:00.000Z'),
+    )
+    expect(s.segmentCount).toBe(3)
+    expect(s.hasOpen).toBe(true)
+    expect(s.missingSiteCount).toBe(3)
+    expect(s.primaryRecordId).toBe('c')
+    expect(s.totalWorkMs).toBeGreaterThan(0)
+    expect(s.latestOut).toBeNull()
   })
 })
