@@ -13,6 +13,16 @@ describe('featureAccess', () => {
     expect(f.account).toBe(true)
   })
 
+  it('owner accessTemplate employee gets every feature', () => {
+    const f = effectiveFeatures({
+      role: 'employee',
+      accessTemplate: 'owner',
+    })
+    expect(f.site_delete).toBe(true)
+    expect(f.account).toBe(true)
+    expect(f.approve).toBe(true)
+  })
+
   it('member template cannot delete or approve by default', () => {
     const f = featuresForTemplate('member')
     expect(f.photos).toBe(true)

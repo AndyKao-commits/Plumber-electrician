@@ -1,7 +1,18 @@
 /** Employee site visibility — boss sees all; members only assigned sites. */
 
+import { isBossLike } from '@/domain/roleGroups'
+
+function seesAllSites(input: {
+  role: string
+  accessTemplate?: string | null
+}): boolean {
+  if (isBossLike(input)) return true
+  return input.role === 'admin' || input.accessTemplate === 'admin'
+}
+
 export function filterSitesByAccess<T extends { id: string }>(input: {
   role: string
+  accessTemplate?: string | null
   sites: T[]
   allowedSiteIds: string[] | null | undefined
   /**
@@ -11,7 +22,7 @@ export function filterSitesByAccess<T extends { id: string }>(input: {
    */
   orgHasAssignments?: boolean
 }): T[] {
-  if (input.role === 'boss' || input.role === 'owner' || input.role === 'admin') {
+  if (seesAllSites(input)) {
     return input.sites
   }
   const allowed = new Set(input.allowedSiteIds ?? [])
@@ -24,11 +35,12 @@ export function filterSitesByAccess<T extends { id: string }>(input: {
 
 export function assertCanAccessSite(input: {
   role: string
+  accessTemplate?: string | null
   siteId: string
   allowedSiteIds: string[] | null | undefined
   orgHasAssignments?: boolean
 }): void {
-  if (input.role === 'boss' || input.role === 'owner' || input.role === 'admin') {
+  if (seesAllSites(input)) {
     return
   }
   const allowed = new Set(input.allowedSiteIds ?? [])

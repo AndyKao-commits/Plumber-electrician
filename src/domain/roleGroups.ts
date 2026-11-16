@@ -93,17 +93,38 @@ export function templateToAccessFields(template: RoleGroupTemplate): {
   }
 }
 
+/** True org boss account (profiles.role). Used for backend access control. */
+export function isPrimaryBoss(
+  user: { role: string } | null | undefined,
+): boolean {
+  return user?.role === 'boss' || user?.role === 'owner'
+}
+
+/**
+ * Boss-equivalent: primary boss, or employee assigned「老闆／管理者」
+ * (accessTemplate owner) so a field account can 結案／審核 without switching.
+ */
+export function isBossLike(
+  user:
+    | {
+        role: string
+        accessTemplate?: string | null
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!user) return false
+  if (isPrimaryBoss(user)) return true
+  return user.accessTemplate === 'owner'
+}
+
 /** Role string passed into hasPermission / assertPermission. */
 export function permissionRoleOf(user: {
   role: string
   accessTemplate?: string | null
 }): string {
-  if (user.role === 'boss' || user.role === 'owner') return 'boss'
-  if (
-    user.accessTemplate === 'admin' ||
-    user.accessTemplate === 'owner' ||
-    user.accessTemplate === 'member'
-  ) {
+  if (isPrimaryBoss(user) || user.accessTemplate === 'owner') return 'boss'
+  if (user.accessTemplate === 'admin' || user.accessTemplate === 'member') {
     return user.accessTemplate
   }
   return user.role

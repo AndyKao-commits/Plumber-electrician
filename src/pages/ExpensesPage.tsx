@@ -22,6 +22,7 @@ import { useFieldFinance } from '@/hooks/useFieldFinance'
 import { useQuotes } from '@/hooks/useQuotes'
 import { useSites } from '@/hooks/useSites'
 import { useUser } from '@/hooks/useUser'
+import { isBossLike } from '@/domain/roleGroups'
 import { selectOpenSites } from '@/domain/siteStatus'
 import {
   downloadCashLedgerExcel,
@@ -99,7 +100,7 @@ export function ExpensesPage() {
         : (sites[0]?.id ?? MISC_SITE_VALUE)
   const isMisc = selectedSite === MISC_SITE_VALUE
 
-  const isBoss = user?.role === 'boss'
+  const isBoss = isBossLike(user)
 
   const siteQuotes = useMemo(() => {
     if (isMisc || !selectedSite) return []

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { hasFeature } from '@/domain/featureAccess'
+import { isBossLike } from '@/domain/roleGroups'
 import { useUser, userKeys } from '@/hooks/useUser'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
@@ -23,7 +24,7 @@ export function ProfilePage() {
   } = useUser()
   const formal = isFormalMode() || formalFromHook
   const queryClient = useQueryClient()
-  const isBoss = user?.role === 'boss'
+  const isBoss = isBossLike(user)
   const canManageAccounts = hasFeature(user, 'account')
 
   const [name, setName] = useState('')

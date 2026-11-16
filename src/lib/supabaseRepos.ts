@@ -31,7 +31,7 @@ import {
 import { assertPhotoType } from '@/domain/photoTypes'
 import { assertCanAccessSite, filterSitesByAccess } from '@/domain/siteAccess'
 import { assertFeature } from '@/domain/featureAccess'
-import { permissionRoleOf } from '@/domain/roleGroups'
+import { isBossLike, isPrimaryBoss, permissionRoleOf } from '@/domain/roleGroups'
 import {
   assertSiteStatus,
   assertSiteStatusTransition,
@@ -1296,7 +1296,7 @@ export const supabaseRepos = {
     siteId: string,
     userIds: string[],
   ): Promise<void> {
-    if (actor.role !== 'boss') throw new AppError('僅老闆可設定工地權限')
+    if (!isBossLike(actor)) throw new AppError('僅老闆可設定工地權限')
     const sid = requireUuid(siteId, '工地')
     const { error: delError } = await sb()
       .from('site_members')
@@ -1335,7 +1335,7 @@ export const supabaseRepos = {
   ): Promise<AppUser> {
     const tid = requireUuid(targetUserId, '使用者')
     const self = actor.id === tid
-    if (!self && actor.role !== 'boss') {
+    if (!self && !isBossLike(actor)) {
       throw new AppError('僅本人或老闆可更新資料')
     }
     const fields = normalizeProfileFields(input)
@@ -1362,7 +1362,7 @@ export const supabaseRepos = {
         existingHired = (hiredRow?.hired_at as string | null) ?? null
       }
       const nextHired = fields.hiredAt
-      if (existingHired && actor.role !== 'boss') {
+      if (existingHired && !isBossLike(actor)) {
         if (nextHired !== existingHired) {
           throw new AppError('到職日已鎖定，僅老闆可修改')
         }
@@ -1371,7 +1371,7 @@ export const supabaseRepos = {
       }
     }
     if (input.accountStatus != null) {
-      if (actor.role !== 'boss') throw new AppError('僅老闆可停用帳號')
+      if (!isBossLike(actor)) throw new AppError('僅老闆可停用帳號')
       payload.account_status = assertAccountStatus(input.accountStatus)
     }
     const updated = await sb()
@@ -1406,7 +1406,7 @@ export const supabaseRepos = {
   },
 
   async listOrgProfiles(actor: AppUser): Promise<AppUser[]> {
-    if (actor.role !== 'boss') assertFeature(actor, 'account')
+    if (!isBossLike(actor)) assertFeature(actor, 'account')
     const full = await sb()
       .from('profiles')
       .select(PROFILE_SELECT)
@@ -1488,13 +1488,14 @@ export const supabaseRepos = {
       .order('updated_at', { ascending: false })
     if (error) throw new AppError(toUserMessage(error, '無法載入工地列表'))
     const sites = (data ?? []).map((row) => mapSite(row))
-    if (!actor || actor.role === 'boss') return sites
+    if (!actor || isBossLike(actor)) return sites
     const [allowed, orgHasAssignments] = await Promise.all([
       this.listAllowedSiteIds(actor.id),
       this.orgHasSiteAssignments(actor.organizationId),
     ])
     return filterSitesByAccess({
       role: actor.role,
+      accessTemplate: actor.accessTemplate,
       sites,
       allowedSiteIds: allowed,
       orgHasAssignments,
@@ -1520,13 +1521,14 @@ export const supabaseRepos = {
     if (!data) return null
     const site = mapSite(data)
     if (actor) assertSameOrganization(actor.organizationId, site.organizationId)
-    if (actor && actor.role !== 'boss') {
+    if (actor && !isBossLike(actor)) {
       const [allowed, orgHasAssignments] = await Promise.all([
         this.listAllowedSiteIds(actor.id),
         this.orgHasSiteAssignments(actor.organizationId),
       ])
       assertCanAccessSite({
         role: actor.role,
+        accessTemplate: actor.accessTemplate,
         siteId: site.id,
         allowedSiteIds: allowed,
         orgHasAssignments,
@@ -1808,6 +1810,9 @@ export const supabaseRepos = {
     },
   ): Promise<AppUser> {
     assertFeature(actor, 'account')
+    if (input.accessTemplate === 'owner' && !isPrimaryBoss(actor)) {
+      throw new AppError('僅老闆帳號可授權等同老闆權限')
+    }
     const tid = requireUuid(targetUserId, '使用者')
     const { data, error } = await sb().rpc('boss_set_member_access', {
       p_target_user_id: tid,
@@ -1848,10 +1853,10 @@ export const supabaseRepos = {
     siteId: string,
     status: SiteProject['status'],
   ): Promise<SiteProject> {
-    if (actor.role !== 'boss') {
+    if (!isBossLike(actor)) {
       throw new AppError('僅老闆可結案／重開工地')
     }
-    assertPermission(actor.role, PERMISSIONS.SITE_WRITE, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.SITE_WRITE, {
       financeAuthorized: actor.financeAuthorized,
     })
     const sid = requireUuid(siteId, '工地')
@@ -1949,7 +1954,7 @@ export const supabaseRepos = {
     input: { userId: string; year: number; month: number },
   ): Promise<AttendanceRecord[]> {
     const uid = requireUuid(input.userId, '使用者')
-    if (actor.role !== 'boss' && actor.id !== uid) {
+    if (!isBossLike(actor) && actor.id !== uid) {
       throw new AppError('只能查看自己的出勤')
     }
     const mm = String(input.month).padStart(2, '0')
@@ -1976,7 +1981,7 @@ export const supabaseRepos = {
     userId: string,
   ): Promise<EmployeePaySetting | null> {
     const uid = requireUuid(userId, '使用者')
-    if (actor.role !== 'boss' && actor.id !== uid) {
+    if (!isBossLike(actor) && actor.id !== uid) {
       throw new AppError('只能查看自己的薪資設定')
     }
     const { data, error } = await sb()
@@ -2002,7 +2007,7 @@ export const supabaseRepos = {
       note?: string | null
     },
   ): Promise<EmployeePaySetting> {
-    assertBossSalaryAction(actor.role)
+    assertBossSalaryAction(actor)
     const uid = requireUuid(input.userId, '使用者')
     const payType = assertPayType(input.payType)
     const baseAmount = Math.round(Number(input.baseAmount))
@@ -2074,11 +2079,11 @@ export const supabaseRepos = {
       .limit(500)
     if (input.userId) {
       const uid = requireUuid(input.userId, '使用者')
-      if (actor.role !== 'boss' && actor.id !== uid) {
+      if (!isBossLike(actor) && actor.id !== uid) {
         throw new AppError('只能查看自己的薪資')
       }
       q = q.eq('user_id', uid)
-    } else if (actor.role !== 'boss') {
+    } else if (!isBossLike(actor)) {
       q = q.eq('user_id', actor.id)
     }
     const { data, error } = await q
@@ -2101,7 +2106,7 @@ export const supabaseRepos = {
       status?: SalaryEntryStatus
     },
   ): Promise<SalaryEntry> {
-    assertBossSalaryAction(actor.role)
+    assertBossSalaryAction(actor)
     const uid = requireUuid(input.userId, '使用者')
     const category = assertSalaryCategory(input.category)
     const amount = assertSalaryAmount(input.amount, category)
@@ -2150,7 +2155,7 @@ export const supabaseRepos = {
       reason?: string | null
     },
   ): Promise<SalaryEntry> {
-    assertBossSalaryAction(actor.role)
+    assertBossSalaryAction(actor)
     const id = requireUuid(input.id, '薪資項目')
     const { data: current, error: loadError } = await sb()
       .from('salary_entries')
@@ -2219,7 +2224,7 @@ export const supabaseRepos = {
       reason: string
     },
   ): Promise<SalaryEntry> {
-    assertBossSalaryAction(actor.role)
+    assertBossSalaryAction(actor)
     const id = requireUuid(input.id, '薪資項目')
     const reason = assertCorrectionReason(input.reason)
     const { data: current, error: loadError } = await sb()
@@ -6139,7 +6144,7 @@ export const supabaseRepos = {
       dailyPurchaseLimitNtd: number
     },
   ): Promise<OrgSpendSettings> {
-    if (actor.role !== 'boss') {
+    if (!isBossLike(actor)) {
       throw new AppError('僅老闆可設定額度')
     }
     const next = assertSpendSettingsInput(input)
@@ -6184,7 +6189,7 @@ export const supabaseRepos = {
       .select(
         'id, organization_id, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
       )
-    if (actor.role !== 'boss') q = q.eq('reported_by', actor.id)
+    if (!isBossLike(actor)) q = q.eq('reported_by', actor.id)
     const { data, error } = await q.order('reported_at', { ascending: false })
     if (error) throw new AppError(toUserMessage(error, '無法載入支出'))
     return (data ?? []).map((row) => ({
@@ -6497,7 +6502,7 @@ export const supabaseRepos = {
       )
       .order('reported_at', { ascending: false })
       .limit(200)
-    if (actor.role !== 'boss') {
+    if (!isBossLike(actor)) {
       q = q.eq('employee_id', actor.id)
     }
     const { data, error } = await q
@@ -6699,7 +6704,7 @@ export const supabaseRepos = {
     let q = sb()
       .from('cash_receipt_reports')
       .select(CASH_RECEIPT_SELECT)
-    if (actor.role !== 'boss') q = q.eq('reported_by', actor.id)
+    if (!isBossLike(actor)) q = q.eq('reported_by', actor.id)
     const { data, error } = await q.order('reported_at', { ascending: false })
     if (error) throw new AppError(toUserMessage(error, '無法載入收款'))
     return (data ?? []).map((row) => mapCashReceiptRow(row))
@@ -6854,7 +6859,7 @@ export const supabaseRepos = {
     actor: AppUser,
     input: { id: string; quotationId: string | null },
   ): Promise<CashReceiptReport> {
-    if (actor.role !== 'boss') throw new AppError('僅老闆可關聯報價')
+    if (!isBossLike(actor)) throw new AppError('僅老闆可關聯報價')
     const id = requireUuid(input.id, '收款')
     const current = (await this.listCashReceipts(actor)).find((e) => e.id === id)
     if (!current) throw new AppError('找不到收款回報')

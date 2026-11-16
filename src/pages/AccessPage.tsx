@@ -14,6 +14,7 @@ import { assertAccountForProvisioning } from '@/domain/loginIdentity'
 import {
   BUILTIN_ROLE_GROUPS,
   ROLE_GROUP_TEMPLATE_LABELS,
+  isPrimaryBoss,
   templateToAccessFields,
   type RoleGroupDefinition,
   type RoleGroupTemplate,
@@ -52,7 +53,7 @@ export function AccessPage() {
   const { user } = useUser()
   const formal = isFormalMode()
   const queryClient = useQueryClient()
-  const isBoss = user?.role === 'boss'
+  const isBoss = isPrimaryBoss(user)
   const canManageAccounts = hasFeature(user, 'account')
 
   const [newName, setNewName] = useState('')
@@ -194,10 +195,10 @@ export function AccessPage() {
       group: RoleGroupDefinition
     }) => {
       if (!user) throw new Error('尚未登入')
-      const fields = templateToAccessFields(input.group.template)
-      if (fields.accessTemplate === 'owner') {
-        throw new Error('不可將他人設為老闆身分')
+      if (!isPrimaryBoss(user)) {
+        throw new Error('僅老闆帳號可指派身分組')
       }
+      const fields = templateToAccessFields(input.group.template)
       return formal
         ? supabaseRepos.setMemberAccess(user, input.targetUserId, {
             roleGroupId: input.group.builtIn ? null : input.group.id,
@@ -245,8 +246,7 @@ export function AccessPage() {
         ? supabaseRepos.setMemberAccess(user, overrideUserId, {
             roleGroupId: group.builtIn ? null : group.id,
             roleGroupName: group.name,
-            accessTemplate:
-              fields.accessTemplate === 'owner' ? 'member' : fields.accessTemplate,
+            accessTemplate: fields.accessTemplate,
             financeAuthorized: Boolean(member.financeAuthorized),
             features: group.features,
             permissionOverrides: overrides,
@@ -254,8 +254,7 @@ export function AccessPage() {
         : localDb.setMemberAccess(user, overrideUserId, {
             roleGroupId: group.id,
             roleGroupName: group.name,
-            accessTemplate:
-              fields.accessTemplate === 'owner' ? 'member' : fields.accessTemplate,
+            accessTemplate: fields.accessTemplate,
             financeAuthorized: Boolean(member.financeAuthorized),
             features: group.features,
             permissionOverrides: overrides,
@@ -454,7 +453,7 @@ export function AccessPage() {
           <section className="panel stack">
             <strong>權限／身分組</strong>
             <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-              老闆帳號為最高管理者，不可被降權。可建立身分組、指派成員，並對個人覆寫權限。
+              老闆帳號為最高管理者，不可被降權。可將現場帳號設為「老闆／管理者」，營運權限等同老闆（結案、審核等），原老闆帳號可專做後台管理。
             </p>
           </section>
 
@@ -508,64 +507,68 @@ export function AccessPage() {
 
           <section className="panel stack">
             <strong>既有身分組</strong>
-            {groups
-              .filter((g) => g.template !== 'owner')
-              .map((g) => (
-                <div key={g.id} className="site-link stack">
-                  <div className="row between">
-                    <strong style={{ margin: 0 }}>{g.name}</strong>
-                    <span className="badge steel">
-                      {ROLE_GROUP_TEMPLATE_LABELS[g.template]}
-                    </span>
-                  </div>
-                  <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
-                    {FEATURE_KEYS.filter((k) => g.features[k])
-                      .map((k) => FEATURE_LABELS[k])
-                      .join('、') || '無開啟功能'}
-                  </p>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      setEditGroupId(g.id)
-                      setEditFeatures({ ...g.features })
-                    }}
-                  >
-                    調整功能權限
-                  </button>
-                  {editGroupId === g.id ? (
-                    <div className="stack">
-                      <FeatureChecklist
-                        value={editFeatures}
-                        onChange={setEditFeatures}
-                      />
-                      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                        <button
-                          type="button"
-                          className="btn btn-primary"
-                          disabled={saveGroupFeatures.isPending}
-                          onClick={() =>
-                            void saveGroupFeatures
-                              .mutateAsync()
-                              .catch(() => undefined)
-                          }
-                        >
-                          {saveGroupFeatures.isPending
-                            ? '儲存中…'
-                            : '儲存身分組權限'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={() => setEditGroupId(null)}
-                        >
-                          取消
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
+            {groups.map((g) => (
+              <div key={g.id} className="site-link stack">
+                <div className="row between">
+                  <strong style={{ margin: 0 }}>{g.name}</strong>
+                  <span className="badge steel">
+                    {ROLE_GROUP_TEMPLATE_LABELS[g.template]}
+                  </span>
                 </div>
-              ))}
+                <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+                  {g.template === 'owner'
+                    ? '等同老闆營運權限（結案、審核、帳號功能等）；不可在此改功能清單'
+                    : FEATURE_KEYS.filter((k) => g.features[k])
+                        .map((k) => FEATURE_LABELS[k])
+                        .join('、') || '無開啟功能'}
+                </p>
+                {g.template === 'owner' ? null : (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => {
+                        setEditGroupId(g.id)
+                        setEditFeatures({ ...g.features })
+                      }}
+                    >
+                      調整功能權限
+                    </button>
+                    {editGroupId === g.id ? (
+                      <div className="stack">
+                        <FeatureChecklist
+                          value={editFeatures}
+                          onChange={setEditFeatures}
+                        />
+                        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            disabled={saveGroupFeatures.isPending}
+                            onClick={() =>
+                              void saveGroupFeatures
+                                .mutateAsync()
+                                .catch(() => undefined)
+                            }
+                          >
+                            {saveGroupFeatures.isPending
+                              ? '儲存中…'
+                              : '儲存身分組權限'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => setEditGroupId(null)}
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ))}
           </section>
 
           <section className="panel stack">
@@ -609,13 +612,12 @@ export function AccessPage() {
                         <option value="" disabled>
                           選擇身分組…
                         </option>
-                        {groups
-                          .filter((g) => g.template !== 'owner')
-                          .map((g) => (
-                            <option key={g.id} value={g.id}>
-                              {g.name}
-                            </option>
-                          ))}
+                        {groups.map((g) => (
+                          <option key={g.id} value={g.id}>
+                            {g.name}
+                            {g.template === 'owner' ? '（等同老闆）' : ''}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <button

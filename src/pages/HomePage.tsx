@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
+import { isBossLike } from '@/domain/roleGroups'
 import { selectOpenSites } from '@/domain/siteStatus'
 import { useAttendance } from '@/hooks/useAttendance'
 import { useFieldFinance } from '@/hooks/useFieldFinance'
@@ -52,7 +53,7 @@ export function HomePage() {
   } = useAttendance(user?.id)
 
   const busy = isClockingIn || isClockingOut
-  const isBoss = user?.role === 'boss'
+  const isBoss = isBossLike(user)
   const pendingExpenses = expenses.filter((e) => e.status === 'pending_review')
   const pendingReceipts = receipts.filter((e) => e.status === 'pending_confirm')
   const myPendingExpenses = expenses.filter(
