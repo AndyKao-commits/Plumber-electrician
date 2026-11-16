@@ -1,11 +1,13 @@
-/** Salary module V1 domain helpers. */
+/** Salary module domain helpers. */
 
+import { workDaysFromEntries } from '@/domain/salaryDailyWage'
 import type {
   PayType,
   SalaryEntry,
   SalaryEntryCategory,
   SalaryEntryStatus,
   SalaryMonthSummary,
+  SalaryPayment,
 } from './types'
 
 export const PAY_TYPE_LABELS: Record<PayType, string> = {
@@ -107,28 +109,100 @@ export function currentTaipeiPeriod(now = new Date()): {
   return { year, month, label: `${year} 年 ${month} 月` }
 }
 
-export function summarizeSalaryMonth(entries: SalaryEntry[]): SalaryMonthSummary {
+/** Calendar / legend colors by salary category. */
+export const SALARY_CATEGORY_COLORS: Record<SalaryEntryCategory, string> = {
+  base: '#1f4e79',
+  overtime: '#b45309',
+  sales_bonus: '#0f766e',
+  case_bonus: '#6d28d9',
+  other_bonus: '#0369a1',
+  deduction: '#b91c1c',
+  adjustment: '#475569',
+}
+
+export function summarizeSalaryMonth(
+  entries: SalaryEntry[],
+  payments: SalaryPayment[] = [],
+): SalaryMonthSummary {
   let confirmedTotal = 0
   let pendingTotal = 0
-  let paidTotal = 0
+  let legacyPaidEntries = 0
   for (const e of entries) {
     if (e.status === 'cancelled' || e.status === 'draft') continue
     if (e.status === 'pending') pendingTotal += e.amount
     if (e.status === 'confirmed') confirmedTotal += e.amount
     if (e.status === 'paid') {
       confirmedTotal += e.amount
-      paidTotal += e.amount
+      legacyPaidEntries += e.amount
     }
   }
-  return { confirmedTotal, pendingTotal, paidTotal }
+  const paymentSum = payments.reduce((s, p) => s + p.amount, 0)
+  const paidTotal = paymentSum > 0 ? paymentSum : legacyPaidEntries
+  const unpaidTotal = confirmedTotal - paidTotal
+  return {
+    confirmedTotal,
+    pendingTotal,
+    paidTotal,
+    unpaidTotal,
+    workDays: workDaysFromEntries(entries),
+  }
+}
+
+/** Cross-month unpaid balance for employee home. */
+export function summarizeUnpaidAcrossMonths(
+  months: Array<{ year: number; month: number; summary: SalaryMonthSummary }>,
+): {
+  unpaidTotal: number
+  months: Array<{
+    year: number
+    month: number
+    unpaidTotal: number
+    confirmedTotal: number
+    paidTotal: number
+    workDays: number
+  }>
+} {
+  const rows = months
+    .map((m) => ({
+      year: m.year,
+      month: m.month,
+      unpaidTotal: m.summary.unpaidTotal,
+      confirmedTotal: m.summary.confirmedTotal,
+      paidTotal: m.summary.paidTotal,
+      workDays: m.summary.workDays,
+      pendingTotal: m.summary.pendingTotal,
+    }))
+    .filter(
+      (m) =>
+        m.unpaidTotal !== 0 ||
+        m.confirmedTotal !== 0 ||
+        m.pendingTotal !== 0,
+    )
+    .sort((a, b) =>
+      a.year === b.year ? b.month - a.month : b.year - a.year,
+    )
+  return {
+    unpaidTotal: rows.reduce((s, r) => s + r.unpaidTotal, 0),
+    months: rows,
+  }
 }
 
 export function canConfirmSalaryEntry(status: SalaryEntryStatus): boolean {
   return status === 'draft' || status === 'pending'
 }
 
+/** @deprecated Prefer salary_payments; kept for legacy status transitions. */
 export function canMarkSalaryPaid(status: SalaryEntryStatus): boolean {
   return status === 'confirmed'
+}
+
+export function defaultSettlementPeriod(now = new Date()): {
+  year: number
+  month: number
+} {
+  const cur = currentTaipeiPeriod(now)
+  if (cur.month === 1) return { year: cur.year - 1, month: 12 }
+  return { year: cur.year, month: cur.month - 1 }
 }
 
 export function assertCorrectionReason(reason: string): string {

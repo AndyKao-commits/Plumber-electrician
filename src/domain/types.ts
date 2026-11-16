@@ -31,6 +31,8 @@ export interface EmployeePaySetting {
   updatedAt: string
 }
 
+export type SalaryEntrySource = 'manual' | 'attendance_daily'
+
 export interface SalaryEntry {
   id: string
   organizationId: string
@@ -46,6 +48,12 @@ export interface SalaryEntry {
   siteId?: string | null
   siteName?: string | null
   status: SalaryEntryStatus
+  /** manual | attendance_daily (打卡自動日薪) */
+  source?: SalaryEntrySource | null
+  /** Taipei YYYY-MM-DD for auto daily wage */
+  attendanceDate?: string | null
+  /** 1 = 整天, 0.5 = 半天 */
+  dayFraction?: number | null
   createdBy: string
   confirmedBy?: string | null
   confirmedAt?: string | null
@@ -58,10 +66,30 @@ export interface SalaryEntry {
   updatedAt: string
 }
 
+/** Actual cash paid toward a settlement month (may be multiple rows). */
+export interface SalaryPayment {
+  id: string
+  organizationId: string
+  employeeId: string
+  employeeName: string
+  settlementYear: number
+  settlementMonth: number
+  amount: number
+  paidOn: string
+  note?: string | null
+  createdBy: string
+  createdAt: string
+}
+
 export interface SalaryMonthSummary {
+  /** 應領：已確認（含舊版已支付狀態） */
   confirmedTotal: number
   pendingTotal: number
+  /** 實領／已付：付款紀錄加總（無付款時回退舊 status=paid） */
   paidTotal: number
+  unpaidTotal: number
+  /** 出工天數（整天＋半天） */
+  workDays: number
 }
 
 export type JobType = 'project' | 'repair' | 'purchase' | 'office' | 'other'

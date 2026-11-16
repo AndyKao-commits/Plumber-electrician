@@ -16,6 +16,8 @@ export const salaryKeys = {
   settings: (userId?: string) => [...salaryKeys.all, 'settings', userId] as const,
   entries: (year: number, month: number, userId?: string) =>
     [...salaryKeys.all, 'entries', year, month, userId ?? 'all'] as const,
+  payments: (year: number, month: number, userId?: string) =>
+    [...salaryKeys.all, 'payments', year, month, userId ?? 'all'] as const,
   attendance: (userId: string, year: number, month: number) =>
     [...salaryKeys.all, 'attendance', userId, year, month] as const,
 }
@@ -64,6 +66,29 @@ export function useSalaryPeriod(year: number, month: number, userId?: string) {
     },
   })
 
+  const paymentsQuery = useQuery({
+    queryKey: salaryKeys.payments(year, month, targetUserId),
+    enabled: Boolean(user && targetUserId),
+    queryFn: async () => {
+      if (!user || !targetUserId) return []
+      try {
+        return formal
+          ? await supabaseRepos.listSalaryPayments(user, {
+              year,
+              month,
+              employeeId: targetUserId,
+            })
+          : localDb.listSalaryPayments({
+              year,
+              month,
+              employeeId: targetUserId,
+            })
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入付款紀錄'))
+      }
+    },
+  })
+
   const allEntriesQuery = useQuery({
     queryKey: salaryKeys.entries(year, month, 'all'),
     enabled: Boolean(user && isBossLike(user)),
@@ -75,6 +100,21 @@ export function useSalaryPeriod(year: number, month: number, userId?: string) {
           : localDb.listSalaryEntries({ year, month })
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入全員薪資'))
+      }
+    },
+  })
+
+  const allPaymentsQuery = useQuery({
+    queryKey: salaryKeys.payments(year, month, 'all'),
+    enabled: Boolean(user && isBossLike(user)),
+    queryFn: async () => {
+      if (!user) return []
+      try {
+        return formal
+          ? await supabaseRepos.listSalaryPayments(user, { year, month })
+          : localDb.listSalaryPayments({ year, month })
+      } catch (e) {
+        throw new Error(toUserMessage(e, '無法載入付款紀錄'))
       }
     },
   })
@@ -165,23 +205,63 @@ export function useSalaryPeriod(year: number, month: number, userId?: string) {
     onSuccess: invalidate,
   })
 
+  const createPayment = useMutation({
+    mutationFn: async (input: {
+      employeeId: string
+      employeeName: string
+      settlementYear: number
+      settlementMonth: number
+      amount: number
+      paidOn: string
+      note?: string | null
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      return formal
+        ? supabaseRepos.createSalaryPayment(user, input)
+        : localDb.createSalaryPayment(user, input)
+    },
+    onSuccess: invalidate,
+  })
+
+  const syncDailyWages = useMutation({
+    mutationFn: async (input: {
+      userId: string
+      userName: string
+      year: number
+      month: number
+    }) => {
+      if (!user) throw new Error('尚未登入')
+      return formal
+        ? supabaseRepos.syncAttendanceDailyWages(user, input)
+        : localDb.syncAttendanceDailyWages(user, input)
+    },
+    onSuccess: invalidate,
+  })
+
   return {
     setting: settingsQuery.data ?? null,
     entries: entriesQuery.data ?? [],
+    payments: paymentsQuery.data ?? [],
     allEntries: allEntriesQuery.data ?? [],
+    allPayments: allPaymentsQuery.data ?? [],
     attendance: attendanceQuery.data ?? [],
     isLoading:
       settingsQuery.isLoading ||
       entriesQuery.isLoading ||
+      paymentsQuery.isLoading ||
       attendanceQuery.isLoading,
     upsertSetting: upsertSetting.mutateAsync,
     createEntry: createEntry.mutateAsync,
     updateEntryStatus: updateEntryStatus.mutateAsync,
     correctEntry: correctEntry.mutateAsync,
+    createPayment: createPayment.mutateAsync,
+    syncDailyWages: syncDailyWages.mutateAsync,
     isSaving:
       upsertSetting.isPending ||
       createEntry.isPending ||
       updateEntryStatus.isPending ||
-      correctEntry.isPending,
+      correctEntry.isPending ||
+      createPayment.isPending ||
+      syncDailyWages.isPending,
   }
 }

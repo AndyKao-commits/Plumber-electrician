@@ -121,6 +121,7 @@ import type {
   SalaryEntry,
   SalaryEntryCategory,
   SalaryEntryStatus,
+  SalaryPayment,
   CashReceiptReport,
   PayType,
   AuditLogEntry,
@@ -231,6 +232,7 @@ import {
   canMarkSalaryPaid,
   periodFromDate,
 } from '@/domain/salary'
+import { buildDailyWageDrafts } from '@/domain/salaryDailyWage'
 import { buildAuditEntry, type AuditAction } from '@/domain/auditLog'
 import {
   assertSpendSettingsInput,
@@ -304,6 +306,7 @@ const KEYS = {
   employeeAdvances: 'eg.employeeAdvances.v1',
   employeePaySettings: 'eg.employeePaySettings.v1',
   salaryEntries: 'eg.salaryEntries.v1',
+  salaryPayments: 'eg.salaryPayments.v1',
   salaryCorrections: 'eg.salaryCorrections.v1',
   auditLogs: 'eg.auditLogs.v1',
   orgSpendSettings: 'eg.orgSpendSettings.v1',
@@ -378,6 +381,7 @@ const emptyCashReceipts: CashReceiptReport[] = []
 const emptyEmployeeAdvances: EmployeeAdvance[] = []
 const emptyEmployeePaySettings: EmployeePaySetting[] = []
 const emptySalaryEntries: SalaryEntry[] = []
+const emptySalaryPayments: SalaryPayment[] = []
 const emptySalaryCorrections: Array<{
   id: string
   salaryEntryId: string
@@ -809,6 +813,7 @@ function seedIfNeeded() {
   write(KEYS.employeeAdvances, emptyEmployeeAdvances)
   write(KEYS.employeePaySettings, emptyEmployeePaySettings)
   write(KEYS.salaryEntries, emptySalaryEntries)
+  write(KEYS.salaryPayments, emptySalaryPayments)
   write(KEYS.salaryCorrections, emptySalaryCorrections)
   write(KEYS.cashReceipts, emptyCashReceipts)
   write(KEYS.auditLogs, emptyAuditLogs)
@@ -1298,7 +1303,7 @@ export const localDb = {
   },
 
   createSalaryEntry(
-    actor: { id: string; role: AppUser['role'] },
+    actor: { id: string; role: AppUser['role']; accessTemplate?: AppUser['accessTemplate'] },
     input: {
       userId: string
       userName: string
@@ -1310,6 +1315,9 @@ export const localDb = {
       siteId?: string | null
       siteName?: string | null
       status?: SalaryEntryStatus
+      source?: SalaryEntry['source']
+      attendanceDate?: string | null
+      dayFraction?: number | null
     },
   ): SalaryEntry {
     assertBossSalaryAction(actor)
@@ -1333,6 +1341,9 @@ export const localDb = {
       siteId: input.siteId || null,
       siteName: input.siteName || null,
       status: input.status ?? 'pending',
+      source: input.source ?? 'manual',
+      attendanceDate: input.attendanceDate?.slice(0, 10) || null,
+      dayFraction: input.dayFraction ?? null,
       createdBy: actor.id,
       createdAt: now,
       updatedAt: now,
@@ -1341,6 +1352,114 @@ export const localDb = {
     all.unshift(row)
     write(KEYS.salaryEntries, all)
     return row
+  },
+
+  listSalaryPayments(filter: {
+    year: number
+    month: number
+    employeeId?: string
+  }): SalaryPayment[] {
+    return read(KEYS.salaryPayments, emptySalaryPayments)
+      .filter((p) => {
+        if (
+          p.settlementYear !== filter.year ||
+          p.settlementMonth !== filter.month
+        ) {
+          return false
+        }
+        if (filter.employeeId && p.employeeId !== filter.employeeId) return false
+        return true
+      })
+      .sort((a, b) => a.paidOn.localeCompare(b.paidOn))
+  },
+
+  createSalaryPayment(
+    actor: {
+      id: string
+      role: AppUser['role']
+      accessTemplate?: AppUser['accessTemplate']
+    },
+    input: {
+      employeeId: string
+      employeeName: string
+      settlementYear: number
+      settlementMonth: number
+      amount: number
+      paidOn: string
+      note?: string | null
+    },
+  ): SalaryPayment {
+    assertBossSalaryAction(actor)
+    const amount = Math.round(Number(input.amount))
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('實付金額需為正整數')
+    }
+    const row: SalaryPayment = {
+      id: `salpay-${crypto.randomUUID()}`,
+      organizationId: ORG_ID,
+      employeeId: input.employeeId,
+      employeeName: input.employeeName.trim() || '員工',
+      settlementYear: input.settlementYear,
+      settlementMonth: input.settlementMonth,
+      amount,
+      paidOn: input.paidOn.slice(0, 10),
+      note: input.note?.trim() || null,
+      createdBy: actor.id,
+      createdAt: new Date().toISOString(),
+    }
+    const all = read(KEYS.salaryPayments, emptySalaryPayments)
+    all.unshift(row)
+    write(KEYS.salaryPayments, all)
+    return row
+  },
+
+  syncAttendanceDailyWages(
+    actor: {
+      id: string
+      role: AppUser['role']
+      accessTemplate?: AppUser['accessTemplate']
+    },
+    input: {
+      userId: string
+      userName: string
+      year: number
+      month: number
+    },
+  ): { created: number } {
+    assertBossSalaryAction(actor)
+    const setting = this.getEmployeePaySetting(input.userId)
+    if (!setting || setting.payType !== 'daily') return { created: 0 }
+    const attendance = this.listAttendanceForMonth(
+      input.userId,
+      input.year,
+      input.month,
+    )
+    const existing = this.listSalaryEntries({
+      year: input.year,
+      month: input.month,
+      userId: input.userId,
+    })
+    const drafts = buildDailyWageDrafts({
+      attendance,
+      dailyRate: setting.baseAmount,
+      existingEntries: existing,
+    })
+    for (const d of drafts) {
+      this.createSalaryEntry(actor, {
+        userId: input.userId,
+        userName: input.userName,
+        entryDate: d.attendanceDate,
+        category: 'base',
+        amount: d.amount,
+        title: d.title,
+        note: d.note,
+        status: 'pending',
+        source: 'attendance_daily',
+        attendanceDate: d.attendanceDate,
+        dayFraction: d.dayFraction,
+      })
+    }
+    return { created: drafts.length }
   },
 
   updateSalaryEntryStatus(
