@@ -68,8 +68,21 @@ export function assertSalaryAmount(value: number, category: SalaryEntryCategory)
   return value
 }
 
-export function assertBossSalaryAction(role: string) {
-  if (role !== 'boss') throw new Error('僅老闆可操作薪資管理')
+export function assertBossSalaryAction(
+  roleOrUser: string | { role: string; accessTemplate?: string | null },
+) {
+  const role =
+    typeof roleOrUser === 'string' ? roleOrUser : roleOrUser.role
+  const accessTemplate =
+    typeof roleOrUser === 'string' ? null : roleOrUser.accessTemplate
+  if (
+    role === 'boss' ||
+    role === 'owner' ||
+    accessTemplate === 'owner'
+  ) {
+    return
+  }
+  throw new Error('僅老闆可操作薪資管理')
 }
 
 export function periodFromDate(isoOrDate: string): { year: number; month: number } {

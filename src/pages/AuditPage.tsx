@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { AUDIT_ACTION_LABELS, type AuditAction } from '@/domain/auditLog'
+import { isBossLike } from '@/domain/roleGroups'
 import { isFormalMode } from '@/lib/dataMode'
 import { localDb } from '@/lib/localDb'
 import { supabaseRepos } from '@/lib/supabaseRepos'
@@ -18,7 +19,7 @@ export function AuditPage() {
         : localDb.listAuditLogs(80),
   })
 
-  if (user?.role !== 'boss') {
+  if (!isBossLike(user)) {
     return (
       <div className="stack fade-up">
         <section className="panel">

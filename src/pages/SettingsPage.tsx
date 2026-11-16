@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
+import { isBossLike } from '@/domain/roleGroups'
 import { useOrgSpendSettings } from '@/hooks/useOrgSpendSettings'
 import { useUser } from '@/hooks/useUser'
 
@@ -13,7 +14,7 @@ export function SettingsPage() {
     isUpdating,
     updateError,
   } = useOrgSpendSettings(user)
-  const isBoss = user?.role === 'boss'
+  const isBoss = isBossLike(user)
 
   const [reportThreshold, setReportThreshold] = useState('')
   const [saved, setSaved] = useState(false)

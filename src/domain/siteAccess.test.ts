@@ -11,6 +11,15 @@ describe('site access', () => {
     expect(
       filterSitesByAccess({
         role: 'employee',
+        accessTemplate: 'owner',
+        sites,
+        allowedSiteIds: [],
+        orgHasAssignments: true,
+      }),
+    ).toHaveLength(3)
+    expect(
+      filterSitesByAccess({
+        role: 'employee',
         sites,
         allowedSiteIds: ['b'],
         orgHasAssignments: true,

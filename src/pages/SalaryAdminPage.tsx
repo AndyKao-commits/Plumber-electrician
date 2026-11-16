@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { isBossLike } from '@/domain/roleGroups'
 import {
   PAY_TYPE_LABELS,
   SALARY_CATEGORIES,
@@ -26,7 +27,7 @@ export function SalaryAdminPage() {
 
   const directoryQuery = useQuery({
     queryKey: [...userKeys.directory(), 'salary'],
-    enabled: Boolean(user && user.role === 'boss'),
+    enabled: Boolean(user && isBossLike(user)),
     queryFn: async () => {
       if (!user) return []
       return formal
@@ -93,7 +94,7 @@ export function SalaryAdminPage() {
   }, [allEntries, members])
 
   if (!user) return <div className="empty">請先登入</div>
-  if (user.role !== 'boss') {
+  if (!isBossLike(user)) {
     return <div className="empty">僅老闆可進入薪資管理</div>
   }
 

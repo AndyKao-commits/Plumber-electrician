@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { isBossLike } from '@/domain/roleGroups'
 import type {
   PayType,
   SalaryEntryCategory,
@@ -65,7 +66,7 @@ export function useSalaryPeriod(year: number, month: number, userId?: string) {
 
   const allEntriesQuery = useQuery({
     queryKey: salaryKeys.entries(year, month, 'all'),
-    enabled: Boolean(user && user.role === 'boss'),
+    enabled: Boolean(user && isBossLike(user)),
     queryFn: async () => {
       if (!user) return []
       try {

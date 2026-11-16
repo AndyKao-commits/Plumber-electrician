@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { isBossLike } from '@/domain/roleGroups'
 import { MORE_MENU } from '@/domain/rules'
 import { useNotices } from '@/hooks/useNotices'
 import { useUser } from '@/hooks/useUser'
@@ -6,7 +7,7 @@ import { useUser } from '@/hooks/useUser'
 export function MorePage() {
   const { user } = useUser()
   const { unreadCount, todos } = useNotices(user?.id)
-  const isBoss = user?.role === 'boss'
+  const isBoss = isBossLike(user)
 
   const groups = MORE_MENU.map((group) => ({
     ...group,

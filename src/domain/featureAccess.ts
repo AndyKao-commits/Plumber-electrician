@@ -116,16 +116,17 @@ export function effectiveFeatures(input: {
   if (input.role === 'boss' || input.role === 'owner') {
     return emptyFeatures(true)
   }
+  // Delegated「老闆／管理者」— full feature set like primary boss
+  if (input.accessTemplate === 'owner') {
+    return emptyFeatures(true)
+  }
   const template =
     input.accessTemplate === 'admin' ||
     input.accessTemplate === 'member' ||
-    input.accessTemplate === 'owner' ||
     input.accessTemplate === 'finance'
       ? input.accessTemplate
       : 'member'
-  const fromTemplate = featuresForTemplate(
-    template === 'owner' ? 'admin' : template,
-  )
+  const fromTemplate = featuresForTemplate(template)
   const fromGroup = mergeFeatures(fromTemplate, input.features)
   return mergeFeatures(fromGroup, input.permissionOverrides)
 }

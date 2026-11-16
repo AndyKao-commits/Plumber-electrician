@@ -9,7 +9,11 @@ import {
   buildSiteDeleteImpact,
   deletedSiteFinanceLabel,
 } from '@/domain/siteDeleteImpact'
-import { withNormalizedFeatures } from '@/domain/roleGroups'
+import {
+  isBossLike,
+  isPrimaryBoss,
+  withNormalizedFeatures,
+} from '@/domain/roleGroups'
 import {
   assertEmergencyReserveAllowed,
   sumOccupiedQuota,
@@ -863,7 +867,13 @@ export const localDb = {
     else localStorage.setItem(KEYS.sessionUserId, id)
   },
 
-  getSites(actor?: { id: string; role: AppUser['role'] } | null): SiteProject[] {
+  getSites(
+    actor?: {
+      id: string
+      role: AppUser['role']
+      accessTemplate?: AppUser['accessTemplate']
+    } | null,
+  ): SiteProject[] {
     const all = read(KEYS.sites, emptySites).sort((a, b) =>
       b.updatedAt.localeCompare(a.updatedAt),
     )
@@ -871,6 +881,7 @@ export const localDb = {
     const members = read(KEYS.siteMembers, emptySiteMembers)
     return filterSitesByAccess({
       role: actor.role,
+      accessTemplate: actor.accessTemplate,
       sites: all,
       allowedSiteIds: members
         .filter((m) => m.userId === actor.id)
@@ -896,11 +907,15 @@ export const localDb = {
   },
 
   setSiteMembers(
-    actor: { id: string; role: AppUser['role'] },
+    actor: {
+      id: string
+      role: AppUser['role']
+      accessTemplate?: AppUser['accessTemplate']
+    },
     siteId: string,
     userIds: string[],
   ): void {
-    if (actor.role !== 'boss') throw new Error('僅老闆可設定工地權限')
+    if (!isBossLike(actor)) throw new Error('僅老闆可設定工地權限')
     if (!read(KEYS.sites, emptySites).some((s) => s.id === siteId)) {
       throw new Error('找不到工地')
     }
@@ -916,7 +931,11 @@ export const localDb = {
   },
 
   updateProfile(
-    actor: { id: string; role: AppUser['role'] },
+    actor: {
+      id: string
+      role: AppUser['role']
+      accessTemplate?: AppUser['accessTemplate']
+    },
     targetUserId: string,
     input: {
       name?: string | null
@@ -932,13 +951,13 @@ export const localDb = {
     const idx = users.findIndex((u) => u.id === targetUserId)
     if (idx < 0) throw new Error('找不到使用者')
     const self = actor.id === targetUserId
-    if (!self && actor.role !== 'boss') {
+    if (!self && !isBossLike(actor)) {
       throw new Error('僅本人或老闆可更新資料')
     }
     const fields = normalizeProfileFields(input)
     let nextStatus = users[idx].accountStatus ?? 'active'
     if (input.accountStatus != null) {
-      if (actor.role !== 'boss') throw new Error('僅老闆可停用帳號')
+      if (!isBossLike(actor)) throw new Error('僅老闆可停用帳號')
       nextStatus = assertAccountStatus(input.accountStatus)
     }
     const nextName =
@@ -948,7 +967,7 @@ export const localDb = {
     const existingHired = users[idx].hiredAt ?? null
     let nextHired = existingHired
     if (input.hiredAt !== undefined) {
-      if (existingHired && actor.role !== 'boss') {
+      if (existingHired && !isBossLike(actor)) {
         if (fields.hiredAt !== existingHired) {
           throw new Error('到職日已鎖定，僅老闆可修改')
         }
@@ -980,11 +999,15 @@ export const localDb = {
   },
 
   updateSiteStatus(
-    actor: { id: string; role: AppUser['role'] },
+    actor: {
+      id: string
+      role: AppUser['role']
+      accessTemplate?: AppUser['accessTemplate']
+    },
     siteId: string,
     status: SiteProject['status'],
   ): SiteProject {
-    if (actor.role !== 'boss') throw new Error('僅老闆可結案／重開工地')
+    if (!isBossLike(actor)) throw new Error('僅老闆可結案／重開工地')
     const next = assertSiteStatus(status)
     const all = read(KEYS.sites, emptySites)
     const idx = all.findIndex((s) => s.id === siteId)
@@ -1120,11 +1143,13 @@ export const localDb = {
     },
   ): AppUser {
     assertFeature(actor, 'account')
-    if (input.accessTemplate === 'owner') throw new Error('不可將他人設為老闆身分')
+    if (input.accessTemplate === 'owner' && !isPrimaryBoss(actor)) {
+      throw new Error('僅老闆帳號可授權等同老闆權限')
+    }
     const users = this.getUsers()
     const idx = users.findIndex((u) => u.id === targetUserId)
     if (idx < 0) throw new Error('找不到使用者')
-    if (users[idx].role === 'boss') throw new Error('不可變更老闆帳號的身分組')
+    if (isPrimaryBoss(users[idx])) throw new Error('不可變更老闆帳號的身分組')
     const updated: AppUser = {
       ...users[idx],
       roleGroupId: input.roleGroupId ?? null,
@@ -1210,7 +1235,7 @@ export const localDb = {
       note?: string | null
     },
   ): EmployeePaySetting {
-    assertBossSalaryAction(actor.role)
+    assertBossSalaryAction(actor)
     const payType = assertPayType(input.payType)
     const baseAmount = Math.round(Number(input.baseAmount))
     if (!Number.isFinite(baseAmount) || baseAmount < 0) {
@@ -1287,7 +1312,7 @@ export const localDb = {
       status?: SalaryEntryStatus
     },
   ): SalaryEntry {
-    assertBossSalaryAction(actor.role)
+    assertBossSalaryAction(actor)
     const category = assertSalaryCategory(input.category)
     const amount = assertSalaryAmount(input.amount, category)
     const entryDate = input.entryDate.slice(0, 10)
@@ -1326,7 +1351,7 @@ export const localDb = {
       reason?: string | null
     },
   ): SalaryEntry {
-    assertBossSalaryAction(actor.role)
+    assertBossSalaryAction(actor)
     const all = read(KEYS.salaryEntries, emptySalaryEntries)
     const idx = all.findIndex((e) => e.id === input.id)
     if (idx < 0) throw new Error('找不到薪資項目')
@@ -1364,7 +1389,7 @@ export const localDb = {
       reason: string
     },
   ): SalaryEntry {
-    assertBossSalaryAction(actor.role)
+    assertBossSalaryAction(actor)
     const reason = assertCorrectionReason(input.reason)
     const all = read(KEYS.salaryEntries, emptySalaryEntries)
     const idx = all.findIndex((e) => e.id === input.id)
@@ -4839,7 +4864,7 @@ export const localDb = {
     actor: { id: string; name: string; role: AppUser['role'] },
     input: { id: string; quotationId: string | null },
   ): CashReceiptReport {
-    if (actor.role !== 'boss') throw new Error('僅老闆可關聯報價')
+    if (!isBossLike(actor)) throw new Error('僅老闆可關聯報價')
     const all = read(KEYS.cashReceipts, emptyCashReceipts)
     const idx = all.findIndex((e) => e.id === input.id)
     if (idx < 0) throw new Error('找不到收款回報')
@@ -4988,7 +5013,7 @@ getOrgSpendSettings(): OrgSpendSettings {
       dailyPurchaseLimitNtd: number
     },
   ): OrgSpendSettings {
-    if (actor.role !== 'boss') throw new Error('僅老闆可設定額度')
+    if (!isBossLike(actor)) throw new Error('僅老闆可設定額度')
     const next = assertSpendSettingsInput(input)
     const row: OrgSpendSettings = {
       organizationId: ORG_ID,

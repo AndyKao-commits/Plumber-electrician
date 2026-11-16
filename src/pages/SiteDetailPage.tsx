@@ -1,6 +1,7 @@
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { hasFeature } from '@/domain/featureAccess'
+import { isBossLike } from '@/domain/roleGroups'
 import { SITE_STATUS_LABELS } from '@/domain/siteStatus'
 import type { DefectSeverity } from '@/domain/types'
 import {
@@ -31,6 +32,7 @@ import {
   generateSiteReportPdfBlob,
   siteReportPdfFilename,
 } from '@/lib/siteReportExport'
+import { mapsNavigationUrl } from '@/lib/mapsNav'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { taipeiDateString } from '@/lib/time'
 export function SiteDetailPage() {
@@ -53,7 +55,8 @@ export function SiteDetailPage() {
   const { openShift, assignSite, isAssigningSite } = useAttendance(user?.id)
   const formal = isFormalMode()
   const { photos } = usePhotos(siteId)
-  const isBoss = user?.role === 'boss'
+  const isBoss = isBossLike(user)
+  const addressNavUrl = site?.address ? mapsNavigationUrl(site.address) : null
   const [memberDraft, setMemberDraft] = useState<string[]>([])
   const { reports } = useReports(siteId)
   const {
@@ -265,8 +268,26 @@ export function SiteDetailPage() {
         </div>
         <h2 style={{ margin: 0, fontSize: '1.8rem' }}>{site.name}</h2>
         <p className="muted" style={{ margin: 0 }}>
-          {[site.customerName, site.address].filter(Boolean).join(' · ') ||
-            '尚未填寫客戶或地址'}
+          {site.customerName || site.address ? (
+            <>
+              {site.customerName ? <span>{site.customerName}</span> : null}
+              {site.customerName && site.address ? ' · ' : null}
+              {addressNavUrl ? (
+                <a
+                  href={addressNavUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'inherit', textDecoration: 'underline' }}
+                >
+                  {site.address!.trim()}（導航）
+                </a>
+              ) : site.address ? (
+                <span>{site.address}</span>
+              ) : null}
+            </>
+          ) : (
+            '尚未填寫客戶或地址'
+          )}
         </p>
         {isBoss ? (
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>

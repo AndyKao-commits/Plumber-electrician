@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { isBossLike } from '@/domain/roleGroups'
 import { isFormalMode } from '@/lib/dataMode'
 import { toUserMessage } from '@/lib/errors'
 import { localDb } from '@/lib/localDb'
@@ -54,7 +55,7 @@ export function useFieldFinance(userId: string | undefined) {
     queryFn: async () => {
       try {
         if (formal) return await supabaseRepos.listEmployeeAdvances(user!)
-        if (user?.role === 'boss') {
+        if (isBossLike(user)) {
           return localDb.listEmployeeAdvances()
         }
         return localDb.listEmployeeAdvances({ employeeId: userId })

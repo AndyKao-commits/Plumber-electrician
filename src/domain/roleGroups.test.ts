@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { hasPermission, PERMISSIONS } from '@/domain/permissions'
 import {
+  isBossLike,
+  isPrimaryBoss,
   permissionRoleOf,
   templateToAccessFields,
 } from '@/domain/roleGroups'
@@ -21,6 +23,13 @@ describe('roleGroups', () => {
     expect(permissionRoleOf({ role: 'boss', accessTemplate: 'member' })).toBe(
       'boss',
     )
+  })
+
+  it('owner template employee is boss-like for operations', () => {
+    const delegate = { role: 'employee', accessTemplate: 'owner' as const }
+    expect(isPrimaryBoss(delegate)).toBe(false)
+    expect(isBossLike(delegate)).toBe(true)
+    expect(permissionRoleOf(delegate)).toBe('boss')
   })
 
   it('admin template can approve purchases without finance.read', () => {
