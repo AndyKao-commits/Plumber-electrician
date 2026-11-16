@@ -28,6 +28,20 @@ describe('salary domain', () => {
       confirmedTotal: 31000,
       pendingTotal: 2000,
       paidTotal: 1000,
+      unpaidTotal: 30000,
+      workDays: 0,
     })
+  })
+
+  it('prefers payment records over legacy paid status for 實領', () => {
+    const entries = [
+      { status: 'confirmed', amount: 20000 },
+      { status: 'paid', amount: 1000 },
+    ] as SalaryEntry[]
+    const payments = [{ amount: 15000 }] as import('./types').SalaryPayment[]
+    const s = summarizeSalaryMonth(entries, payments)
+    expect(s.confirmedTotal).toBe(21000)
+    expect(s.paidTotal).toBe(15000)
+    expect(s.unpaidTotal).toBe(6000)
   })
 })

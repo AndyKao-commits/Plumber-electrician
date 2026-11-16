@@ -220,6 +220,7 @@ import type {
   SalaryEntry,
   SalaryEntryCategory,
   SalaryEntryStatus,
+  SalaryPayment,
   CashReceiptReport,
   AuditLogEntry,
   PayType,
@@ -998,6 +999,15 @@ function mapPaySetting(row: Record<string, unknown>): EmployeePaySetting {
   }
 }
 
+const SALARY_ENTRY_COLS =
+  'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, source, attendance_date, day_fraction, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at'
+
+const SALARY_ENTRY_COLS_LEGACY =
+  'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at'
+
+const SALARY_PAYMENT_COLS =
+  'id, organization_id, employee_id, employee_name, settlement_year, settlement_month, amount, paid_on, note, created_by, created_at'
+
 function mapSalaryEntry(row: Record<string, unknown>): SalaryEntry {
   return {
     id: String(row.id),
@@ -1014,6 +1024,12 @@ function mapSalaryEntry(row: Record<string, unknown>): SalaryEntry {
     siteId: row.site_id ? String(row.site_id) : null,
     siteName: (row.site_name as string | null) ?? null,
     status: row.status as SalaryEntry['status'],
+    source: (row.source as SalaryEntry['source']) ?? null,
+    attendanceDate: row.attendance_date
+      ? String(row.attendance_date).slice(0, 10)
+      : null,
+    dayFraction:
+      row.day_fraction != null ? Number(row.day_fraction) : null,
     createdBy: String(row.created_by),
     confirmedBy: (row.confirmed_by as string | null) ?? null,
     confirmedAt: (row.confirmed_at as string | null) ?? null,
@@ -1024,6 +1040,22 @@ function mapSalaryEntry(row: Record<string, unknown>): SalaryEntry {
     cancelReason: (row.cancel_reason as string | null) ?? null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+  }
+}
+
+function mapSalaryPayment(row: Record<string, unknown>): SalaryPayment {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    employeeId: String(row.employee_id),
+    employeeName: String(row.employee_name),
+    settlementYear: Number(row.settlement_year),
+    settlementMonth: Number(row.settlement_month),
+    amount: Number(row.amount),
+    paidOn: String(row.paid_on).slice(0, 10),
+    note: (row.note as string | null) ?? null,
+    createdBy: String(row.created_by),
+    createdAt: String(row.created_at),
   }
 }
 
@@ -2068,27 +2100,33 @@ export const supabaseRepos = {
     actor: AppUser,
     input: { year: number; month: number; userId?: string },
   ): Promise<SalaryEntry[]> {
-    let q = sb()
-      .from('salary_entries')
-      .select(
-        'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at',
-      )
-      .eq('period_year', input.year)
-      .eq('period_month', input.month)
-      .order('entry_date', { ascending: true })
-      .limit(500)
-    if (input.userId) {
-      const uid = requireUuid(input.userId, '使用者')
-      if (!isBossLike(actor) && actor.id !== uid) {
-        throw new AppError('只能查看自己的薪資')
+    const run = async (cols: string) => {
+      let q = sb()
+        .from('salary_entries')
+        .select(cols)
+        .eq('period_year', input.year)
+        .eq('period_month', input.month)
+        .order('entry_date', { ascending: true })
+        .limit(500)
+      if (input.userId) {
+        const uid = requireUuid(input.userId, '使用者')
+        if (!isBossLike(actor) && actor.id !== uid) {
+          throw new AppError('只能查看自己的薪資')
+        }
+        q = q.eq('user_id', uid)
+      } else if (!isBossLike(actor)) {
+        q = q.eq('user_id', actor.id)
       }
-      q = q.eq('user_id', uid)
-    } else if (!isBossLike(actor)) {
-      q = q.eq('user_id', actor.id)
+      return q
     }
-    const { data, error } = await q
+    let { data, error } = await run(SALARY_ENTRY_COLS)
+    if (error && /source|attendance_date|day_fraction|column/i.test(error.message)) {
+      ;({ data, error } = await run(SALARY_ENTRY_COLS_LEGACY))
+    }
     if (error) throw new AppError(toUserMessage(error, '無法載入薪資明細'))
-    return (data ?? []).map((row) => mapSalaryEntry(row))
+    return (data ?? []).map((row) =>
+      mapSalaryEntry(row as unknown as Record<string, unknown>),
+    )
   },
 
   async createSalaryEntry(
@@ -2104,6 +2142,9 @@ export const supabaseRepos = {
       siteId?: string | null
       siteName?: string | null
       status?: SalaryEntryStatus
+      source?: SalaryEntry['source']
+      attendanceDate?: string | null
+      dayFraction?: number | null
     },
   ): Promise<SalaryEntry> {
     assertBossSalaryAction(actor)
@@ -2115,29 +2156,41 @@ export const supabaseRepos = {
     const title = input.title.trim()
     if (!title) throw new AppError('請填項目名稱')
     const status = input.status ?? 'pending'
-    const { data, error } = await sb()
+    const payload: Record<string, unknown> = {
+      user_id: uid,
+      user_name: input.userName.trim() || '員工',
+      period_year: year,
+      period_month: month,
+      entry_date: entryDate,
+      category,
+      amount,
+      title,
+      note: input.note?.trim() || null,
+      site_id: input.siteId || null,
+      site_name: input.siteName?.trim() || null,
+      status,
+      created_by: actor.id,
+      source: input.source ?? 'manual',
+      attendance_date: input.attendanceDate?.slice(0, 10) || null,
+      day_fraction: input.dayFraction ?? null,
+    }
+    let { data, error } = await sb()
       .from('salary_entries')
-      .insert({
-        user_id: uid,
-        user_name: input.userName.trim() || '員工',
-        period_year: year,
-        period_month: month,
-        entry_date: entryDate,
-        category,
-        amount,
-        title,
-        note: input.note?.trim() || null,
-        site_id: input.siteId || null,
-        site_name: input.siteName?.trim() || null,
-        status,
-        created_by: actor.id,
-      })
-      .select(
-        'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at',
-      )
+      .insert(payload)
+      .select(SALARY_ENTRY_COLS)
       .single()
+    if (error && /source|attendance_date|day_fraction|column/i.test(error.message)) {
+      delete payload.source
+      delete payload.attendance_date
+      delete payload.day_fraction
+      ;({ data, error } = await sb()
+        .from('salary_entries')
+        .insert(payload)
+        .select(SALARY_ENTRY_COLS_LEGACY)
+        .single())
+    }
     if (error) throw new AppError(toUserMessage(error, '無法新增薪資項目'))
-    const row = mapSalaryEntry(data)
+    const row = mapSalaryEntry(data as Record<string, unknown>)
     await this.appendAuditLog(actor, {
       action: 'salary.entry.create',
       targetType: 'salary_entry',
@@ -2145,6 +2198,141 @@ export const supabaseRepos = {
       after: row,
     })
     return row
+  },
+
+  async listSalaryPayments(
+    actor: AppUser,
+    input: { year: number; month: number; employeeId?: string },
+  ): Promise<SalaryPayment[]> {
+    let q = sb()
+      .from('salary_payments')
+      .select(SALARY_PAYMENT_COLS)
+      .eq('settlement_year', input.year)
+      .eq('settlement_month', input.month)
+      .order('paid_on', { ascending: true })
+      .limit(200)
+    if (input.employeeId) {
+      const uid = requireUuid(input.employeeId, '使用者')
+      if (!isBossLike(actor) && actor.id !== uid) {
+        throw new AppError('只能查看自己的薪資付款')
+      }
+      q = q.eq('employee_id', uid)
+    } else if (!isBossLike(actor)) {
+      q = q.eq('employee_id', actor.id)
+    }
+    const { data, error } = await q
+    if (error) {
+      if (/salary_payments|schema cache|relation/i.test(error.message)) {
+        return []
+      }
+      throw new AppError(toUserMessage(error, '無法載入付款紀錄'))
+    }
+    return (data ?? []).map((row) => mapSalaryPayment(row as Record<string, unknown>))
+  },
+
+  async createSalaryPayment(
+    actor: AppUser,
+    input: {
+      employeeId: string
+      employeeName: string
+      settlementYear: number
+      settlementMonth: number
+      amount: number
+      paidOn: string
+      note?: string | null
+    },
+  ): Promise<SalaryPayment> {
+    assertBossSalaryAction(actor)
+    const uid = requireUuid(input.employeeId, '使用者')
+    const amount = Math.round(Number(input.amount))
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new AppError('實付金額需為正整數')
+    }
+    const paidOn = input.paidOn.slice(0, 10)
+    const { data, error } = await sb()
+      .from('salary_payments')
+      .insert({
+        employee_id: uid,
+        employee_name: input.employeeName.trim() || '員工',
+        settlement_year: input.settlementYear,
+        settlement_month: input.settlementMonth,
+        amount,
+        paid_on: paidOn,
+        note: input.note?.trim() || null,
+        created_by: actor.id,
+      })
+      .select(SALARY_PAYMENT_COLS)
+      .single()
+    if (error) {
+      if (/salary_payments|schema cache|relation/i.test(error.message)) {
+        throw new AppError(
+          '後端尚未安裝付款表。請套用 migration：20261117_salary_payments_daily_wage.sql',
+        )
+      }
+      throw new AppError(toUserMessage(error, '無法新增付款'))
+    }
+    const row = mapSalaryPayment(data as Record<string, unknown>)
+    await this.appendAuditLog(actor, {
+      action: 'salary.payment.create',
+      targetType: 'salary_payment',
+      targetId: row.id,
+      after: row,
+    })
+    return row
+  },
+
+  async syncAttendanceDailyWages(
+    actor: AppUser,
+    input: {
+      userId: string
+      userName: string
+      year: number
+      month: number
+    },
+  ): Promise<{ created: number }> {
+    assertBossSalaryAction(actor)
+    const uid = requireUuid(input.userId, '使用者')
+    const setting = await this.getEmployeePaySetting(actor, uid)
+    if (!setting || setting.payType !== 'daily') {
+      return { created: 0 }
+    }
+    const [attendance, existing] = await Promise.all([
+      this.listAttendanceForMonth(actor, {
+        userId: uid,
+        year: input.year,
+        month: input.month,
+      }),
+      this.listSalaryEntries(actor, {
+        year: input.year,
+        month: input.month,
+        userId: uid,
+      }),
+    ])
+    const { buildDailyWageDrafts } = await import('@/domain/salaryDailyWage')
+    // dynamic import keeps cold path light
+    const drafts = buildDailyWageDrafts({
+      attendance,
+      dailyRate: setting.baseAmount,
+      existingEntries: existing,
+    })
+    let created = 0
+    for (const d of drafts) {
+      await this.createSalaryEntry(actor, {
+        userId: uid,
+        userName: input.userName,
+        entryDate: d.attendanceDate,
+        category: 'base',
+        amount: d.amount,
+        title: d.title,
+        note: d.note,
+        status: 'pending',
+        source: 'attendance_daily',
+        attendanceDate: d.attendanceDate,
+        dayFraction: d.dayFraction,
+      })
+      created += 1
+    }
+    return { created }
   },
 
   async updateSalaryEntryStatus(
@@ -2160,7 +2348,7 @@ export const supabaseRepos = {
     const { data: current, error: loadError } = await sb()
       .from('salary_entries')
       .select(
-        'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at',
+        SALARY_ENTRY_COLS,
       )
       .eq('id', id)
       .single()
@@ -2199,7 +2387,7 @@ export const supabaseRepos = {
       .update(patch)
       .eq('id', id)
       .select(
-        'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at',
+        SALARY_ENTRY_COLS,
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法更新薪資狀態'))
@@ -2230,7 +2418,7 @@ export const supabaseRepos = {
     const { data: current, error: loadError } = await sb()
       .from('salary_entries')
       .select(
-        'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at',
+        SALARY_ENTRY_COLS,
       )
       .eq('id', id)
       .single()
@@ -2253,7 +2441,7 @@ export const supabaseRepos = {
       .update(patch)
       .eq('id', id)
       .select(
-        'id, organization_id, user_id, user_name, period_year, period_month, entry_date, category, amount, title, note, site_id, site_name, status, created_by, confirmed_by, confirmed_at, paid_by, paid_at, cancelled_by, cancelled_at, cancel_reason, created_at, updated_at',
+        SALARY_ENTRY_COLS,
       )
       .single()
     if (error) throw new AppError(toUserMessage(error, '無法更正薪資'))
