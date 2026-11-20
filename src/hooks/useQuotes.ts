@@ -16,6 +16,7 @@ import { localDb } from '@/lib/localDb'
 import { isBrowserOnline } from '@/lib/offlineQueue'
 import { supabaseRepos } from '@/lib/supabaseRepos'
 import { useUser } from '@/hooks/useUser'
+import { permissionRoleOf } from '@/domain/roleGroups'
 
 export const quoteKeys = {
   all: ['quotes'] as const,
@@ -366,7 +367,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
       return formal
         ? supabaseRepos.exportQuotationVersion(user, quoteId, format)
         : localDb.exportQuotationVersion(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             quoteId,
             format,
           )
@@ -381,7 +382,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
       return formal
         ? supabaseRepos.setQuoteWorkflowStatus(user, quoteId, workflowStatus)
         : localDb.setQuoteWorkflowStatus(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             quoteId,
             workflowStatus,
           )
@@ -402,7 +403,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
           )
         } else {
           localDb.softDeleteQuotationVersion(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             input.versionId,
             input.reason,
           )
@@ -423,7 +424,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
           await supabaseRepos.softDeleteQuotation(user, quoteId, reason)
         } else {
           localDb.softDeleteQuotation(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             quoteId,
             reason,
           )
@@ -461,7 +462,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
             ...input,
           })
         : localDb.createChangeOrder(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             { quotationId: quoteId, ...input },
           )
     },
@@ -510,7 +511,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
             input.status,
           )
         : localDb.setChangeOrderStatus(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             input.changeOrderId,
             input.status,
           )
@@ -542,7 +543,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
             ...input,
           })
         : localDb.createBillingMilestone(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             { quotationId: quoteId, ...input },
           )
     },
@@ -559,7 +560,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
             ...input,
           })
         : localDb.createBillingDocument(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             { quotationId: quoteId, ...input },
           )
     },
@@ -573,7 +574,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
       return formal
         ? supabaseRepos.issueBillingDocument(user, documentId)
         : localDb.issueBillingDocument(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             documentId,
           )
     },
@@ -632,7 +633,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
             ...input,
           })
         : localDb.createCustomerPayment(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             { quotationId: quoteId, ...input },
           )
     },
@@ -649,7 +650,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
       assertOnlineForOp('quote_publish', isBrowserOnline())
       return formal
         ? supabaseRepos.allocatePayment(user, input)
-        : localDb.allocatePayment({ id: user.id, role: user.role }, input)
+        : localDb.allocatePayment({ id: user.id, role: permissionRoleOf(user) }, input)
     },
     onSuccess: invalidateAll,
   })
@@ -664,7 +665,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
             ...input,
           })
         : localDb.createCustomerAdvance(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             { quotationId: quoteId, ...input },
           )
     },
@@ -681,7 +682,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
       assertOnlineForOp('quote_publish', isBrowserOnline())
       return formal
         ? supabaseRepos.applyCustomerAdvance(user, input)
-        : localDb.applyCustomerAdvance({ id: user.id, role: user.role }, input)
+        : localDb.applyCustomerAdvance({ id: user.id, role: permissionRoleOf(user) }, input)
     },
     onSuccess: invalidateAll,
   })
@@ -723,7 +724,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
             ...input,
           })
         : localDb.createCustomerCreditNote(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             { quotationId: quoteId, ...input },
           )
     },
@@ -745,7 +746,7 @@ export function useQuoteDetail(quoteId: string | undefined) {
             ...input,
           })
         : localDb.createCustomerRefund(
-            { id: user.id, role: user.role },
+            { id: user.id, role: permissionRoleOf(user) },
             { quotationId: quoteId, ...input },
           )
     },
