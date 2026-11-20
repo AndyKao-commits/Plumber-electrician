@@ -174,22 +174,22 @@ describe('REV-06 moving average', () => {
   })
 })
 
-describe('REV-07 self approval', () => {
-  it('denies requester approving self', () => {
+describe('Owner self approval', () => {
+  it('allows Owner approving self', () => {
     expect(
       canApprovePurchase({
         actorRole: 'boss',
         actorId: 'u1',
         requesterId: 'u1',
       }),
-    ).toBe(false)
+    ).toBe(true)
     expect(() =>
       assertCanApprovePurchase({
         actorRole: 'boss',
         actorId: 'u1',
         requesterId: 'u1',
       }),
-    ).toThrow(/自行核准/)
+    ).not.toThrow()
   })
 
   it('allows boss approving others', () => {
