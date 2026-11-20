@@ -11,7 +11,6 @@ import {
 } from '@/domain/siteDeleteImpact'
 import {
   isBossLike,
-  isPrimaryBoss,
   withNormalizedFeatures,
 } from '@/domain/roleGroups'
 import {
@@ -1148,8 +1147,8 @@ export const localDb = {
     },
   ): AppUser {
     assertFeature(actor, 'account')
-    if (input.accessTemplate === 'owner' && !isPrimaryBoss(actor)) {
-      throw new Error('僅老闆帳號可授權等同老闆權限')
+    if (input.accessTemplate === 'owner' && !isBossLike(actor)) {
+      throw new Error('僅老闆等級帳號可授權等同老闆權限')
     }
     const users = this.getUsers()
     const idx = users.findIndex((u) => u.id === targetUserId)
@@ -4345,7 +4344,7 @@ export const localDb = {
     actor: { id: string; role: AppUser['role'] },
     requestId: string,
   ): PettyCashTopUpRequest {
-    assertCanApprove(actor.role)
+    assertCanApprove(permissionRoleOf(actor))
     const all = read(KEYS.pettyCashRequests, emptyPettyCashRequests)
     const idx = all.findIndex((r) => r.id === requestId)
     if (idx < 0) throw new Error('找不到申請')
@@ -4374,7 +4373,7 @@ export const localDb = {
     actor: { id: string; role: AppUser['role'] },
     input: { requestId: string; reason: string },
   ): PettyCashTopUpRequest {
-    assertCanApprove(actor.role)
+    assertCanApprove(permissionRoleOf(actor))
     const all = read(KEYS.pettyCashRequests, emptyPettyCashRequests)
     const idx = all.findIndex((r) => r.id === input.requestId)
     if (idx < 0) throw new Error('找不到申請')
@@ -4395,7 +4394,7 @@ export const localDb = {
     actor: { id: string; role: AppUser['role'] },
     input: { requestId: string; note?: string | null },
   ): PettyCashDisbursement {
-    assertCanDisburse(actor.role)
+    assertCanDisburse(permissionRoleOf(actor))
     const requests = read(KEYS.pettyCashRequests, emptyPettyCashRequests)
     const rIdx = requests.findIndex((r) => r.id === input.requestId)
     if (rIdx < 0) throw new Error('找不到申請')
