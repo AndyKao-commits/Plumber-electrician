@@ -239,7 +239,7 @@ export function AttendancePage() {
         <section className="panel stack">
           <strong>待核准補打卡</strong>
           <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-            申請人不可自行核准。請由其他老闆或具核准權的管理員處理。
+            老闆身分可核准自己的申請；管理員只能核准其他人的申請。
           </p>
           {pendingCorrections.map((c) => (
             <div key={c.id} className="site-link stack">
@@ -401,11 +401,11 @@ export function AttendancePage() {
       <section className="panel stack">
         <strong>我的補打卡紀錄</strong>
         <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-          申請人不可自行核准。老闆的補打卡須由其他老闆，或具核准權的管理員處理。
+          老闆身分可自行核准補打卡；一般管理員仍須由其他核准人處理。
         </p>
         {ownPendingCorrections.length > 0 ? (
           <p className="muted" style={{ margin: 0, fontSize: '0.88rem' }}>
-            目前有 {ownPendingCorrections.length} 筆待核准，已通知其他核准人。
+            目前有 {ownPendingCorrections.length} 筆待核准；老闆可在上方直接處理。
           </p>
         ) : null}
         {corrections.length === 0 ? (
