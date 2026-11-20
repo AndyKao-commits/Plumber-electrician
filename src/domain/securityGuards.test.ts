@@ -103,27 +103,34 @@ describe('負向：Admin 敏感財務', () => {
   })
 })
 
-describe('負向：自己核准自己的採購', () => {
-  it('Owner/Admin self-approve denied', () => {
+describe('自己核准自己的採購', () => {
+  it('Owner 可自審；Admin 不可自審', () => {
     expect(
       canApprovePurchase({
         actorRole: 'boss',
         actorId: 'same',
         requesterId: 'same',
       }),
-    ).toBe(false)
+    ).toBe(true)
+    expect(() =>
+      assertCanApprovePurchase({
+        actorRole: 'boss',
+        actorId: 'same',
+        requesterId: 'same',
+      }),
+    ).not.toThrow()
     expect(() =>
       assertCanApprovePurchase({
         actorRole: 'admin',
         actorId: 'same',
         requesterId: 'same',
       }),
-    ).toThrow(/自行核准/)
+    ).toThrow(/只有老闆/)
   })
 })
 
 describe('負向：補打卡核准', () => {
-  it('Member 不可核准；申請人不可自核', () => {
+  it('Member 不可核准；Owner 可自核；Admin 不可自核', () => {
     expect(
       canApproveAttendanceCorrection({
         actorRole: 'employee',
@@ -131,13 +138,20 @@ describe('負向：補打卡核准', () => {
         requesterId: 'm2',
       }),
     ).toBe(false)
+    expect(
+      canApproveAttendanceCorrection({
+        actorRole: 'boss',
+        actorId: 'same',
+        requesterId: 'same',
+      }),
+    ).toBe(true)
     expect(() =>
       assertCanApproveAttendanceCorrection({
         actorRole: 'admin',
         actorId: 'same',
         requesterId: 'same',
       }),
-    ).toThrow(/自行核准/)
+    ).toThrow(/只有老闆/)
   })
 })
 
