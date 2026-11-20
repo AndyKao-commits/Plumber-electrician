@@ -5,6 +5,7 @@ import {
   canDisbursePettyCash,
 } from '@/domain/pettyCash'
 import { usePettyCash } from '@/hooks/usePettyCash'
+import { permissionRoleOf } from '@/domain/roleGroups'
 import { useUser } from '@/hooks/useUser'
 import { formatTaipei } from '@/lib/time'
 
@@ -34,8 +35,9 @@ export function PettyCashPage() {
       ? accountId
       : (accounts[0]?.id ?? '')
 
-  const canApprove = user ? canApprovePettyCashTopUp(user.role) : false
-  const canDisburse = user ? canDisbursePettyCash(user.role) : false
+  const effectiveRole = user ? permissionRoleOf(user) : 'employee'
+  const canApprove = canApprovePettyCashTopUp(effectiveRole)
+  const canDisburse = canDisbursePettyCash(effectiveRole)
 
   return (
     <div className="stack fade-up">
