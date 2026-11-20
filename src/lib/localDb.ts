@@ -2909,7 +2909,7 @@ export const localDb = {
       status === 'rejected' ||
       status === 'sent_to_customer'
     ) {
-      assertCanMarkChangeOrderAccept(actor.role)
+      assertCanMarkChangeOrderAccept(permissionRoleOf(actor))
     }
     const all = read(KEYS.changeOrders, emptyChangeOrders)
     const idx = all.findIndex((c) => c.id === changeOrderId)
@@ -2963,7 +2963,7 @@ export const localDb = {
       sequence?: number
     },
   ): BillingMilestone {
-    assertCanManageBilling(actor.role)
+    assertCanManageBilling(permissionRoleOf(actor))
     const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
     const gate = canCreateBillingForQuote(quote)
@@ -3003,7 +3003,7 @@ export const localDb = {
       notes?: string
     },
   ): BillingDocument {
-    assertCanManageBilling(actor.role)
+    assertCanManageBilling(permissionRoleOf(actor))
     const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
     const gate = canCreateBillingForQuote(quote)
@@ -3122,7 +3122,7 @@ export const localDb = {
     actor: { id: string; role: string },
     documentId: string,
   ): BillingDocument {
-    assertCanManageBilling(actor.role)
+    assertCanManageBilling(permissionRoleOf(actor))
     const all = read(KEYS.billingDocuments, emptyBillingDocuments)
     const idx = all.findIndex((d) => d.id === documentId)
     if (idx < 0) throw new Error('找不到請款單')
@@ -3251,7 +3251,7 @@ export const localDb = {
       receivedAt?: string
     },
   ): CustomerPayment {
-    assertCanManagePayments(actor.role)
+    assertCanManagePayments(permissionRoleOf(actor))
     const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
     const gate = canRecordPaymentForQuote(quote)
@@ -3287,7 +3287,7 @@ export const localDb = {
       amount: number
     },
   ): PaymentAllocation {
-    assertCanManagePayments(actor.role)
+    assertCanManagePayments(permissionRoleOf(actor))
     const payments = read(KEYS.customerPayments, emptyCustomerPayments)
     const payment = payments.find((p) => p.id === input.paymentId)
     if (!payment || payment.status !== 'confirmed') {
@@ -3341,7 +3341,7 @@ export const localDb = {
       receivedAt?: string
     },
   ): CustomerAdvance {
-    assertCanManagePayments(actor.role)
+    assertCanManagePayments(permissionRoleOf(actor))
     const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
     const gate = canRecordPaymentForQuote(quote)
@@ -3377,7 +3377,7 @@ export const localDb = {
       amount: number
     },
   ): AdvanceApplication {
-    assertCanManagePayments(actor.role)
+    assertCanManagePayments(permissionRoleOf(actor))
     const advances = read(KEYS.customerAdvances, emptyCustomerAdvances)
     const aIdx = advances.findIndex((a) => a.id === input.advanceId)
     if (aIdx < 0) throw new Error('找不到預收款')
@@ -3450,7 +3450,7 @@ export const localDb = {
       billingDocumentId?: string | null
     },
   ): CustomerCreditNote {
-    assertCanManageRefunds(actor.role)
+    assertCanManageRefunds(permissionRoleOf(actor))
     const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
     const gate = canIssueCreditOrRefund(quote)
@@ -3504,7 +3504,7 @@ export const localDb = {
       reason: string
     },
   ): CustomerRefund {
-    assertCanManageRefunds(actor.role)
+    assertCanManageRefunds(permissionRoleOf(actor))
     const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
     const gate = canIssueCreditOrRefund(quote)
@@ -4575,7 +4575,7 @@ export const localDb = {
     input: { advanceIds: string[]; note?: string | null },
   ): { expense: ExpenseReport; advances: EmployeeAdvance[] } {
     assertCanSettleAdvances({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       selectedIds: input.advanceIds,
     })
     const all = read(KEYS.employeeAdvances, emptyEmployeeAdvances)
@@ -4634,7 +4634,7 @@ export const localDb = {
     const idx = all.findIndex((a) => a.id === input.id)
     if (idx < 0) throw new Error('找不到代墊')
     const current = all[idx]
-    assertCanCancelAdvance({ actorRole: actor.role, status: current.status })
+    assertCanCancelAdvance({ actorRole: permissionRoleOf(actor), status: current.status })
 
     if (current.status === 'settled' && current.expenseReportId) {
       const linked = this.listExpenseReports().find(
@@ -4746,7 +4746,7 @@ export const localDb = {
     if (idx < 0) throw new Error('找不到支出回報')
     const current = all[idx]
     assertBossFinalize({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       reporterId: current.reportedBy,
     })
@@ -4785,7 +4785,7 @@ export const localDb = {
     actor: { id: string; name: string; role: AppUser['role'] },
     input: { id: string; note?: string | null },
   ): ExpenseReport {
-    assertBossCancelFinance(actor.role)
+    assertBossCancelFinance(permissionRoleOf(actor))
     const all = read(KEYS.expenseReports, emptyExpenseReports)
     const idx = all.findIndex((e) => e.id === input.id)
     if (idx < 0) throw new Error('找不到支出回報')
@@ -4816,7 +4816,7 @@ export const localDb = {
     actor: { id: string; name: string; role: AppUser['role'] },
     input: { id: string },
   ): void {
-    assertBossCancelFinance(actor.role)
+    assertBossCancelFinance(permissionRoleOf(actor))
     const all = read(KEYS.expenseReports, emptyExpenseReports)
     const idx = all.findIndex((e) => e.id === input.id)
     if (idx < 0) throw new Error('找不到支出回報')
@@ -4940,7 +4940,7 @@ export const localDb = {
     if (idx < 0) throw new Error('找不到收款回報')
     const current = all[idx]
     assertBossFinalize({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       reporterId: current.reportedBy,
     })
@@ -5014,7 +5014,7 @@ export const localDb = {
     actor: { id: string; name: string; role: AppUser['role'] },
     input: { id: string; note?: string | null },
   ): CashReceiptReport {
-    assertBossCancelFinance(actor.role)
+    assertBossCancelFinance(permissionRoleOf(actor))
     const all = read(KEYS.cashReceipts, emptyCashReceipts)
     const idx = all.findIndex((e) => e.id === input.id)
     if (idx < 0) throw new Error('找不到收款回報')
@@ -5045,7 +5045,7 @@ export const localDb = {
     actor: { id: string; name: string; role: AppUser['role'] },
     input: { id: string },
   ): void {
-    assertBossCancelFinance(actor.role)
+    assertBossCancelFinance(permissionRoleOf(actor))
     const all = read(KEYS.cashReceipts, emptyCashReceipts)
     const idx = all.findIndex((e) => e.id === input.id)
     if (idx < 0) throw new Error('找不到收款回報')
