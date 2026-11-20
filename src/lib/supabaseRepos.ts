@@ -2610,7 +2610,14 @@ export const supabaseRepos = {
     if (error) throw new AppError(toUserMessage(error, '無法載入待核准補打卡'))
     return (data ?? [])
       .map((row) => mapAttendanceCorrection(row))
-      .filter((c) => c.userId !== actor.id)
+      .filter(
+        (c) =>
+          c.userId !== actor.id ||
+          hasPermission(
+            permissionRoleOf(actor),
+            PERMISSIONS.PURCHASE_SELF_APPROVE,
+          ),
+      )
   },
 
   async applyAttendanceCorrection(
