@@ -31,7 +31,7 @@ import {
 import { assertPhotoType } from '@/domain/photoTypes'
 import { assertCanAccessSite, filterSitesByAccess } from '@/domain/siteAccess'
 import { assertFeature } from '@/domain/featureAccess'
-import { isBossLike, isPrimaryBoss, permissionRoleOf } from '@/domain/roleGroups'
+import { isBossLike, permissionRoleOf } from '@/domain/roleGroups'
 import {
   assertSiteStatus,
   assertSiteStatusTransition,
@@ -1508,7 +1508,7 @@ export const supabaseRepos = {
 
   async listSites(actor?: AppUser): Promise<SiteProject[]> {
     if (actor) {
-      assertPermission(actor.role, PERMISSIONS.SITE_READ, {
+      assertPermission(permissionRoleOf(actor), PERMISSIONS.SITE_READ, {
         financeAuthorized: actor.financeAuthorized,
       })
     }
@@ -1538,7 +1538,7 @@ export const supabaseRepos = {
     // Invalid route ids must not hit Postgres or crash the page.
     if (!isUuid(id)) return null
     if (actor) {
-      assertPermission(actor.role, PERMISSIONS.SITE_READ, {
+      assertPermission(permissionRoleOf(actor), PERMISSIONS.SITE_READ, {
         financeAuthorized: actor.financeAuthorized,
       })
     }
@@ -1579,7 +1579,7 @@ export const supabaseRepos = {
       warrantyUntil?: string | null
     },
   ): Promise<SiteProject> {
-    assertPermission(actor.role, PERMISSIONS.SITE_WRITE, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.SITE_WRITE, {
       financeAuthorized: actor.financeAuthorized,
     })
     // organization_id set by DB trigger from current_user_org_id()
@@ -1608,7 +1608,7 @@ export const supabaseRepos = {
     siteId: string,
     warrantyUntil: string | null,
   ): Promise<SiteProject> {
-    assertPermission(actor.role, PERMISSIONS.SITE_WRITE, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.SITE_WRITE, {
       financeAuthorized: actor.financeAuthorized,
     })
     const sid = requireUuid(siteId, '工地')
@@ -1842,8 +1842,8 @@ export const supabaseRepos = {
     },
   ): Promise<AppUser> {
     assertFeature(actor, 'account')
-    if (input.accessTemplate === 'owner' && !isPrimaryBoss(actor)) {
-      throw new AppError('僅老闆帳號可授權等同老闆權限')
+    if (input.accessTemplate === 'owner' && !isBossLike(actor)) {
+      throw new AppError('僅老闆等級帳號可授權等同老闆權限')
     }
     const tid = requireUuid(targetUserId, '使用者')
     const { data, error } = await sb().rpc('boss_set_member_access', {
@@ -2610,7 +2610,14 @@ export const supabaseRepos = {
     if (error) throw new AppError(toUserMessage(error, '無法載入待核准補打卡'))
     return (data ?? [])
       .map((row) => mapAttendanceCorrection(row))
-      .filter((c) => c.userId !== actor.id)
+      .filter(
+        (c) =>
+          c.userId !== actor.id ||
+          hasPermission(
+            permissionRoleOf(actor),
+            PERMISSIONS.PURCHASE_SELF_APPROVE,
+          ),
+      )
   },
 
   async applyAttendanceCorrection(
@@ -2623,7 +2630,7 @@ export const supabaseRepos = {
       reason: string
     },
   ): Promise<AttendanceCorrection> {
-    assertPermission(actor.role, PERMISSIONS.ATTENDANCE_OWN)
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.ATTENDANCE_OWN)
     const reason = input.reason.trim()
     if (reason.length < 2) throw new AppError('請填寫補打卡原因')
 
@@ -2839,7 +2846,7 @@ export const supabaseRepos = {
       )
       .order('created_at', { ascending: false })
 
-    if (!hasPermission(actor.role, PERMISSIONS.PURCHASE_APPROVE)) {
+    if (!hasPermission(permissionRoleOf(actor), PERMISSIONS.PURCHASE_APPROVE)) {
       query = query.eq('user_id', actor.id)
     }
 
@@ -2849,7 +2856,7 @@ export const supabaseRepos = {
   },
 
   async listPendingPurchases(actor: AppUser): Promise<PurchaseRecord[]> {
-    assertPermission(actor.role, PERMISSIONS.PURCHASE_APPROVE, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.PURCHASE_APPROVE, {
       financeAuthorized: actor.financeAuthorized,
     })
     const { data, error } = await sb()
@@ -2908,7 +2915,7 @@ export const supabaseRepos = {
       otherBuyerFees?: number
     },
   ): Promise<PurchaseRecord> {
-    assertPermission(actor.role, PERMISSIONS.PURCHASE_CREATE, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.PURCHASE_CREATE, {
       financeAuthorized: actor.financeAuthorized,
     })
     const siteId = optionalUuid(input.siteId, '工地')
@@ -3021,7 +3028,7 @@ export const supabaseRepos = {
     assertSameOrganization(actor.organizationId, String(current.organization_id))
 
     assertCanApprovePurchase({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: String(current.user_id),
     })
@@ -3070,7 +3077,7 @@ export const supabaseRepos = {
     assertSameOrganization(actor.organizationId, String(current.organization_id))
 
     assertCanApprovePurchase({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: String(current.user_id),
     })
@@ -3137,7 +3144,7 @@ export const supabaseRepos = {
     if (current.mode !== 'emergency') throw new AppError('僅緊急採購可走額度釋放')
     if (current.status === 'cancelled') throw new AppError('已取消')
     if (
-      !hasPermission(actor.role, PERMISSIONS.PURCHASE_APPROVE) &&
+      !hasPermission(permissionRoleOf(actor), PERMISSIONS.PURCHASE_APPROVE) &&
       actor.id !== current.user_id
     ) {
       throw new AppError('無權取消此緊急採購')
@@ -3223,7 +3230,7 @@ export const supabaseRepos = {
       discount?: number
     },
   ): Promise<Quotation> {
-    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE, {
       financeAuthorized: actor.financeAuthorized,
     })
     const projectId = optionalUuid(input.projectId, '工程')
@@ -3279,7 +3286,7 @@ export const supabaseRepos = {
       validUntil: string | null
     }>,
   ): Promise<Quotation> {
-    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE, {
       financeAuthorized: actor.financeAuthorized,
     })
     const current = await this.getQuotation(quoteId)
@@ -3321,7 +3328,7 @@ export const supabaseRepos = {
     quoteId: string,
     format: QuoteExportFormat = 'snapshot',
   ): Promise<{ quote: Quotation; version: QuotationVersion }> {
-    assertCanExportQuote(actor.role)
+    assertCanExportQuote(permissionRoleOf(actor))
     const qid = requireUuid(quoteId, '報價')
     const current = await this.getQuotation(qid)
     assertSameOrganization(actor.organizationId, current.organizationId)
@@ -3405,7 +3412,7 @@ export const supabaseRepos = {
       workflowStatus === 'rejected' ||
       workflowStatus === 'sent_to_customer'
     ) {
-      assertCanMarkQuoteAccept(actor.role)
+      assertCanMarkQuoteAccept(permissionRoleOf(actor))
     }
     const current = await this.getQuotation(quoteId)
     assertSameOrganization(actor.organizationId, current.organizationId)
@@ -3474,7 +3481,7 @@ export const supabaseRepos = {
     if (!ver) throw new AppError('找不到版本')
     assertSameOrganization(actor.organizationId, String(ver.organization_id))
     const quote = await this.getQuotation(String(ver.quotation_id))
-    assertCanSoftDeleteQuoteVersion(actor.role, quote, {
+    assertCanSoftDeleteQuoteVersion(permissionRoleOf(actor), quote, {
       versionNo: Number(ver.version_no),
       deletedAt: (ver.deleted_at as string | null) ?? null,
     })
@@ -3497,7 +3504,7 @@ export const supabaseRepos = {
   ): Promise<void> {
     const quote = await this.getQuotation(quoteId)
     assertSameOrganization(actor.organizationId, quote.organizationId)
-    assertCanSoftDeleteQuoteCase(actor.role, quote)
+    assertCanSoftDeleteQuoteCase(permissionRoleOf(actor), quote)
     const now = new Date().toISOString()
     const { error } = await sb()
       .from('quotations')
@@ -3614,7 +3621,7 @@ export const supabaseRepos = {
     const co = await this.getChangeOrder(input.changeOrderId)
     assertSameOrganization(actor.organizationId, co.organizationId)
     assertChangeOrderEditable({ status: co.status })
-    if (!hasPermission(actor.role, PERMISSIONS.QUOTE_CREATE)) {
+    if (!hasPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE)) {
       throw new AppError('無權編輯追加減')
     }
     const existing = await this.listChangeOrderItems(co.id)
@@ -3654,7 +3661,7 @@ export const supabaseRepos = {
     assertSameOrganization(actor.organizationId, String(item.organization_id))
     const co = await this.getChangeOrder(String(item.change_order_id))
     assertChangeOrderEditable({ status: co.status })
-    if (!hasPermission(actor.role, PERMISSIONS.QUOTE_CREATE)) {
+    if (!hasPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE)) {
       throw new AppError('無權編輯追加減')
     }
     const { error } = await sb()
@@ -3674,7 +3681,7 @@ export const supabaseRepos = {
       status === 'rejected' ||
       status === 'sent_to_customer'
     ) {
-      assertCanMarkChangeOrderAccept(actor.role)
+      assertCanMarkChangeOrderAccept(permissionRoleOf(actor))
     }
     const co = await this.getChangeOrder(changeOrderId)
     assertSameOrganization(actor.organizationId, co.organizationId)
@@ -3759,7 +3766,7 @@ export const supabaseRepos = {
       sequence?: number
     },
   ): Promise<BillingMilestone> {
-    assertCanManageBilling(actor.role)
+    assertCanManageBilling(permissionRoleOf(actor))
     const quote = await this.getQuotation(input.quotationId)
     assertSameOrganization(actor.organizationId, quote.organizationId)
     const gate = canCreateBillingForQuote(quote)
@@ -3796,7 +3803,7 @@ export const supabaseRepos = {
       notes?: string
     },
   ): Promise<BillingDocument> {
-    assertCanManageBilling(actor.role)
+    assertCanManageBilling(permissionRoleOf(actor))
     const quote = await this.getQuotation(input.quotationId)
     assertSameOrganization(actor.organizationId, quote.organizationId)
     const gate = canCreateBillingForQuote(quote)
@@ -3853,7 +3860,7 @@ export const supabaseRepos = {
       unitPrice: number
     },
   ): Promise<BillingDocumentItem> {
-    assertCanManageBilling(actor.role)
+    assertCanManageBilling(permissionRoleOf(actor))
     const did = requireUuid(input.billingDocumentId, '請款單')
     const { data: docRow, error: loadError } = await sb()
       .from('billing_documents')
@@ -3909,7 +3916,7 @@ export const supabaseRepos = {
     actor: AppUser,
     documentId: string,
   ): Promise<BillingDocument> {
-    assertCanManageBilling(actor.role)
+    assertCanManageBilling(permissionRoleOf(actor))
     const did = requireUuid(documentId, '請款單')
     const { data: docRow, error: loadError } = await sb()
       .from('billing_documents')
@@ -4072,7 +4079,7 @@ export const supabaseRepos = {
       notes?: string
     },
   ): Promise<CustomerPayment> {
-    assertCanManagePayments(actor.role)
+    assertCanManagePayments(permissionRoleOf(actor))
     const quote = await this.getQuotation(input.quotationId)
     assertSameOrganization(actor.organizationId, quote.organizationId)
     const gate = canRecordPaymentForQuote(quote)
@@ -4107,7 +4114,7 @@ export const supabaseRepos = {
       amount: number
     },
   ): Promise<PaymentAllocation> {
-    assertCanManagePayments(actor.role)
+    assertCanManagePayments(permissionRoleOf(actor))
     const pid = requireUuid(input.paymentId, '收款')
     const { data: payRow, error: payErr } = await sb()
       .from('customer_payments')
@@ -4163,7 +4170,7 @@ export const supabaseRepos = {
     actor: AppUser,
     input: { quotationId: string; amount: number; notes?: string },
   ): Promise<CustomerAdvance> {
-    assertCanManagePayments(actor.role)
+    assertCanManagePayments(permissionRoleOf(actor))
     const quote = await this.getQuotation(input.quotationId)
     assertSameOrganization(actor.organizationId, quote.organizationId)
     const gate = canRecordPaymentForQuote(quote)
@@ -4198,7 +4205,7 @@ export const supabaseRepos = {
       amount: number
     },
   ): Promise<AdvanceApplication> {
-    assertCanManagePayments(actor.role)
+    assertCanManagePayments(permissionRoleOf(actor))
     const aid = requireUuid(input.advanceId, '預收')
     const { data: advRow, error: advErr } = await sb()
       .from('customer_advances')
@@ -4298,7 +4305,7 @@ export const supabaseRepos = {
       billingDocumentId?: string | null
     },
   ): Promise<CustomerCreditNote> {
-    assertCanManageRefunds(actor.role)
+    assertCanManageRefunds(permissionRoleOf(actor))
     const quote = await this.getQuotation(input.quotationId)
     assertSameOrganization(actor.organizationId, quote.organizationId)
     const gate = canIssueCreditOrRefund(quote)
@@ -4346,7 +4353,7 @@ export const supabaseRepos = {
       reason: string
     },
   ): Promise<CustomerRefund> {
-    assertCanManageRefunds(actor.role)
+    assertCanManageRefunds(permissionRoleOf(actor))
     const quote = await this.getQuotation(input.quotationId)
     assertSameOrganization(actor.organizationId, quote.organizationId)
     const gate = canIssueCreditOrRefund(quote)
@@ -4602,7 +4609,7 @@ export const supabaseRepos = {
       unitPrice: number
     },
   ): Promise<QuotationItem> {
-    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE, {
       financeAuthorized: actor.financeAuthorized,
     })
     const qid = requireUuid(input.quotationId, '報價')
@@ -4682,7 +4689,7 @@ export const supabaseRepos = {
       unitPrice: number
     }>,
   ): Promise<QuotationItem> {
-    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE, {
       financeAuthorized: actor.financeAuthorized,
     })
     const iid = requireUuid(itemId, '報價細項')
@@ -4735,7 +4742,7 @@ export const supabaseRepos = {
   },
 
   async removeQuotationItem(actor: AppUser, itemId: string): Promise<void> {
-    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE, {
       financeAuthorized: actor.financeAuthorized,
     })
     const iid = requireUuid(itemId, '報價細項')
@@ -4758,7 +4765,7 @@ export const supabaseRepos = {
     quotationId: string,
     orderedIds: string[],
   ): Promise<void> {
-    assertPermission(actor.role, PERMISSIONS.QUOTE_CREATE, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE, {
       financeAuthorized: actor.financeAuthorized,
     })
     const quote = await this.getQuotation(quotationId)
@@ -4805,7 +4812,7 @@ export const supabaseRepos = {
 
   async listMaterials(actor?: AppUser): Promise<MaterialStock[]> {
     if (actor) {
-      assertPermission(actor.role, PERMISSIONS.INVENTORY_READ, {
+      assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_READ, {
         financeAuthorized: actor.financeAuthorized,
       })
     }
@@ -4901,7 +4908,7 @@ export const supabaseRepos = {
       factorToBase: number
     },
   ): Promise<MaterialUnit> {
-    assertPermission(actor.role, PERMISSIONS.INVENTORY_ADJUST, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_ADJUST, {
       financeAuthorized: actor.financeAuthorized,
     })
     const materialId = requireUuid(input.materialId, '材料')
@@ -4942,7 +4949,7 @@ export const supabaseRepos = {
       locationId?: string | null
     },
   ): Promise<MaterialSerial> {
-    assertPermission(actor.role, PERMISSIONS.INVENTORY_INBOUND, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_INBOUND, {
       financeAuthorized: actor.financeAuthorized,
     })
     const materials = await this.listMaterials(actor)
@@ -5177,7 +5184,7 @@ export const supabaseRepos = {
       clientOperationId: string
     },
   ): Promise<StockMovement> {
-    assertPermission(actor.role, PERMISSIONS.INVENTORY_ADJUST, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_ADJUST, {
       financeAuthorized: actor.financeAuthorized,
     })
     const qty = assertPositiveQty(input.qty, '調撥數量')
@@ -5232,7 +5239,7 @@ export const supabaseRepos = {
       clientOperationId: string
     },
   ): Promise<StockReservation> {
-    assertPermission(actor.role, PERMISSIONS.INVENTORY_ADJUST, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_ADJUST, {
       financeAuthorized: actor.financeAuthorized,
     })
     const qty = assertPositiveQty(input.qty, '預留數量')
@@ -5282,7 +5289,7 @@ export const supabaseRepos = {
     actor: AppUser,
     input: { reservationId: string; clientOperationId: string },
   ): Promise<StockReservation> {
-    assertPermission(actor.role, PERMISSIONS.INVENTORY_ADJUST, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_ADJUST, {
       financeAuthorized: actor.financeAuthorized,
     })
     const rid = requireUuid(input.reservationId, '預留')
@@ -5356,7 +5363,7 @@ export const supabaseRepos = {
       clientOperationId: string
     },
   ): Promise<MaterialUsage> {
-    assertPermission(actor.role, PERMISSIONS.INVENTORY_ADJUST, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_ADJUST, {
       financeAuthorized: actor.financeAuthorized,
     })
     const qty = assertUsageQty(input.qty)
@@ -5477,7 +5484,7 @@ export const supabaseRepos = {
       clientOperationId?: string
     },
   ): Promise<MaterialStock> {
-    assertPermission(actor.role, PERMISSIONS.INVENTORY_INBOUND, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_INBOUND, {
       financeAuthorized: actor.financeAuthorized,
     })
     const materialId = requireUuid(input.materialId, '材料')
@@ -6524,7 +6531,7 @@ export const supabaseRepos = {
     const current = (await this.listExpenseReports(actor)).find((e) => e.id === id)
     if (!current) throw new AppError('找不到支出回報')
     assertBossFinalize({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       reporterId: current.reportedBy,
     })
@@ -6600,7 +6607,7 @@ export const supabaseRepos = {
     actor: AppUser,
     input: { id: string; note?: string | null },
   ): Promise<ExpenseReport> {
-    assertBossCancelFinance(actor.role)
+    assertBossCancelFinance(permissionRoleOf(actor))
     const id = requireUuid(input.id, '支出')
     const current = (await this.listExpenseReports(actor)).find((e) => e.id === id)
     if (!current) throw new AppError('找不到支出回報')
@@ -6663,7 +6670,7 @@ export const supabaseRepos = {
     actor: AppUser,
     input: { id: string },
   ): Promise<void> {
-    assertBossCancelFinance(actor.role)
+    assertBossCancelFinance(permissionRoleOf(actor))
     const id = requireUuid(input.id, '支出')
     const current = (await this.listExpenseReports(actor)).find((e) => e.id === id)
     if (!current) throw new AppError('找不到支出回報')
@@ -6757,7 +6764,7 @@ export const supabaseRepos = {
     input: { advanceIds: string[]; note?: string | null },
   ): Promise<{ expense: ExpenseReport; advances: EmployeeAdvance[] }> {
     assertCanSettleAdvances({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       selectedIds: input.advanceIds,
     })
     const ids = input.advanceIds.map((id) => requireUuid(id, '代墊'))
@@ -6848,7 +6855,7 @@ export const supabaseRepos = {
     const id = requireUuid(input.id, '代墊')
     const current = (await this.listEmployeeAdvances(actor)).find((a) => a.id === id)
     if (!current) throw new AppError('找不到代墊')
-    assertCanCancelAdvance({ actorRole: actor.role, status: current.status })
+    assertCanCancelAdvance({ actorRole: permissionRoleOf(actor), status: current.status })
 
     if (current.status === 'settled' && current.expenseReportId) {
       const linked = (await this.listExpenseReports(actor)).find(
@@ -6984,7 +6991,7 @@ export const supabaseRepos = {
     const current = all.find((e) => e.id === id)
     if (!current) throw new AppError('找不到收款回報')
     assertBossFinalize({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       reporterId: current.reportedBy,
     })
@@ -7083,7 +7090,7 @@ export const supabaseRepos = {
     actor: AppUser,
     input: { id: string; note?: string | null },
   ): Promise<CashReceiptReport> {
-    assertBossCancelFinance(actor.role)
+    assertBossCancelFinance(permissionRoleOf(actor))
     const id = requireUuid(input.id, '收款')
     const current = (await this.listCashReceipts(actor)).find((e) => e.id === id)
     if (!current) throw new AppError('找不到收款回報')
@@ -7127,7 +7134,7 @@ export const supabaseRepos = {
     actor: AppUser,
     input: { id: string },
   ): Promise<void> {
-    assertBossCancelFinance(actor.role)
+    assertBossCancelFinance(permissionRoleOf(actor))
     const id = requireUuid(input.id, '收款')
     const current = (await this.listCashReceipts(actor)).find((e) => e.id === id)
     if (!current) throw new AppError('找不到收款回報')
@@ -7370,7 +7377,7 @@ export const supabaseRepos = {
     actor: AppUser,
     requestId: string,
   ): Promise<PettyCashTopUpRequest> {
-    assertCanApprove(actor.role)
+    assertCanApprove(permissionRoleOf(actor))
     const rid = requireUuid(requestId, '申請')
     const requests = await this.listPettyCashRequests()
     const current = requests.find((r) => r.id === rid)
@@ -7419,7 +7426,7 @@ export const supabaseRepos = {
     actor: AppUser,
     input: { requestId: string; reason: string },
   ): Promise<PettyCashTopUpRequest> {
-    assertCanApprove(actor.role)
+    assertCanApprove(permissionRoleOf(actor))
     const rid = requireUuid(input.requestId, '申請')
     const current = (await this.listPettyCashRequests()).find((r) => r.id === rid)
     if (!current) throw new AppError('找不到申請')
@@ -7458,7 +7465,7 @@ export const supabaseRepos = {
     actor: AppUser,
     input: { requestId: string; note?: string | null },
   ): Promise<PettyCashDisbursement> {
-    assertCanDisburse(actor.role)
+    assertCanDisburse(permissionRoleOf(actor))
     const rid = requireUuid(input.requestId, '申請')
     const request = (await this.listPettyCashRequests()).find((r) => r.id === rid)
     if (!request) throw new AppError('找不到申請')
@@ -7532,7 +7539,7 @@ export const supabaseRepos = {
       trackingMode?: MaterialStock['trackingMode']
     },
   ): Promise<MaterialStock> {
-    assertPermission(actor.role, PERMISSIONS.INVENTORY_INBOUND, {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_INBOUND, {
       financeAuthorized: actor.financeAuthorized,
     })
     const name = input.name.trim()

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { hasPermission, PERMISSIONS } from '@/domain/permissions'
+import { permissionRoleOf } from '@/domain/roleGroups'
 import {
   calcFinalPayable,
   isWithinEmergencyDailyLimit,
@@ -36,7 +37,9 @@ export function usePurchases(userId: string | undefined) {
       try {
         if (formal) return await supabaseRepos.listPurchases(user)
         const all = localDb.getPurchases()
-        return user.role === 'boss' ? all : all.filter((p) => p.userId === userId)
+        return permissionRoleOf(user) === 'boss'
+          ? all
+          : all.filter((p) => p.userId === userId)
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入採購列表'))
       }
@@ -44,7 +47,8 @@ export function usePurchases(userId: string | undefined) {
   })
 
   const canApprove =
-    Boolean(user) && hasPermission(user!.role, PERMISSIONS.PURCHASE_APPROVE)
+    Boolean(user) &&
+    hasPermission(permissionRoleOf(user!), PERMISSIONS.PURCHASE_APPROVE)
 
   const pendingQuery = useQuery({
     queryKey: purchaseKeys.pending,

@@ -12,6 +12,7 @@ import {
 import {
   isBossLike,
   isPrimaryBoss,
+  permissionRoleOf,
   withNormalizedFeatures,
 } from '@/domain/roleGroups'
 import {
@@ -1148,8 +1149,8 @@ export const localDb = {
     },
   ): AppUser {
     assertFeature(actor, 'account')
-    if (input.accessTemplate === 'owner' && !isPrimaryBoss(actor)) {
-      throw new Error('僅老闆帳號可授權等同老闆權限')
+    if (input.accessTemplate === 'owner' && !isBossLike(actor)) {
+      throw new Error('僅老闆等級帳號可授權等同老闆權限')
     }
     const users = this.getUsers()
     const idx = users.findIndex((u) => u.id === targetUserId)
@@ -1834,7 +1835,7 @@ export const localDb = {
     }
 
     assertCanApprovePurchase({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: purchase.userId,
     })
@@ -1861,7 +1862,7 @@ export const localDb = {
       throw new Error('此採購不在待核准狀態')
     }
     assertCanApprovePurchase({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: purchase.userId,
     })
@@ -2648,7 +2649,7 @@ export const localDb = {
     quoteId: string,
     format: QuoteExportFormat = 'snapshot',
   ): { quote: Quotation; version: QuotationVersion } {
-    assertCanExportQuote(actor.role)
+    assertCanExportQuote(permissionRoleOf(actor))
     const all = this.getAllQuotationsRaw()
     const idx = all.findIndex((q) => q.id === quoteId)
     if (idx < 0) throw new Error('找不到報價')
@@ -2710,7 +2711,7 @@ export const localDb = {
       workflowStatus === 'rejected' ||
       workflowStatus === 'sent_to_customer'
     ) {
-      assertCanMarkQuoteAccept(actor.role)
+      assertCanMarkQuoteAccept(permissionRoleOf(actor))
     }
     const all = read(KEYS.quotations, emptyQuotes).map(normalizeLocalQuote)
     const idx = all.findIndex((q) => q.id === quoteId && !q.deletedAt)
@@ -2746,7 +2747,7 @@ export const localDb = {
     const ver = all[idx]
     const quote = this.getQuotation(ver.quotationId)
     if (!quote) throw new Error('找不到報價')
-    assertCanSoftDeleteQuoteVersion(actor.role, quote, ver)
+    assertCanSoftDeleteQuoteVersion(permissionRoleOf(actor), quote, ver)
     all[idx] = {
       ...ver,
       deletedAt: new Date().toISOString(),
@@ -2908,7 +2909,7 @@ export const localDb = {
       status === 'rejected' ||
       status === 'sent_to_customer'
     ) {
-      assertCanMarkChangeOrderAccept(actor.role)
+      assertCanMarkChangeOrderAccept(permissionRoleOf(actor))
     }
     const all = read(KEYS.changeOrders, emptyChangeOrders)
     const idx = all.findIndex((c) => c.id === changeOrderId)
@@ -2962,7 +2963,7 @@ export const localDb = {
       sequence?: number
     },
   ): BillingMilestone {
-    assertCanManageBilling(actor.role)
+    assertCanManageBilling(permissionRoleOf(actor))
     const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
     const gate = canCreateBillingForQuote(quote)
@@ -3002,7 +3003,7 @@ export const localDb = {
       notes?: string
     },
   ): BillingDocument {
-    assertCanManageBilling(actor.role)
+    assertCanManageBilling(permissionRoleOf(actor))
     const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
     const gate = canCreateBillingForQuote(quote)
@@ -3121,7 +3122,7 @@ export const localDb = {
     actor: { id: string; role: string },
     documentId: string,
   ): BillingDocument {
-    assertCanManageBilling(actor.role)
+    assertCanManageBilling(permissionRoleOf(actor))
     const all = read(KEYS.billingDocuments, emptyBillingDocuments)
     const idx = all.findIndex((d) => d.id === documentId)
     if (idx < 0) throw new Error('找不到請款單')
@@ -3250,7 +3251,7 @@ export const localDb = {
       receivedAt?: string
     },
   ): CustomerPayment {
-    assertCanManagePayments(actor.role)
+    assertCanManagePayments(permissionRoleOf(actor))
     const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
     const gate = canRecordPaymentForQuote(quote)
@@ -3286,7 +3287,7 @@ export const localDb = {
       amount: number
     },
   ): PaymentAllocation {
-    assertCanManagePayments(actor.role)
+    assertCanManagePayments(permissionRoleOf(actor))
     const payments = read(KEYS.customerPayments, emptyCustomerPayments)
     const payment = payments.find((p) => p.id === input.paymentId)
     if (!payment || payment.status !== 'confirmed') {
@@ -3340,7 +3341,7 @@ export const localDb = {
       receivedAt?: string
     },
   ): CustomerAdvance {
-    assertCanManagePayments(actor.role)
+    assertCanManagePayments(permissionRoleOf(actor))
     const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
     const gate = canRecordPaymentForQuote(quote)
@@ -3376,7 +3377,7 @@ export const localDb = {
       amount: number
     },
   ): AdvanceApplication {
-    assertCanManagePayments(actor.role)
+    assertCanManagePayments(permissionRoleOf(actor))
     const advances = read(KEYS.customerAdvances, emptyCustomerAdvances)
     const aIdx = advances.findIndex((a) => a.id === input.advanceId)
     if (aIdx < 0) throw new Error('找不到預收款')
@@ -3449,7 +3450,7 @@ export const localDb = {
       billingDocumentId?: string | null
     },
   ): CustomerCreditNote {
-    assertCanManageRefunds(actor.role)
+    assertCanManageRefunds(permissionRoleOf(actor))
     const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
     const gate = canIssueCreditOrRefund(quote)
@@ -3503,7 +3504,7 @@ export const localDb = {
       reason: string
     },
   ): CustomerRefund {
-    assertCanManageRefunds(actor.role)
+    assertCanManageRefunds(permissionRoleOf(actor))
     const quote = this.getQuotation(input.quotationId)
     if (!quote) throw new Error('找不到報價')
     const gate = canIssueCreditOrRefund(quote)
@@ -3595,7 +3596,7 @@ export const localDb = {
     const allRaw = this.getAllQuotationsRaw()
     const quote = allRaw.find((q) => q.id === quoteId) ?? null
     if (!quote) throw new Error('找不到報價')
-    assertCanSoftDeleteQuoteCase(actor.role, quote)
+    assertCanSoftDeleteQuoteCase(permissionRoleOf(actor), quote)
     const now = new Date().toISOString()
     const all = allRaw
     const idx = all.findIndex((q) => q.id === quoteId)
@@ -4345,7 +4346,7 @@ export const localDb = {
     actor: { id: string; role: AppUser['role'] },
     requestId: string,
   ): PettyCashTopUpRequest {
-    assertCanApprove(actor.role)
+    assertCanApprove(permissionRoleOf(actor))
     const all = read(KEYS.pettyCashRequests, emptyPettyCashRequests)
     const idx = all.findIndex((r) => r.id === requestId)
     if (idx < 0) throw new Error('找不到申請')
@@ -4374,7 +4375,7 @@ export const localDb = {
     actor: { id: string; role: AppUser['role'] },
     input: { requestId: string; reason: string },
   ): PettyCashTopUpRequest {
-    assertCanApprove(actor.role)
+    assertCanApprove(permissionRoleOf(actor))
     const all = read(KEYS.pettyCashRequests, emptyPettyCashRequests)
     const idx = all.findIndex((r) => r.id === input.requestId)
     if (idx < 0) throw new Error('找不到申請')
@@ -4395,7 +4396,7 @@ export const localDb = {
     actor: { id: string; role: AppUser['role'] },
     input: { requestId: string; note?: string | null },
   ): PettyCashDisbursement {
-    assertCanDisburse(actor.role)
+    assertCanDisburse(permissionRoleOf(actor))
     const requests = read(KEYS.pettyCashRequests, emptyPettyCashRequests)
     const rIdx = requests.findIndex((r) => r.id === input.requestId)
     if (rIdx < 0) throw new Error('找不到申請')
@@ -4574,7 +4575,7 @@ export const localDb = {
     input: { advanceIds: string[]; note?: string | null },
   ): { expense: ExpenseReport; advances: EmployeeAdvance[] } {
     assertCanSettleAdvances({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       selectedIds: input.advanceIds,
     })
     const all = read(KEYS.employeeAdvances, emptyEmployeeAdvances)
@@ -4633,7 +4634,7 @@ export const localDb = {
     const idx = all.findIndex((a) => a.id === input.id)
     if (idx < 0) throw new Error('找不到代墊')
     const current = all[idx]
-    assertCanCancelAdvance({ actorRole: actor.role, status: current.status })
+    assertCanCancelAdvance({ actorRole: permissionRoleOf(actor), status: current.status })
 
     if (current.status === 'settled' && current.expenseReportId) {
       const linked = this.listExpenseReports().find(
@@ -4745,7 +4746,7 @@ export const localDb = {
     if (idx < 0) throw new Error('找不到支出回報')
     const current = all[idx]
     assertBossFinalize({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       reporterId: current.reportedBy,
     })
@@ -4784,7 +4785,7 @@ export const localDb = {
     actor: { id: string; name: string; role: AppUser['role'] },
     input: { id: string; note?: string | null },
   ): ExpenseReport {
-    assertBossCancelFinance(actor.role)
+    assertBossCancelFinance(permissionRoleOf(actor))
     const all = read(KEYS.expenseReports, emptyExpenseReports)
     const idx = all.findIndex((e) => e.id === input.id)
     if (idx < 0) throw new Error('找不到支出回報')
@@ -4815,7 +4816,7 @@ export const localDb = {
     actor: { id: string; name: string; role: AppUser['role'] },
     input: { id: string },
   ): void {
-    assertBossCancelFinance(actor.role)
+    assertBossCancelFinance(permissionRoleOf(actor))
     const all = read(KEYS.expenseReports, emptyExpenseReports)
     const idx = all.findIndex((e) => e.id === input.id)
     if (idx < 0) throw new Error('找不到支出回報')
@@ -4939,7 +4940,7 @@ export const localDb = {
     if (idx < 0) throw new Error('找不到收款回報')
     const current = all[idx]
     assertBossFinalize({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       reporterId: current.reportedBy,
     })
@@ -5013,7 +5014,7 @@ export const localDb = {
     actor: { id: string; name: string; role: AppUser['role'] },
     input: { id: string; note?: string | null },
   ): CashReceiptReport {
-    assertBossCancelFinance(actor.role)
+    assertBossCancelFinance(permissionRoleOf(actor))
     const all = read(KEYS.cashReceipts, emptyCashReceipts)
     const idx = all.findIndex((e) => e.id === input.id)
     if (idx < 0) throw new Error('找不到收款回報')
@@ -5044,7 +5045,7 @@ export const localDb = {
     actor: { id: string; name: string; role: AppUser['role'] },
     input: { id: string },
   ): void {
-    assertBossCancelFinance(actor.role)
+    assertBossCancelFinance(permissionRoleOf(actor))
     const all = read(KEYS.cashReceipts, emptyCashReceipts)
     const idx = all.findIndex((e) => e.id === input.id)
     if (idx < 0) throw new Error('找不到收款回報')
@@ -5246,7 +5247,7 @@ getOrgSpendSettings(): OrgSpendSettings {
     if (!actor || !current) throw new Error('找不到補打卡或操作者')
     if (current.status !== 'pending') throw new Error('此申請不在待核准狀態')
     assertCanApproveAttendanceCorrection({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: current.userId,
     })
@@ -5320,7 +5321,7 @@ getOrgSpendSettings(): OrgSpendSettings {
     if (!actor || !current) throw new Error('找不到補打卡或操作者')
     if (current.status !== 'pending') throw new Error('此申請不在待核准狀態')
     assertCanApproveAttendanceCorrection({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: current.userId,
     })

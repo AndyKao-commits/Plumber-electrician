@@ -80,21 +80,21 @@ describe('採購門檻 POL-001/002', () => {
       }),
     ).toThrow(/每日/)
   })
-  it('申請人不可自行核准', () => {
+  it('老闆可自行核准；管理員不可', () => {
     expect(
       canApprovePurchase({
         actorRole: 'boss',
         actorId: 'u1',
         requesterId: 'u1',
       }),
-    ).toBe(false)
+    ).toBe(true)
     expect(() =>
       assertCanApprovePurchase({
-        actorRole: 'boss',
+        actorRole: 'admin',
         actorId: 'u1',
         requesterId: 'u1',
       }),
-    ).toThrow(/自行核准/)
+    ).toThrow(/只有老闆/)
   })
   it('取消 RELEASE 針對原業務日占額加總', () => {
     expect(
@@ -221,10 +221,12 @@ describe('權限與組織隔離', () => {
     expect(hasPermission('member', PERMISSIONS.INVENTORY_ADJUST)).toBe(true)
     expect(hasPermission('employee', PERMISSIONS.INVENTORY_INBOUND)).toBe(true)
   })
-  it('self-approve 永遠拒絕', () => {
-    expect(hasPermission('boss', PERMISSIONS.PURCHASE_SELF_APPROVE)).toBe(false)
+  it('self-approve 僅 Owner 可用', () => {
+    expect(hasPermission('boss', PERMISSIONS.PURCHASE_SELF_APPROVE)).toBe(true)
+    expect(hasPermission('owner', PERMISSIONS.PURCHASE_SELF_APPROVE)).toBe(true)
+    expect(hasPermission('admin', PERMISSIONS.PURCHASE_SELF_APPROVE)).toBe(false)
   })
-  it('Member 不可核准；Owner/Admin 可核准他人', () => {
+  it('Member 不可核准；Owner/Admin 可核准他人；Owner 可自審', () => {
     expect(canApprovePurchase({
       actorRole: 'employee',
       actorId: 'a1',
@@ -246,7 +248,14 @@ describe('權限與組織隔離', () => {
         actorId: 'same',
         requesterId: 'same',
       }),
-    ).toThrow(/自行核准/)
+    ).not.toThrow()
+    expect(() =>
+      assertCanApprovePurchase({
+        actorRole: 'admin',
+        actorId: 'same',
+        requesterId: 'same',
+      }),
+    ).toThrow(/只有老闆/)
   })
   it('Member 不可發布報價；Admin/Owner 可以', () => {
     expect(hasPermission('employee', PERMISSIONS.QUOTE_PUBLISH)).toBe(false)
@@ -257,7 +266,7 @@ describe('權限與組織隔離', () => {
     expect(() => assertSameOrganization('org-a', 'org-b')).toThrow(/其他組織/)
     expect(() => assertSameOrganization('org-a', 'org-a')).not.toThrow()
   })
-  it('補打卡：Owner/Admin 可核准他人；Member 不可；禁止自核', () => {
+  it('補打卡：Owner 可自核；Admin 只能核准他人；Member 不可', () => {
     expect(hasPermission('boss', PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)).toBe(
       true,
     )
@@ -287,6 +296,13 @@ describe('權限與組織隔離', () => {
         actorId: 'same',
         requesterId: 'same',
       }),
-    ).toThrow(/自行核准/)
+    ).not.toThrow()
+    expect(() =>
+      assertCanApproveAttendanceCorrection({
+        actorRole: 'admin',
+        actorId: 'same',
+        requesterId: 'same',
+      }),
+    ).toThrow(/只有老闆/)
   })
 })

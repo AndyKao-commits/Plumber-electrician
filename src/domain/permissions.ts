@@ -79,6 +79,7 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
     PERMISSIONS.ATTENDANCE_CORRECT_APPROVE,
     PERMISSIONS.PURCHASE_CREATE,
     PERMISSIONS.PURCHASE_APPROVE,
+    PERMISSIONS.PURCHASE_SELF_APPROVE,
     PERMISSIONS.QUOTE_CREATE,
     PERMISSIONS.QUOTE_PUBLISH,
     PERMISSIONS.QUOTE_EXPORT,
@@ -142,11 +143,6 @@ const ROLE_PERMISSIONS: Record<SpecRole, readonly PermissionCode[]> = {
   ],
 }
 
-/** Explicit denies always win (REV-07 safe defaults). */
-const ALWAYS_DENIED: readonly PermissionCode[] = [
-  PERMISSIONS.PURCHASE_SELF_APPROVE,
-]
-
 export function mapLegacyRoleToSpec(role: UserRole | SpecRole | string): SpecRole {
   if (role === 'boss' || role === 'owner') return 'owner'
   if (role === 'admin') return 'admin'
@@ -158,8 +154,6 @@ export function hasPermission(
   permission: PermissionCode,
   opts?: { financeAuthorized?: boolean; payrollAuthorized?: boolean },
 ): boolean {
-  if (ALWAYS_DENIED.includes(permission)) return false
-
   const spec = mapLegacyRoleToSpec(role)
   const granted = ROLE_PERMISSIONS[spec]
 
@@ -254,13 +248,22 @@ export function canViewOthersPayroll(
   })
 }
 
+export function canSelfApprove(
+  role: UserRole | SpecRole | string,
+): boolean {
+  return hasPermission(role, PERMISSIONS.PURCHASE_SELF_APPROVE)
+}
+
 export function canApprovePurchase(input: {
   actorRole: UserRole | SpecRole | string
   actorId: string
   requesterId: string
 }): boolean {
-  if (input.actorId === input.requesterId) return false
-  return hasPermission(input.actorRole, PERMISSIONS.PURCHASE_APPROVE)
+  if (!hasPermission(input.actorRole, PERMISSIONS.PURCHASE_APPROVE)) return false
+  if (input.actorId === input.requesterId) {
+    return canSelfApprove(input.actorRole)
+  }
+  return true
 }
 
 export function assertCanApprovePurchase(input: {
@@ -268,11 +271,11 @@ export function assertCanApprovePurchase(input: {
   actorId: string
   requesterId: string
 }): void {
-  if (input.actorId === input.requesterId) {
-    throw new Error('禁止申請人自行核准自己的採購（REV-07）')
-  }
   if (!hasPermission(input.actorRole, PERMISSIONS.PURCHASE_APPROVE)) {
     throw new Error('無權核准此採購')
+  }
+  if (input.actorId === input.requesterId && !canSelfApprove(input.actorRole)) {
+    throw new Error('只有老闆身分可以自行核准自己的採購')
   }
 }
 
@@ -281,8 +284,13 @@ export function canApproveAttendanceCorrection(input: {
   actorId: string
   requesterId: string
 }): boolean {
-  if (input.actorId === input.requesterId) return false
-  return hasPermission(input.actorRole, PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)
+  if (!hasPermission(input.actorRole, PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)) {
+    return false
+  }
+  if (input.actorId === input.requesterId) {
+    return canSelfApprove(input.actorRole)
+  }
+  return true
 }
 
 export function assertCanApproveAttendanceCorrection(input: {
@@ -290,11 +298,11 @@ export function assertCanApproveAttendanceCorrection(input: {
   actorId: string
   requesterId: string
 }): void {
-  if (input.actorId === input.requesterId) {
-    throw new Error('禁止申請人自行核准自己的補打卡（REV-07）')
-  }
   if (!hasPermission(input.actorRole, PERMISSIONS.ATTENDANCE_CORRECT_APPROVE)) {
     throw new Error('無權核准補打卡')
+  }
+  if (input.actorId === input.requesterId && !canSelfApprove(input.actorRole)) {
+    throw new Error('只有老闆身分可以自行核准自己的補打卡')
   }
 }
 

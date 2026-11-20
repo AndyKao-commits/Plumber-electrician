@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { hasPermission, PERMISSIONS } from '@/domain/permissions'
+import { permissionRoleOf } from '@/domain/roleGroups'
 import {
   DEFAULT_PURCHASE_RULES,
   calcFinalPayable,
@@ -38,10 +39,9 @@ export function PurchasesPage() {
   const { materials, createMaterial, isCreatingMaterial } = useInventory(user?.id)
   const formal = isFormalMode()
 
-  const canApprove =
-    Boolean(user) && hasPermission(user!.role, PERMISSIONS.PURCHASE_APPROVE)
-  const canInbound =
-    Boolean(user) && hasPermission(user!.role, PERMISSIONS.INVENTORY_INBOUND)
+  const effectiveRole = user ? permissionRoleOf(user) : 'member'
+  const canApprove = hasPermission(effectiveRole, PERMISSIONS.PURCHASE_APPROVE)
+  const canInbound = hasPermission(effectiveRole, PERMISSIONS.INVENTORY_INBOUND)
 
   const [title, setTitle] = useState('')
   const [mode, setMode] = useState<'normal' | 'emergency'>('normal')

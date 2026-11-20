@@ -1,9 +1,8 @@
 /**
  * V1.0 field finance: employee expense / cash-receipt reports.
- * Only confirmed amounts enter case stats. Employees cannot self-finalize.
+ * Only confirmed amounts enter case stats. Boss-equivalent accounts may self-finalize.
  */
 import { roundMoney } from './money'
-import type { UserRole } from './types'
 
 export type ExpenseReportStatus =
   | 'pending_review'
@@ -99,17 +98,14 @@ export function isCaseLinkedCash(row: { siteId?: string | null }): boolean {
   return Boolean(row.siteId)
 }
 
-/** Employees cannot finalize their own expense / receipt. */
+/** Boss-equivalent accounts may finalize any report, including their own. */
 export function assertBossFinalize(input: {
-  actorRole: UserRole
+  actorRole: string
   actorId: string
   reporterId: string
 }): void {
   if (input.actorRole !== 'boss') {
     throw new Error('僅老闆可最終審核／確認')
-  }
-  if (input.actorId === input.reporterId) {
-    throw new Error('不可最終審核自己回報的支出／收款')
   }
 }
 
@@ -126,7 +122,7 @@ export function assertCanConfirmReceipt(status: CashReceiptStatus): void {
 }
 
 /** Boss may cancel mistaken entries, including already-confirmed ones. */
-export function assertBossCancelFinance(actorRole: UserRole): void {
+export function assertBossCancelFinance(actorRole: string): void {
   if (actorRole !== 'boss') {
     throw new Error('僅老闆可刪除／取消收支紀錄')
   }

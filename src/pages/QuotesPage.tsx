@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { hasPermission, PERMISSIONS } from '@/domain/permissions'
+import { permissionRoleOf } from '@/domain/roleGroups'
 import { sumIssuedBillingAmount } from '@/domain/billing'
 import { effectiveContractAmountWithChangeOrders } from '@/domain/changeOrders'
 import {
@@ -33,12 +34,13 @@ export function QuotesPage() {
     createRepairError,
   } = useQuotes(user?.id)
 
+  const effectiveRole = user ? permissionRoleOf(user) : 'member'
   const canCreate =
-    Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_CREATE)
+    Boolean(user) && hasPermission(effectiveRole, PERMISSIONS.QUOTE_CREATE)
   const canExport =
     Boolean(user) &&
-    (hasPermission(user!.role, PERMISSIONS.QUOTE_EXPORT) ||
-      hasPermission(user!.role, PERMISSIONS.QUOTE_PUBLISH))
+    (hasPermission(effectiveRole, PERMISSIONS.QUOTE_EXPORT) ||
+      hasPermission(effectiveRole, PERMISSIONS.QUOTE_PUBLISH))
 
   const formalSites = sites.filter((s) => s.kind === 'formal')
   const contractTotal = useMemo(

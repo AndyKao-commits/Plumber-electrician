@@ -14,7 +14,7 @@ import { assertAccountForProvisioning } from '@/domain/loginIdentity'
 import {
   BUILTIN_ROLE_GROUPS,
   ROLE_GROUP_TEMPLATE_LABELS,
-  isPrimaryBoss,
+  isBossLike,
   templateToAccessFields,
   type RoleGroupDefinition,
   type RoleGroupTemplate,
@@ -53,7 +53,7 @@ export function AccessPage() {
   const { user } = useUser()
   const formal = isFormalMode()
   const queryClient = useQueryClient()
-  const isBoss = isPrimaryBoss(user)
+  const isBoss = isBossLike(user)
   const canManageAccounts = hasFeature(user, 'account')
 
   const [newName, setNewName] = useState('')
@@ -195,8 +195,8 @@ export function AccessPage() {
       group: RoleGroupDefinition
     }) => {
       if (!user) throw new Error('尚未登入')
-      if (!isPrimaryBoss(user)) {
-        throw new Error('僅老闆帳號可指派身分組')
+      if (!isBossLike(user)) {
+        throw new Error('僅老闆等級帳號可指派身分組')
       }
       const fields = templateToAccessFields(input.group.template)
       return formal
@@ -453,7 +453,7 @@ export function AccessPage() {
           <section className="panel stack">
             <strong>權限／身分組</strong>
             <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-              老闆帳號為最高管理者，不可被降權。可將現場帳號設為「老闆／管理者」，營運權限等同老闆（結案、審核等），原老闆帳號可專做後台管理。
+              原始老闆帳號不可被刪除或降權。可將其他帳號設為「老闆／管理者」，取得與老闆相同的營運及管理權限，也可核准自己提出的申請。
             </p>
           </section>
 

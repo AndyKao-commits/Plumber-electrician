@@ -4,5 +4,5 @@ export {
   canApprovePurchase,
 } from './permissions'
 
-/** REV-07 safe default until Owner explicitly relaxes. */
-export const ALLOW_SELF_APPROVAL = false
+/** Owner-equivalent accounts may self-approve; Admin/Member may not. */
+export const ALLOW_OWNER_SELF_APPROVAL = true

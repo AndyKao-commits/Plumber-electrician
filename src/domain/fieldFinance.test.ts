@@ -31,7 +31,7 @@ describe('V1.0 field finance', () => {
     expect(s.pendingExpenseTotal).toBe(5_000)
   })
 
-  it('blocks employee self-finalize', () => {
+  it('blocks employees and allows owner self-finalize', () => {
     expect(() =>
       assertBossFinalize({
         actorRole: 'employee',
@@ -45,7 +45,7 @@ describe('V1.0 field finance', () => {
         actorId: 'boss-1',
         reporterId: 'boss-1',
       }),
-    ).toThrow(/不可最終審核自己/)
+    ).not.toThrow()
     expect(() =>
       assertBossFinalize({
         actorRole: 'boss',

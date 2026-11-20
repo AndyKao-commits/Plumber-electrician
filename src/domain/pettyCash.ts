@@ -3,8 +3,6 @@
  * are separate events. Approve ≠ disbursed.
  */
 import { roundMoney } from './money'
-import type { UserRole } from './types'
-
 export type PettyCashRequestStatus =
   | 'pending_approval'
   | 'approved'
@@ -17,32 +15,32 @@ export function assertTopUpAmount(amount: number): number {
   return a
 }
 
-export function canRequestPettyCashTopUp(role: UserRole): boolean {
+export function canRequestPettyCashTopUp(role: string): boolean {
   return role === 'boss' || role === 'employee'
 }
 
-export function canApprovePettyCashTopUp(role: UserRole): boolean {
+export function canApprovePettyCashTopUp(role: string): boolean {
   // Owner / boss only — Admin ops without finance does not approve petty cash.
   return role === 'boss'
 }
 
-export function canDisbursePettyCash(role: UserRole): boolean {
+export function canDisbursePettyCash(role: string): boolean {
   return role === 'boss'
 }
 
-export function assertCanRequest(role: UserRole): void {
+export function assertCanRequest(role: string): void {
   if (!canRequestPettyCashTopUp(role)) {
     throw new Error('無權申請零用金補充')
   }
 }
 
-export function assertCanApprove(role: UserRole): void {
+export function assertCanApprove(role: string): void {
   if (!canApprovePettyCashTopUp(role)) {
     throw new Error('僅 Owner 可核准零用金補充')
   }
 }
 
-export function assertCanDisburse(role: UserRole): void {
+export function assertCanDisburse(role: string): void {
   if (!canDisbursePettyCash(role)) {
     throw new Error('僅 Owner 可執行零用金撥款')
   }
