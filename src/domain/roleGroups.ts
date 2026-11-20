@@ -4,6 +4,7 @@ import {
   type FeatureMap,
 } from '@/domain/featureAccess'
 import type { SpecRole } from '@/domain/permissions'
+import type { UserRole } from '@/domain/types'
 
 /** Named identity group the boss can assign to teammates. */
 export type RoleGroupTemplate = SpecRole | 'finance'
@@ -118,16 +119,15 @@ export function isBossLike(
   return user.accessTemplate === 'owner'
 }
 
-/** Role string passed into hasPermission / assertPermission. */
+/** Role passed into hasPermission / assertPermission. */
 export function permissionRoleOf(user: {
   role: string
   accessTemplate?: string | null
-}): string {
+}): UserRole | SpecRole {
   if (isPrimaryBoss(user) || user.accessTemplate === 'owner') return 'boss'
-  if (user.accessTemplate === 'admin' || user.accessTemplate === 'member') {
-    return user.accessTemplate
-  }
-  return user.role
+  if (user.accessTemplate === 'admin' || user.role === 'admin') return 'admin'
+  if (user.accessTemplate === 'member' || user.role === 'member') return 'member'
+  return 'employee'
 }
 
 export function withNormalizedFeatures(
