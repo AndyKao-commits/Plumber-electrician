@@ -3021,7 +3021,7 @@ export const supabaseRepos = {
     assertSameOrganization(actor.organizationId, String(current.organization_id))
 
     assertCanApprovePurchase({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: String(current.user_id),
     })
@@ -3070,7 +3070,7 @@ export const supabaseRepos = {
     assertSameOrganization(actor.organizationId, String(current.organization_id))
 
     assertCanApprovePurchase({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: String(current.user_id),
     })
@@ -3321,7 +3321,7 @@ export const supabaseRepos = {
     quoteId: string,
     format: QuoteExportFormat = 'snapshot',
   ): Promise<{ quote: Quotation; version: QuotationVersion }> {
-    assertCanExportQuote(actor.role)
+    assertCanExportQuote(permissionRoleOf(actor))
     const qid = requireUuid(quoteId, '報價')
     const current = await this.getQuotation(qid)
     assertSameOrganization(actor.organizationId, current.organizationId)
@@ -3405,7 +3405,7 @@ export const supabaseRepos = {
       workflowStatus === 'rejected' ||
       workflowStatus === 'sent_to_customer'
     ) {
-      assertCanMarkQuoteAccept(actor.role)
+      assertCanMarkQuoteAccept(permissionRoleOf(actor))
     }
     const current = await this.getQuotation(quoteId)
     assertSameOrganization(actor.organizationId, current.organizationId)
@@ -3474,7 +3474,7 @@ export const supabaseRepos = {
     if (!ver) throw new AppError('找不到版本')
     assertSameOrganization(actor.organizationId, String(ver.organization_id))
     const quote = await this.getQuotation(String(ver.quotation_id))
-    assertCanSoftDeleteQuoteVersion(actor.role, quote, {
+    assertCanSoftDeleteQuoteVersion(permissionRoleOf(actor), quote, {
       versionNo: Number(ver.version_no),
       deletedAt: (ver.deleted_at as string | null) ?? null,
     })
@@ -3497,7 +3497,7 @@ export const supabaseRepos = {
   ): Promise<void> {
     const quote = await this.getQuotation(quoteId)
     assertSameOrganization(actor.organizationId, quote.organizationId)
-    assertCanSoftDeleteQuoteCase(actor.role, quote)
+    assertCanSoftDeleteQuoteCase(permissionRoleOf(actor), quote)
     const now = new Date().toISOString()
     const { error } = await sb()
       .from('quotations')
