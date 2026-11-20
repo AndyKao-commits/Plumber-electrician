@@ -11,6 +11,7 @@ import {
 } from '@/domain/siteDeleteImpact'
 import {
   isBossLike,
+  permissionRoleOf,
   withNormalizedFeatures,
 } from '@/domain/roleGroups'
 import {
