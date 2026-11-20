@@ -93,6 +93,7 @@ Deno.serve(async (req) => {
   const allowed =
     actor.role === 'boss' ||
     actor.role === 'owner' ||
+    actor.access_template === 'owner' ||
     overrides.account === true ||
     (overrides.account !== false && featureBase.account === true)
   if (!allowed) return json({ error: '無權使用帳號管理' }, 403)
