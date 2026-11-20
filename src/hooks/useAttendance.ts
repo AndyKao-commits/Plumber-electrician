@@ -142,7 +142,15 @@ export function useAttendance(userId: string | undefined) {
         }
         return localDb
           .getAttendanceCorrections()
-          .filter((c) => c.status === 'pending' && c.userId !== user.id)
+          .filter(
+            (c) =>
+              c.status === 'pending' &&
+              (c.userId !== user.id ||
+                hasPermission(
+                  permissionRoleOf(user),
+                  PERMISSIONS.PURCHASE_SELF_APPROVE,
+                )),
+          )
           .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       } catch (e) {
         throw new Error(toUserMessage(e, '無法載入待核准補打卡'))
