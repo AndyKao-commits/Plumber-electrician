@@ -453,7 +453,7 @@ export function AccessPage() {
           <section className="panel stack">
             <strong>權限／身分組</strong>
             <p className="muted" style={{ margin: 0, fontSize: '0.9rem' }}>
-              原始老闆帳號不可被刪除或降權。可將其他帳號設為「老闆／管理者」，取得與老闆相同的營運及管理權限；禁止自審規則仍然有效。
+              原始老闆帳號不可被刪除或降權。可將其他帳號設為「老闆／管理者」，取得與老闆相同的營運及管理權限，也可核准自己提出的申請。
             </p>
           </section>
 
