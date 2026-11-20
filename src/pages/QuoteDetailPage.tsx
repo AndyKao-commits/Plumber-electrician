@@ -5,6 +5,7 @@ import {
   canSoftDeleteQuoteVersion,
 } from '@/domain/quoteDelete'
 import { hasPermission, PERMISSIONS } from '@/domain/permissions'
+import { permissionRoleOf } from '@/domain/roleGroups'
 import {
   CUSTOMER_ACCEPT_LABELS,
   QUOTE_WORKFLOW_LABELS,
@@ -83,18 +84,19 @@ export function QuoteDetailPage() {
     saving,
   } = useQuoteDetail(quoteId)
 
+  const effectiveRole = user ? permissionRoleOf(user) : 'member'
   const canEdit =
     Boolean(user) &&
-    hasPermission(user!.role, PERMISSIONS.QUOTE_CREATE) &&
+    hasPermission(effectiveRole, PERMISSIONS.QUOTE_CREATE) &&
     isQuoteEditable(quote?.workflowStatus)
   const canExport =
     Boolean(user) &&
-    (hasPermission(user!.role, PERMISSIONS.QUOTE_EXPORT) ||
-      hasPermission(user!.role, PERMISSIONS.QUOTE_PUBLISH))
+    (hasPermission(effectiveRole, PERMISSIONS.QUOTE_EXPORT) ||
+      hasPermission(effectiveRole, PERMISSIONS.QUOTE_PUBLISH))
   const canMark =
-    Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_MARK_ACCEPT)
+    Boolean(user) && hasPermission(effectiveRole, PERMISSIONS.QUOTE_MARK_ACCEPT)
   const canDelete =
-    Boolean(user) && hasPermission(user!.role, PERMISSIONS.QUOTE_DELETE)
+    Boolean(user) && hasPermission(effectiveRole, PERMISSIONS.QUOTE_DELETE)
 
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
@@ -304,7 +306,7 @@ export function QuoteDetailPage() {
     snapshot: QuoteExportSnapshot
   }) {
     if (!user || !quote) return
-    const gate = canSoftDeleteQuoteVersion(user.role, quote, v)
+    const gate = canSoftDeleteQuoteVersion(effectiveRole, quote, v)
     if (!gate.ok) {
       setActionError(gate.reason)
       return
@@ -326,7 +328,7 @@ export function QuoteDetailPage() {
 
   function confirmDeleteCase() {
     if (!user || !quote) return
-    const gate = canSoftDeleteQuoteCase(user.role, quote)
+    const gate = canSoftDeleteQuoteCase(effectiveRole, quote)
     if (!gate.ok) {
       setActionError(gate.reason)
       return
@@ -370,7 +372,7 @@ export function QuoteDetailPage() {
   }
 
   const caseDeleteGate = user
-    ? canSoftDeleteQuoteCase(user.role, quote)
+    ? canSoftDeleteQuoteCase(effectiveRole, quote)
     : { ok: false as const, reason: '尚未登入' }
 
   return (
@@ -511,7 +513,7 @@ export function QuoteDetailPage() {
             <strong>歷史版本</strong>
             {versions.map((v) => {
               const vGate = user
-                ? canSoftDeleteQuoteVersion(user.role, quote, v)
+                ? canSoftDeleteQuoteVersion(effectiveRole, quote, v)
                 : { ok: false as const, reason: '尚未登入' }
               return (
                 <div key={v.id} className="row between" style={{ gap: 8 }}>
