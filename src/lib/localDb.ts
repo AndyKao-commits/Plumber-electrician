@@ -1835,7 +1835,7 @@ export const localDb = {
     }
 
     assertCanApprovePurchase({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: purchase.userId,
     })
@@ -1862,7 +1862,7 @@ export const localDb = {
       throw new Error('此採購不在待核准狀態')
     }
     assertCanApprovePurchase({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: purchase.userId,
     })
@@ -2649,7 +2649,7 @@ export const localDb = {
     quoteId: string,
     format: QuoteExportFormat = 'snapshot',
   ): { quote: Quotation; version: QuotationVersion } {
-    assertCanExportQuote(actor.role)
+    assertCanExportQuote(permissionRoleOf(actor))
     const all = this.getAllQuotationsRaw()
     const idx = all.findIndex((q) => q.id === quoteId)
     if (idx < 0) throw new Error('找不到報價')
@@ -2711,7 +2711,7 @@ export const localDb = {
       workflowStatus === 'rejected' ||
       workflowStatus === 'sent_to_customer'
     ) {
-      assertCanMarkQuoteAccept(actor.role)
+      assertCanMarkQuoteAccept(permissionRoleOf(actor))
     }
     const all = read(KEYS.quotations, emptyQuotes).map(normalizeLocalQuote)
     const idx = all.findIndex((q) => q.id === quoteId && !q.deletedAt)
@@ -2747,7 +2747,7 @@ export const localDb = {
     const ver = all[idx]
     const quote = this.getQuotation(ver.quotationId)
     if (!quote) throw new Error('找不到報價')
-    assertCanSoftDeleteQuoteVersion(actor.role, quote, ver)
+    assertCanSoftDeleteQuoteVersion(permissionRoleOf(actor), quote, ver)
     all[idx] = {
       ...ver,
       deletedAt: new Date().toISOString(),
@@ -3596,7 +3596,7 @@ export const localDb = {
     const allRaw = this.getAllQuotationsRaw()
     const quote = allRaw.find((q) => q.id === quoteId) ?? null
     if (!quote) throw new Error('找不到報價')
-    assertCanSoftDeleteQuoteCase(actor.role, quote)
+    assertCanSoftDeleteQuoteCase(permissionRoleOf(actor), quote)
     const now = new Date().toISOString()
     const all = allRaw
     const idx = all.findIndex((q) => q.id === quoteId)
@@ -5247,7 +5247,7 @@ getOrgSpendSettings(): OrgSpendSettings {
     if (!actor || !current) throw new Error('找不到補打卡或操作者')
     if (current.status !== 'pending') throw new Error('此申請不在待核准狀態')
     assertCanApproveAttendanceCorrection({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: current.userId,
     })
@@ -5321,7 +5321,7 @@ getOrgSpendSettings(): OrgSpendSettings {
     if (!actor || !current) throw new Error('找不到補打卡或操作者')
     if (current.status !== 'pending') throw new Error('此申請不在待核准狀態')
     assertCanApproveAttendanceCorrection({
-      actorRole: actor.role,
+      actorRole: permissionRoleOf(actor),
       actorId: actor.id,
       requesterId: current.userId,
     })
