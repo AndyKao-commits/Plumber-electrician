@@ -31,7 +31,7 @@ import {
 import { assertPhotoType } from '@/domain/photoTypes'
 import { assertCanAccessSite, filterSitesByAccess } from '@/domain/siteAccess'
 import { assertFeature } from '@/domain/featureAccess'
-import { isBossLike, isPrimaryBoss, permissionRoleOf } from '@/domain/roleGroups'
+import { isBossLike, permissionRoleOf } from '@/domain/roleGroups'
 import {
   assertSiteStatus,
   assertSiteStatusTransition,
@@ -1842,8 +1842,8 @@ export const supabaseRepos = {
     },
   ): Promise<AppUser> {
     assertFeature(actor, 'account')
-    if (input.accessTemplate === 'owner' && !isPrimaryBoss(actor)) {
-      throw new AppError('僅老闆帳號可授權等同老闆權限')
+    if (input.accessTemplate === 'owner' && !isBossLike(actor)) {
+      throw new AppError('僅老闆等級帳號可授權等同老闆權限')
     }
     const tid = requireUuid(targetUserId, '使用者')
     const { data, error } = await sb().rpc('boss_set_member_access', {
@@ -7370,7 +7370,7 @@ export const supabaseRepos = {
     actor: AppUser,
     requestId: string,
   ): Promise<PettyCashTopUpRequest> {
-    assertCanApprove(actor.role)
+    assertCanApprove(permissionRoleOf(actor))
     const rid = requireUuid(requestId, '申請')
     const requests = await this.listPettyCashRequests()
     const current = requests.find((r) => r.id === rid)
@@ -7419,7 +7419,7 @@ export const supabaseRepos = {
     actor: AppUser,
     input: { requestId: string; reason: string },
   ): Promise<PettyCashTopUpRequest> {
-    assertCanApprove(actor.role)
+    assertCanApprove(permissionRoleOf(actor))
     const rid = requireUuid(input.requestId, '申請')
     const current = (await this.listPettyCashRequests()).find((r) => r.id === rid)
     if (!current) throw new AppError('找不到申請')
@@ -7458,7 +7458,7 @@ export const supabaseRepos = {
     actor: AppUser,
     input: { requestId: string; note?: string | null },
   ): Promise<PettyCashDisbursement> {
-    assertCanDisburse(actor.role)
+    assertCanDisburse(permissionRoleOf(actor))
     const rid = requireUuid(input.requestId, '申請')
     const request = (await this.listPettyCashRequests()).find((r) => r.id === rid)
     if (!request) throw new AppError('找不到申請')
