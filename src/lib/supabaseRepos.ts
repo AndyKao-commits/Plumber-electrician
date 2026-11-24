@@ -1956,8 +1956,7 @@ export const supabaseRepos = {
   async getOpenAttendance(userId: string): Promise<AttendanceRecord | null> {
     requireUuid(userId, '使用者')
     const { error: autoCloseError } = await sb().rpc(
-      'auto_close_expired_attendance',
-      { p_user_id: userId },
+      'auto_close_my_expired_attendance',
     )
     if (autoCloseError) {
       throw new AppError(toUserMessage(autoCloseError, '無法檢查跨日出勤'))
