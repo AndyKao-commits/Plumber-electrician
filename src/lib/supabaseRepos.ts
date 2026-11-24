@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 77517)
-Total output lines: 8565
-
 import {
   assertCanApproveAttendanceCorrection,
   assertCanApprovePurchase,
@@ -1722,7 +1719,5237 @@ export const supabaseRepos = {
     }
     // Always unlink — including quotes already soft-deleted earlier — or
     // quotations_project_id_fkey (ON DELETE RESTRICT) blocks site delete.
-    const {…47517 tokens truncated…ceivedOn
+    const { error: unlinkError } = await sb()
+      .from('quotations')
+      .update({ project_id: null })
+      .eq('project_id', sid)
+    if (unlinkError) {
+      throw new AppError(
+        toUserMessage(unlinkError, '無法解除報價與工地關聯，請先處理報價後再刪'),
+      )
+    }
+
+    await sb().from('site_members').delete().eq('site_id', sid)
+
+    const { error } = await sb().from('sites').delete().eq('id', sid)
+    if (error) {
+      throw new AppError(
+        toUserMessage(
+          error,
+          '照片可能已刪除，但案件刪除失敗。請重試或改用結案封存。',
+        ),
+      )
+    }
+    await this.appendAuditLog(actor, {
+      action: 'site.delete',
+      targetType: 'site',
+      targetId: sid,
+      before: current,
+    })
+  },
+
+  async listRoleGroups(actor: AppUser) {
+    const { data, error } = await sb()
+      .from('org_role_groups')
+      .select('id, name, template, finance_authorized, permissions')
+      .eq('organization_id', actor.organizationId)
+      .order('name')
+    if (error) {
+      return []
+    }
+    return (data ?? []).map((row) =>
+      withNormalizedFeatures({
+        id: String(row.id),
+        name: String(row.name),
+        template: row.template as 'owner' | 'admin' | 'member' | 'finance',
+        financeAuthorized: Boolean(row.finance_authorized),
+        features: (row.permissions as Record<string, boolean> | null) ?? null,
+      }),
+    )
+  },
+
+  async createRoleGroup(
+    actor: AppUser,
+    input: {
+      name: string
+      template: 'owner' | 'admin' | 'member' | 'finance'
+      financeAuthorized: boolean
+      features?: import('@/domain/featureAccess').FeatureMap
+    },
+  ) {
+    assertFeature(actor, 'account')
+    const name = input.name.trim()
+    if (!name) throw new AppError('請輸入身分組名稱')
+    const features =
+      input.features ?? templateToAccessFields(input.template).features
+    const { data, error } = await sb()
+      .from('org_role_groups')
+      .insert({
+        organization_id: actor.organizationId,
+        name,
+        template: input.template,
+        finance_authorized: Boolean(input.financeAuthorized),
+        permissions: features,
+        created_by: actor.id,
+      })
+      .select('id, name, template, finance_authorized, permissions')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立身分組'))
+    return withNormalizedFeatures({
+      id: String(data.id),
+      name: String(data.name),
+      template: data.template as 'owner' | 'admin' | 'member' | 'finance',
+      financeAuthorized: Boolean(data.finance_authorized),
+      features: (data.permissions as Record<string, boolean> | null) ?? features,
+    })
+  },
+
+  async updateRoleGroupFeatures(
+    actor: AppUser,
+    groupId: string,
+    features: import('@/domain/featureAccess').FeatureMap,
+  ) {
+    assertFeature(actor, 'account')
+    const { data, error } = await sb()
+      .from('org_role_groups')
+      .update({ permissions: features })
+      .eq('id', requireUuid(groupId, '身分組'))
+      .eq('organization_id', actor.organizationId)
+      .select('id, name, template, finance_authorized, permissions')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新身分組權限'))
+    return withNormalizedFeatures({
+      id: String(data.id),
+      name: String(data.name),
+      template: data.template as 'owner' | 'admin' | 'member' | 'finance',
+      financeAuthorized: Boolean(data.finance_authorized),
+      features: (data.permissions as Record<string, boolean> | null) ?? features,
+    })
+  },
+
+  async setMemberAccess(
+    actor: AppUser,
+    targetUserId: string,
+    input: {
+      roleGroupId?: string | null
+      roleGroupName: string
+      accessTemplate: 'owner' | 'admin' | 'member'
+      financeAuthorized: boolean
+      features?: import('@/domain/featureAccess').FeatureMap | null
+      permissionOverrides?: Partial<
+        import('@/domain/featureAccess').FeatureMap
+      > | null
+    },
+  ): Promise<AppUser> {
+    assertFeature(actor, 'account')
+    if (input.accessTemplate === 'owner' && !isBossLike(actor)) {
+      throw new AppError('僅老闆等級帳號可授權等同老闆權限')
+    }
+    const tid = requireUuid(targetUserId, '使用者')
+    const { data, error } = await sb().rpc('boss_set_member_access', {
+      p_target_user_id: tid,
+      p_role_group_name: input.roleGroupName,
+      p_access_template: input.accessTemplate,
+      p_finance_authorized: input.financeAuthorized,
+      p_role_group_id: input.roleGroupId ?? null,
+      p_features: input.features ?? null,
+      p_permission_overrides: input.permissionOverrides ?? null,
+    })
+    if (error) {
+      const msg = error.message || ''
+      if (/boss_set_member_access|schema cache|Could not find the function/i.test(msg)) {
+        throw new AppError(
+          '後端尚未安裝權限設定函式。請在 Supabase 執行 migration：20261111_boss_set_member_access_apply.sql 後再試。',
+        )
+      }
+      if (/privileged profile fields/i.test(msg)) {
+        throw new AppError(
+          '權限欄位受保護，無法直接修改。請確認已套用最新資料庫更新後再試。',
+        )
+      }
+      throw new AppError(toUserMessage(error, '無法設定權限'))
+    }
+    if (!data) throw new AppError('無法設定權限')
+    const mapped = mapUser(data as Parameters<typeof mapUser>[0])
+    await this.appendAuditLog(actor, {
+      action: 'permission.update',
+      targetType: 'profile',
+      targetId: tid,
+      after: mapped,
+    })
+    return mapped
+  },
+
+  async updateSiteStatus(
+    actor: AppUser,
+    siteId: string,
+    status: SiteProject['status'],
+  ): Promise<SiteProject> {
+    if (!isBossLike(actor)) {
+      throw new AppError('僅老闆可結案／重開工地')
+    }
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.SITE_WRITE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const sid = requireUuid(siteId, '工地')
+    const current = await this.getSite(sid, actor)
+    if (!current) throw new AppError('找不到工地')
+    const next = assertSiteStatus(status)
+    assertSiteStatusTransition({ from: current.status, to: next })
+    const { data, error } = await sb()
+      .from('sites')
+      .update({
+        status: next,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', sid)
+      .select(
+        'id, organization_id, name, kind, status, address, customer_name, notes, warranty_until, created_at, updated_at, version',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新工地狀態'))
+    const site = mapSite(data)
+    assertSameOrganization(actor.organizationId, site.organizationId)
+    return site
+  },
+
+  /** Create in-app notices for sites with warranty ending within daysAhead. */
+  async ensureWarrantyNotices(actor: AppUser, daysAhead = 30): Promise<number> {
+    const today = taipeiDateString()
+    const until = new Date()
+    until.setDate(until.getDate() + daysAhead)
+    const untilStr = taipeiDateString(until)
+
+    const { data: sites, error } = await sb()
+      .from('sites')
+      .select('id, name, warranty_until')
+      .not('warranty_until', 'is', null)
+      .gte('warranty_until', today)
+      .lte('warranty_until', untilStr)
+    if (error) throw new AppError(toUserMessage(error, '無法檢查保固'))
+
+    let created = 0
+    for (const site of sites ?? []) {
+      const title = `保固即將到期：${site.name}`
+      const { data: existing } = await sb()
+        .from('notices')
+        .select('id')
+        .eq('user_id', actor.id)
+        .eq('title', title)
+        .eq('status', 'open')
+        .limit(1)
+      if (existing && existing.length > 0) continue
+
+      const { error: noticeError } = await sb().rpc('create_org_notices', {
+        p_recipient_ids: [actor.id],
+        p_kind: 'todo',
+        p_title: title,
+        p_detail: `保固日 ${site.warranty_until}（${daysAhead} 天內）。請確認是否需安排回訪。`,
+        p_href: `/sites/${site.id}`,
+        p_as_todo: true,
+      })
+      if (!noticeError) created += 1
+    }
+    return created
+  },
+
+  async getOpenAttendance(userId: string): Promise<AttendanceRecord | null> {
+    requireUuid(userId, '使用者')
+    const { error: autoCloseError } = await sb().rpc(
+      'auto_close_expired_attendance',
+      { p_user_id: userId },
+    )
+    if (autoCloseError) {
+      throw new AppError(toUserMessage(autoCloseError, '無法檢查跨日出勤'))
+    }
+    const { data, error } = await sb()
+      .from('attendance')
+      .select(
+        'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
+      )
+      .eq('user_id', userId)
+      .eq('status', 'clocked_in')
+      .maybeSingle()
+    if (error) throw new AppError(toUserMessage(error, '無法讀取出勤狀態'))
+    return data ? mapAttendance(data) : null
+  },
+
+  async listAttendance(userId: string): Promise<AttendanceRecord[]> {
+    requireUuid(userId, '使用者')
+    const { data, error } = await sb()
+      .from('attendance')
+      .select(
+        'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
+      )
+      .eq('user_id', userId)
+      .order('clock_in_at', { ascending: false })
+      .limit(50)
+    if (error) throw new AppError(toUserMessage(error, '無法讀取出勤紀錄'))
+    return (data ?? []).map((row) => mapAttendance(row))
+  },
+
+  async listAttendanceForMonth(
+    actor: AppUser,
+    input: { userId: string; year: number; month: number },
+  ): Promise<AttendanceRecord[]> {
+    const uid = requireUuid(input.userId, '使用者')
+    if (!isBossLike(actor) && actor.id !== uid) {
+      throw new AppError('只能查看自己的出勤')
+    }
+    const mm = String(input.month).padStart(2, '0')
+    const start = `${input.year}-${mm}-01T00:00:00+08:00`
+    const endMonth = input.month === 12 ? 1 : input.month + 1
+    const endYear = input.month === 12 ? input.year + 1 : input.year
+    const end = `${endYear}-${String(endMonth).padStart(2, '0')}-01T00:00:00+08:00`
+    const { data, error } = await sb()
+      .from('attendance')
+      .select(
+        'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
+      )
+      .eq('user_id', uid)
+      .gte('clock_in_at', start)
+      .lt('clock_in_at', end)
+      .order('clock_in_at', { ascending: true })
+      .limit(200)
+    if (error) throw new AppError(toUserMessage(error, '無法讀取出勤紀錄'))
+    return (data ?? []).map((row) => mapAttendance(row))
+  },
+
+  async getEmployeePaySetting(
+    actor: AppUser,
+    userId: string,
+  ): Promise<EmployeePaySetting | null> {
+    const uid = requireUuid(userId, '使用者')
+    if (!isBossLike(actor) && actor.id !== uid) {
+      throw new AppError('只能查看自己的薪資設定')
+    }
+    const { data, error } = await sb()
+      .from('employee_pay_settings')
+      .select(
+        'id, organization_id, user_id, pay_type, base_amount, effective_from, note, updated_by, created_at, updated_at',
+      )
+      .eq('user_id', uid)
+      .order('effective_from', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (error) throw new AppError(toUserMessage(error, '無法讀取薪資設定'))
+    return data ? mapPaySetting(data) : null
+  },
+
+  async upsertEmployeePaySetting(
+    actor: AppUser,
+    input: {
+      userId: string
+      payType: PayType
+      baseAmount: number
+      effectiveFrom: string
+      note?: string | null
+    },
+  ): Promise<EmployeePaySetting> {
+    assertBossSalaryAction(actor)
+    const uid = requireUuid(input.userId, '使用者')
+    const payType = assertPayType(input.payType)
+    const baseAmount = Math.round(Number(input.baseAmount))
+    if (!Number.isFinite(baseAmount) || baseAmount < 0) {
+      throw new AppError('基本薪資需為 0 以上整數')
+    }
+    const effectiveFrom = input.effectiveFrom.slice(0, 10)
+    const now = new Date().toISOString()
+    const { data: existing } = await sb()
+      .from('employee_pay_settings')
+      .select('id')
+      .eq('user_id', uid)
+      .eq('effective_from', effectiveFrom)
+      .maybeSingle()
+
+    const payload = {
+      user_id: uid,
+      pay_type: payType,
+      base_amount: baseAmount,
+      effective_from: effectiveFrom,
+      note: input.note?.trim() || null,
+      updated_by: actor.id,
+      updated_at: now,
+    }
+
+    const query = existing?.id
+      ? sb()
+          .from('employee_pay_settings')
+          .update(payload)
+          .eq('id', existing.id)
+          .select(
+            'id, organization_id, user_id, pay_type, base_amount, effective_from, note, updated_by, created_at, updated_at',
+          )
+          .single()
+      : sb()
+          .from('employee_pay_settings')
+          .insert(payload)
+          .select(
+            'id, organization_id, user_id, pay_type, base_amount, effective_from, note, updated_by, created_at, updated_at',
+          )
+          .single()
+
+    const { data, error } = await query
+    if (error) throw new AppError(toUserMessage(error, '無法儲存薪資設定'))
+    const row = mapPaySetting(data)
+    await this.appendAuditLog(actor, {
+      action: 'salary.setting',
+      targetType: 'employee_pay_settings',
+      targetId: row.id,
+      after: row,
+    })
+    // keep profiles.pay_type in sync for display
+    await sb().from('profiles').update({ pay_type: payType }).eq('id', uid)
+    return row
+  },
+
+  async listSalaryEntries(
+    actor: AppUser,
+    input: { year: number; month: number; userId?: string },
+  ): Promise<SalaryEntry[]> {
+    const run = async (cols: string) => {
+      let q = sb()
+        .from('salary_entries')
+        .select(cols)
+        .eq('period_year', input.year)
+        .eq('period_month', input.month)
+        .order('entry_date', { ascending: true })
+        .limit(500)
+      if (input.userId) {
+        const uid = requireUuid(input.userId, '使用者')
+        if (!isBossLike(actor) && actor.id !== uid) {
+          throw new AppError('只能查看自己的薪資')
+        }
+        q = q.eq('user_id', uid)
+      } else if (!isBossLike(actor)) {
+        q = q.eq('user_id', actor.id)
+      }
+      return q
+    }
+    let { data, error } = await run(SALARY_ENTRY_COLS)
+    if (error && /source|attendance_date|day_fraction|column/i.test(error.message)) {
+      ;({ data, error } = await run(SALARY_ENTRY_COLS_LEGACY))
+    }
+    if (error) throw new AppError(toUserMessage(error, '無法載入薪資明細'))
+    return (data ?? []).map((row) =>
+      mapSalaryEntry(row as unknown as Record<string, unknown>),
+    )
+  },
+
+  async createSalaryEntry(
+    actor: AppUser,
+    input: {
+      userId: string
+      userName: string
+      entryDate: string
+      category: SalaryEntryCategory
+      amount: number
+      title: string
+      note?: string | null
+      siteId?: string | null
+      siteName?: string | null
+      status?: SalaryEntryStatus
+      source?: SalaryEntry['source']
+      attendanceDate?: string | null
+      dayFraction?: number | null
+    },
+  ): Promise<SalaryEntry> {
+    assertBossSalaryAction(actor)
+    const uid = requireUuid(input.userId, '使用者')
+    const category = assertSalaryCategory(input.category)
+    const amount = assertSalaryAmount(input.amount, category)
+    const entryDate = input.entryDate.slice(0, 10)
+    const { year, month } = periodFromDate(entryDate)
+    const title = input.title.trim()
+    if (!title) throw new AppError('請填項目名稱')
+    const status = input.status ?? 'pending'
+    const payload: Record<string, unknown> = {
+      user_id: uid,
+      user_name: input.userName.trim() || '員工',
+      period_year: year,
+      period_month: month,
+      entry_date: entryDate,
+      category,
+      amount,
+      title,
+      note: input.note?.trim() || null,
+      site_id: input.siteId || null,
+      site_name: input.siteName?.trim() || null,
+      status,
+      created_by: actor.id,
+      source: input.source ?? 'manual',
+      attendance_date: input.attendanceDate?.slice(0, 10) || null,
+      day_fraction: input.dayFraction ?? null,
+    }
+    let { data, error } = await sb()
+      .from('salary_entries')
+      .insert(payload)
+      .select(SALARY_ENTRY_COLS)
+      .single()
+    if (error && /source|attendance_date|day_fraction|column/i.test(error.message)) {
+      delete payload.source
+      delete payload.attendance_date
+      delete payload.day_fraction
+      ;({ data, error } = await sb()
+        .from('salary_entries')
+        .insert(payload)
+        .select(SALARY_ENTRY_COLS_LEGACY)
+        .single())
+    }
+    if (error) throw new AppError(toUserMessage(error, '無法新增薪資項目'))
+    const row = mapSalaryEntry(data as Record<string, unknown>)
+    await this.appendAuditLog(actor, {
+      action: 'salary.entry.create',
+      targetType: 'salary_entry',
+      targetId: row.id,
+      after: row,
+    })
+    return row
+  },
+
+  async listSalaryPayments(
+    actor: AppUser,
+    input: { year: number; month: number; employeeId?: string },
+  ): Promise<SalaryPayment[]> {
+    let q = sb()
+      .from('salary_payments')
+      .select(SALARY_PAYMENT_COLS)
+      .eq('settlement_year', input.year)
+      .eq('settlement_month', input.month)
+      .order('paid_on', { ascending: true })
+      .limit(200)
+    if (input.employeeId) {
+      const uid = requireUuid(input.employeeId, '使用者')
+      if (!isBossLike(actor) && actor.id !== uid) {
+        throw new AppError('只能查看自己的薪資付款')
+      }
+      q = q.eq('employee_id', uid)
+    } else if (!isBossLike(actor)) {
+      q = q.eq('employee_id', actor.id)
+    }
+    const { data, error } = await q
+    if (error) {
+      if (/salary_payments|schema cache|relation/i.test(error.message)) {
+        return []
+      }
+      throw new AppError(toUserMessage(error, '無法載入付款紀錄'))
+    }
+    return (data ?? []).map((row) => mapSalaryPayment(row as Record<string, unknown>))
+  },
+
+  async createSalaryPayment(
+    actor: AppUser,
+    input: {
+      employeeId: string
+      employeeName: string
+      settlementYear: number
+      settlementMonth: number
+      amount: number
+      paidOn: string
+      note?: string | null
+    },
+  ): Promise<SalaryPayment> {
+    assertBossSalaryAction(actor)
+    const uid = requireUuid(input.employeeId, '使用者')
+    const amount = Math.round(Number(input.amount))
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new AppError('實付金額需為正整數')
+    }
+    const paidOn = input.paidOn.slice(0, 10)
+    const { data, error } = await sb()
+      .from('salary_payments')
+      .insert({
+        employee_id: uid,
+        employee_name: input.employeeName.trim() || '員工',
+        settlement_year: input.settlementYear,
+        settlement_month: input.settlementMonth,
+        amount,
+        paid_on: paidOn,
+        note: input.note?.trim() || null,
+        created_by: actor.id,
+      })
+      .select(SALARY_PAYMENT_COLS)
+      .single()
+    if (error) {
+      if (/salary_payments|schema cache|relation/i.test(error.message)) {
+        throw new AppError(
+          '後端尚未安裝付款表。請套用 migration：20261117_salary_payments_daily_wage.sql',
+        )
+      }
+      throw new AppError(toUserMessage(error, '無法新增付款'))
+    }
+    const row = mapSalaryPayment(data as Record<string, unknown>)
+    await this.appendAuditLog(actor, {
+      action: 'salary.payment.create',
+      targetType: 'salary_payment',
+      targetId: row.id,
+      after: row,
+    })
+    return row
+  },
+
+  async syncAttendanceDailyWages(
+    actor: AppUser,
+    input: {
+      userId: string
+      userName: string
+      year: number
+      month: number
+    },
+  ): Promise<{ created: number }> {
+    assertBossSalaryAction(actor)
+    const uid = requireUuid(input.userId, '使用者')
+    const setting = await this.getEmployeePaySetting(actor, uid)
+    if (!setting || setting.payType !== 'daily') {
+      return { created: 0 }
+    }
+    const [attendance, existing] = await Promise.all([
+      this.listAttendanceForMonth(actor, {
+        userId: uid,
+        year: input.year,
+        month: input.month,
+      }),
+      this.listSalaryEntries(actor, {
+        year: input.year,
+        month: input.month,
+        userId: uid,
+      }),
+    ])
+    const { buildDailyWageDrafts } = await import('@/domain/salaryDailyWage')
+    // dynamic import keeps cold path light
+    const drafts = buildDailyWageDrafts({
+      attendance,
+      dailyRate: setting.baseAmount,
+      existingEntries: existing,
+    })
+    let created = 0
+    for (const d of drafts) {
+      await this.createSalaryEntry(actor, {
+        userId: uid,
+        userName: input.userName,
+        entryDate: d.attendanceDate,
+        category: 'base',
+        amount: d.amount,
+        title: d.title,
+        note: d.note,
+        status: 'pending',
+        source: 'attendance_daily',
+        attendanceDate: d.attendanceDate,
+        dayFraction: d.dayFraction,
+      })
+      created += 1
+    }
+    return { created }
+  },
+
+  async updateSalaryEntryStatus(
+    actor: AppUser,
+    input: {
+      id: string
+      status: 'confirmed' | 'paid' | 'cancelled' | 'pending'
+      reason?: string | null
+    },
+  ): Promise<SalaryEntry> {
+    assertBossSalaryAction(actor)
+    const id = requireUuid(input.id, '薪資項目')
+    const { data: current, error: loadError } = await sb()
+      .from('salary_entries')
+      .select(
+        SALARY_ENTRY_COLS,
+      )
+      .eq('id', id)
+      .single()
+    if (loadError || !current) {
+      throw new AppError(toUserMessage(loadError, '找不到薪資項目'))
+    }
+    const before = mapSalaryEntry(current)
+    const now = new Date().toISOString()
+    const patch: Record<string, unknown> = {
+      status: input.status,
+      updated_at: now,
+    }
+    if (input.status === 'confirmed') {
+      if (!canConfirmSalaryEntry(before.status)) {
+        throw new AppError('此狀態不可確認')
+      }
+      patch.confirmed_by = actor.id
+      patch.confirmed_at = now
+    } else if (input.status === 'paid') {
+      if (!canMarkSalaryPaid(before.status)) {
+        throw new AppError('僅已確認項目可標記支付')
+      }
+      patch.paid_by = actor.id
+      patch.paid_at = now
+    } else if (input.status === 'cancelled') {
+      patch.cancelled_by = actor.id
+      patch.cancelled_at = now
+      patch.cancel_reason = input.reason?.trim() || null
+    } else if (input.status === 'pending') {
+      if (before.status === 'confirmed' || before.status === 'paid') {
+        throw new AppError('已確認／已支付不可直接退回；請用更正')
+      }
+    }
+    const { data, error } = await sb()
+      .from('salary_entries')
+      .update(patch)
+      .eq('id', id)
+      .select(
+        SALARY_ENTRY_COLS,
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新薪資狀態'))
+    const row = mapSalaryEntry(data)
+    await this.appendAuditLog(actor, {
+      action: `salary.entry.${input.status}`,
+      targetType: 'salary_entry',
+      targetId: row.id,
+      before,
+      after: row,
+    })
+    return row
+  },
+
+  async correctSalaryEntry(
+    actor: AppUser,
+    input: {
+      id: string
+      amount: number
+      title?: string
+      note?: string | null
+      reason: string
+    },
+  ): Promise<SalaryEntry> {
+    assertBossSalaryAction(actor)
+    const id = requireUuid(input.id, '薪資項目')
+    const reason = assertCorrectionReason(input.reason)
+    const { data: current, error: loadError } = await sb()
+      .from('salary_entries')
+      .select(
+        SALARY_ENTRY_COLS,
+      )
+      .eq('id', id)
+      .single()
+    if (loadError || !current) {
+      throw new AppError(toUserMessage(loadError, '找不到薪資項目'))
+    }
+    const before = mapSalaryEntry(current)
+    if (before.status !== 'confirmed' && before.status !== 'paid') {
+      throw new AppError('僅已確認／已支付項目需走更正流程')
+    }
+    const amount = assertSalaryAmount(input.amount, before.category)
+    const patch = {
+      amount,
+      title: input.title?.trim() || before.title,
+      note: input.note !== undefined ? input.note?.trim() || null : before.note,
+      updated_at: new Date().toISOString(),
+    }
+    const { data, error } = await sb()
+      .from('salary_entries')
+      .update(patch)
+      .eq('id', id)
+      .select(
+        SALARY_ENTRY_COLS,
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更正薪資'))
+    const after = mapSalaryEntry(data)
+    const { error: corrError } = await sb()
+      .from('salary_entry_corrections')
+      .insert({
+        salary_entry_id: id,
+        before_json: JSON.stringify(before),
+        after_json: JSON.stringify(after),
+        reason,
+        corrected_by: actor.id,
+      })
+    if (corrError) {
+      throw new AppError(toUserMessage(corrError, '更正紀錄寫入失敗'))
+    }
+    await this.appendAuditLog(actor, {
+      action: 'salary.entry.correct',
+      targetType: 'salary_entry',
+      targetId: id,
+      before,
+      after,
+      message: reason,
+    })
+    return after
+  },
+
+  async clockIn(input: {
+    userId: string
+    latitude?: number | null
+    longitude?: number | null
+  }): Promise<AttendanceRecord> {
+    const userId = requireUuid(input.userId, '使用者')
+    const open = await this.getOpenAttendance(userId)
+    if (open) throw new AppError('目前已在上班中，請先下班')
+
+    const { data, error } = await sb()
+      .from('attendance')
+      .insert({
+        user_id: userId,
+        status: 'clocked_in',
+        clock_in_at: new Date().toISOString(),
+        latitude: input.latitude ?? null,
+        longitude: input.longitude ?? null,
+      })
+      .select(
+        'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '上班打卡失敗'))
+    const record = mapAttendance(data)
+    void safeNotifyApprovers({
+      eventType: 'attendance.clock_in',
+      title: '出勤：上班打卡',
+      detail: `成員已上班（${formatTaipei(new Date(record.clockInAt), 'HH:mm')}）`,
+      href: '/team',
+      asTodo: false,
+    })
+    return record
+  },
+
+  async clockOut(userId: string): Promise<AttendanceRecord> {
+    const uid = requireUuid(userId, '使用者')
+    const open = await this.getOpenAttendance(uid)
+    if (!open) throw new AppError('目前沒有進行中的班次')
+
+    const { data, error } = await sb()
+      .from('attendance')
+      .update({
+        status: 'clocked_out',
+        clock_out_at: new Date().toISOString(),
+      })
+      .eq('id', open.id)
+      .eq('user_id', uid)
+      .select(
+        'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '下班打卡失敗'))
+    const record = mapAttendance(data)
+    void safeNotifyApprovers({
+      eventType: 'attendance.clock_out',
+      title: '出勤：下班打卡',
+      detail: `成員已下班（${formatTaipei(new Date(record.clockOutAt ?? new Date()), 'HH:mm')}）`,
+      href: '/team',
+      asTodo: false,
+    })
+    return record
+  },
+
+  async assignSite(userId: string, siteId: string): Promise<AttendanceRecord> {
+    const uid = requireUuid(userId, '使用者')
+    const sid = requireUuid(siteId, '工地')
+    const open = await this.getOpenAttendance(uid)
+    if (!open) throw new AppError('請先上班再選擇工地')
+
+    const { data, error } = await sb()
+      .from('attendance')
+      .update({ site_id: sid, job_type: 'project' })
+      .eq('id', open.id)
+      .eq('user_id', uid)
+      .select(
+        'id, organization_id, user_id, status, clock_in_at, clock_out_at, site_id, job_type, latitude, longitude, note',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新目前工地'))
+    const record = mapAttendance(data)
+
+    // Each site pick appends a visit row (do not only overwrite attendance.site_id).
+    const { data: siteRow } = await sb()
+      .from('sites')
+      .select('name')
+      .eq('id', sid)
+      .maybeSingle()
+    const siteName = siteRow?.name ? String(siteRow.name) : null
+    const { error: visitError } = await sb().from('location_checkins').insert({
+      organization_id: record.organizationId,
+      user_id: uid,
+      recorded_at: new Date().toISOString(),
+      source: 'attendance_site',
+      site_id: sid,
+      label: siteName,
+      attendance_id: open.id,
+    })
+    if (visitError) {
+      console.warn('[assignSite] visit insert failed', visitError.message)
+    }
+    return record
+  },
+
+  async listAttendanceCorrections(actor: AppUser): Promise<AttendanceCorrection[]> {
+    requireUuid(actor.id, '使用者')
+    let query = sb()
+      .from('attendance_corrections')
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .order('created_at', { ascending: false })
+      .limit(50)
+
+    if (
+      !hasPermission(
+        permissionRoleOf(actor),
+        PERMISSIONS.ATTENDANCE_CORRECT_APPROVE,
+      )
+    ) {
+      query = query.eq('user_id', actor.id)
+    }
+
+    const { data, error } = await query
+    if (error) throw new AppError(toUserMessage(error, '無法載入補打卡申請'))
+    return (data ?? []).map((row) => mapAttendanceCorrection(row))
+  },
+
+  async listPendingAttendanceCorrections(
+    actor: AppUser,
+  ): Promise<AttendanceCorrection[]> {
+    assertPermission(
+      permissionRoleOf(actor),
+      PERMISSIONS.ATTENDANCE_CORRECT_APPROVE,
+    )
+    const { data, error } = await sb()
+      .from('attendance_corrections')
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true })
+      .limit(50)
+    if (error) throw new AppError(toUserMessage(error, '無法載入待核准補打卡'))
+    return (data ?? [])
+      .map((row) => mapAttendanceCorrection(row))
+      .filter(
+        (c) =>
+          c.userId !== actor.id ||
+          hasPermission(
+            permissionRoleOf(actor),
+            PERMISSIONS.PURCHASE_SELF_APPROVE,
+          ),
+      )
+  },
+
+  async applyAttendanceCorrection(
+    actor: AppUser,
+    input: {
+      attendanceId?: string | null
+      proposedClockInAt: string
+      proposedClockOutAt?: string | null
+      proposedSiteId?: string | null
+      reason: string
+    },
+  ): Promise<AttendanceCorrection> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.ATTENDANCE_OWN)
+    const reason = input.reason.trim()
+    if (reason.length < 2) throw new AppError('請填寫補打卡原因')
+
+    const clockIn = new Date(input.proposedClockInAt)
+    if (Number.isNaN(clockIn.getTime())) throw new AppError('上班時間無效')
+    let clockOutIso: string | null = null
+    if (input.proposedClockOutAt) {
+      const clockOut = new Date(input.proposedClockOutAt)
+      if (Number.isNaN(clockOut.getTime())) throw new AppError('下班時間無效')
+      if (clockOut.getTime() < clockIn.getTime()) {
+        throw new AppError('下班時間不可早於上班時間')
+      }
+      clockOutIso = clockOut.toISOString()
+    }
+
+    const attendanceId = optionalUuid(input.attendanceId ?? '', '出勤')
+    const proposedSiteId = optionalUuid(input.proposedSiteId ?? '', '工地')
+
+    let originalClockInAt: string | null = null
+    let originalClockOutAt: string | null = null
+    let originalSiteId: string | null = null
+
+    if (attendanceId) {
+      const { data: att, error: attError } = await sb()
+        .from('attendance')
+        .select(
+          'id, organization_id, user_id, clock_in_at, clock_out_at, site_id',
+        )
+        .eq('id', attendanceId)
+        .maybeSingle()
+      if (attError) throw new AppError(toUserMessage(attError, '無法讀取出勤'))
+      if (!att) throw new AppError('找不到出勤紀錄')
+      if (String(att.user_id) !== actor.id) {
+        throw new AppError('只能更正自己的出勤')
+      }
+      assertSameOrganization(actor.organizationId, String(att.organization_id))
+      originalClockInAt = String(att.clock_in_at)
+      originalClockOutAt = (att.clock_out_at as string | null) ?? null
+      originalSiteId = (att.site_id as string | null) ?? null
+    }
+
+    const { data, error } = await sb()
+      .from('attendance_corrections')
+      .insert({
+        organization_id: actor.organizationId,
+        user_id: actor.id,
+        attendance_id: attendanceId,
+        proposed_clock_in_at: clockIn.toISOString(),
+        proposed_clock_out_at: clockOutIso,
+        proposed_site_id: proposedSiteId,
+        reason,
+        status: 'pending',
+        original_clock_in_at: originalClockInAt,
+        original_clock_out_at: originalClockOutAt,
+        original_site_id: originalSiteId,
+      })
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '補打卡申請失敗'))
+
+    const correction = mapAttendanceCorrection(data)
+    void safeNotifyApprovers({
+      eventType: 'attendance.correction_pending',
+      title: `補打卡待核准：${actor.name}`,
+      detail: reason,
+      href: '/attendance',
+      asTodo: true,
+    })
+    return correction
+  },
+
+  async approveAttendanceCorrection(
+    actor: AppUser,
+    correctionId: string,
+  ): Promise<AttendanceCorrection> {
+    const id = requireUuid(correctionId, '補打卡')
+    const { data: current, error: loadError } = await sb()
+      .from('attendance_corrections')
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .eq('id', id)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取補打卡'))
+    if (!current) throw new AppError('找不到補打卡申請')
+    if (current.status !== 'pending') throw new AppError('此申請不在待核准狀態')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+    assertCanApproveAttendanceCorrection({
+      actorRole: permissionRoleOf(actor),
+      actorId: actor.id,
+      requesterId: String(current.user_id),
+    })
+
+    const effectiveIn = String(current.proposed_clock_in_at)
+    const effectiveOut = (current.proposed_clock_out_at as string | null) ?? null
+    const effectiveSite =
+      (current.proposed_site_id as string | null) ?? null
+    const attendanceId = (current.attendance_id as string | null) ?? null
+
+    // Approve → overwrite linked attendance (or create one if 漏打補登).
+    if (attendanceId) {
+      const { error: attError } = await sb()
+        .from('attendance')
+        .update({
+          clock_in_at: effectiveIn,
+          clock_out_at: effectiveOut,
+          site_id: effectiveSite,
+          status: effectiveOut ? 'clocked_out' : 'clocked_in',
+        })
+        .eq('id', attendanceId)
+        .eq('organization_id', actor.organizationId)
+      if (attError) {
+        throw new AppError(toUserMessage(attError, '核准後無法覆蓋出勤'))
+      }
+    } else {
+      const { error: createError } = await sb()
+        .from('attendance')
+        .insert({
+          organization_id: actor.organizationId,
+          user_id: current.user_id,
+          clock_in_at: effectiveIn,
+          clock_out_at: effectiveOut,
+          site_id: effectiveSite,
+          status: effectiveOut ? 'clocked_out' : 'clocked_in',
+          job_type: 'project',
+        })
+      if (createError) {
+        throw new AppError(toUserMessage(createError, '核准後無法建立出勤'))
+      }
+    }
+
+    const { data, error } = await sb()
+      .from('attendance_corrections')
+      .update({
+        status: 'approved',
+        effective_clock_in_at: effectiveIn,
+        effective_clock_out_at: effectiveOut,
+        effective_site_id: effectiveSite,
+        reviewed_by: actor.id,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('status', 'pending')
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '核准補打卡失敗'))
+
+    const correction = mapAttendanceCorrection(data)
+    void safeNotify({
+      recipientIds: [correction.userId],
+      eventType: 'attendance.correction_approved',
+      title: '補打卡已核准',
+      detail: correction.reason,
+      href: '/attendance',
+      asTodo: false,
+    })
+    return correction
+  },
+
+  async rejectAttendanceCorrection(
+    actor: AppUser,
+    correctionId: string,
+    reason: string,
+  ): Promise<AttendanceCorrection> {
+    const id = requireUuid(correctionId, '補打卡')
+    const trimmed = reason.trim()
+    if (!trimmed) throw new AppError('駁回必須填寫原因')
+
+    const { data: current, error: loadError } = await sb()
+      .from('attendance_corrections')
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .eq('id', id)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取補打卡'))
+    if (!current) throw new AppError('找不到補打卡申請')
+    if (current.status !== 'pending') throw new AppError('此申請不在待核准狀態')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+    assertCanApproveAttendanceCorrection({
+      actorRole: permissionRoleOf(actor),
+      actorId: actor.id,
+      requesterId: String(current.user_id),
+    })
+
+    const { data, error } = await sb()
+      .from('attendance_corrections')
+      .update({
+        status: 'rejected',
+        review_note: trimmed,
+        reviewed_by: actor.id,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('status', 'pending')
+      .select(ATTENDANCE_CORRECTION_COLS)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '駁回補打卡失敗'))
+
+    const correction = mapAttendanceCorrection(data)
+    void safeNotify({
+      recipientIds: [correction.userId],
+      eventType: 'attendance.correction_rejected',
+      title: '補打卡已駁回',
+      detail: trimmed,
+      href: '/attendance',
+      asTodo: false,
+    })
+    return correction
+  },
+
+  async listPurchases(actor: AppUser): Promise<PurchaseRecord[]> {
+    let query = sb()
+      .from('purchases')
+      .select(
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
+      )
+      .order('created_at', { ascending: false })
+
+    if (!hasPermission(permissionRoleOf(actor), PERMISSIONS.PURCHASE_APPROVE)) {
+      query = query.eq('user_id', actor.id)
+    }
+
+    const { data, error } = await query
+    if (error) throw new AppError(toUserMessage(error, '無法載入採購列表'))
+    return (data ?? []).map((row) => mapPurchase(row))
+  },
+
+  async listPendingPurchases(actor: AppUser): Promise<PurchaseRecord[]> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.PURCHASE_APPROVE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const { data, error } = await sb()
+      .from('purchases')
+      .select(
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
+      )
+      .eq('status', 'pending_approval')
+      .order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入待核准採購'))
+    return (data ?? [])
+      .map((row) => mapPurchase(row))
+      .filter((p) => {
+        try {
+          assertSameOrganization(actor.organizationId, p.organizationId)
+          return true
+        } catch {
+          return false
+        }
+      })
+  },
+
+  async emergencyUsedToday(userId: string, businessDate?: string): Promise<number> {
+    requireUuid(userId, '使用者')
+    const day = businessDate ?? formatTaipei(new Date(), 'yyyy-MM-dd')
+    const { data, error } = await sb()
+      .from('emergency_limit_events')
+      .select('amount_delta')
+      .eq('employee_id', userId)
+      .eq('business_date', day)
+    if (error) throw new AppError(toUserMessage(error, '無法讀取緊急額度'))
+    return sumOccupiedQuota(
+      (data ?? []).map((row, i) => ({
+        id: String(i),
+        organizationId: '',
+        employeeId: userId,
+        businessDate: day,
+        type: 'RESERVE',
+        amountDelta: Number(row.amount_delta),
+        createdAt: '',
+        createdBy: '',
+      })),
+    )
+  },
+
+  async createPurchase(
+    actor: AppUser,
+    input: {
+      title: string
+      mode: PurchaseMode
+      siteId?: string
+      goodsAmount: number
+      discount?: number
+      tax?: number
+      shipping?: number
+      otherBuyerFees?: number
+    },
+  ): Promise<PurchaseRecord> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.PURCHASE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const siteId = optionalUuid(input.siteId, '工地')
+    const finalPayable = calcFinalPayable(input)
+    const businessDate = formatTaipei(new Date(), 'yyyy-MM-dd')
+    const settings = await this.getOrgSpendSettings(actor)
+    const needsApproval =
+      input.mode === 'normal' &&
+      requiresBossReview(finalPayable, settings.reportReviewThresholdNtd)
+
+    const dayPurchases = (await this.listPurchases(actor)).filter(
+      (p) =>
+        p.userId === actor.id &&
+        p.businessDate === businessDate &&
+        p.status !== 'rejected' &&
+        p.status !== 'cancelled',
+    )
+    const usedToday = dayPurchases.reduce((s, p) => s + p.finalPayable, 0)
+    assertWithinDailyPurchaseLimit({
+      usedTodayNtd: usedToday,
+      nextAmount: finalPayable,
+      dailyPurchaseLimitNtd: settings.dailyPurchaseLimitNtd,
+    })
+
+    if (input.mode === 'emergency') {
+      const used = await this.emergencyUsedToday(actor.id, businessDate)
+      assertEmergencyReserveAllowed({
+        eventsForDay: [
+          {
+            id: 'sum',
+            organizationId: actor.organizationId,
+            employeeId: actor.id,
+            businessDate,
+            type: 'RESERVE',
+            amountDelta: used,
+            createdAt: '',
+            createdBy: actor.id,
+          },
+        ],
+        reserveAmount: finalPayable,
+        singleLimit: settings.emergencySingleLimitNtd,
+        dailyLimit: settings.emergencyDailyLimitNtd,
+      })
+    }
+
+    const { data, error } = await sb()
+      .from('purchases')
+      .insert({
+        user_id: actor.id,
+        site_id: siteId,
+        mode: input.mode,
+        status: needsApproval ? 'pending_approval' : 'purchased',
+        title: input.title.trim(),
+        goods_amount: input.goodsAmount,
+        discount: input.discount ?? 0,
+        tax: input.tax ?? 0,
+        shipping: input.shipping ?? 0,
+        other_buyer_fees: input.otherBuyerFees ?? 0,
+        final_payable: finalPayable,
+        business_date: businessDate,
+      })
+      .select(
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立採購'))
+
+    const purchase = mapPurchase(data)
+
+    if (input.mode === 'emergency') {
+      const { error: eventError } = await sb().from('emergency_limit_events').insert({
+        employee_id: actor.id,
+        business_date: businessDate,
+        event_type: 'RESERVE',
+        amount_delta: finalPayable,
+        purchase_id: purchase.id,
+        reason: '緊急採購占額',
+        created_by: actor.id,
+      })
+      if (eventError) {
+        throw new AppError(toUserMessage(eventError, '緊急額度占額失敗'))
+      }
+    }
+
+    if (needsApproval) {
+      void safeNotifyApprovers({
+        eventType: 'purchase.pending',
+        title: `採購待核准：${purchase.title}`,
+        detail: `最終應付 NT$${finalPayable.toLocaleString()}`,
+        href: '/purchases',
+        asTodo: true,
+      })
+    }
+
+    return purchase
+  },
+
+  async approvePurchase(actor: AppUser, purchaseId: string): Promise<PurchaseRecord> {
+    const pid = requireUuid(purchaseId, '採購')
+    const { data: current, error: loadError } = await sb()
+      .from('purchases')
+      .select(
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
+      )
+      .eq('id', pid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取採購'))
+    if (!current) throw new AppError('找不到採購')
+    if (current.status !== 'pending_approval') throw new AppError('此採購不在待核准狀態')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+
+    assertCanApprovePurchase({
+      actorRole: permissionRoleOf(actor),
+      actorId: actor.id,
+      requesterId: String(current.user_id),
+    })
+
+    const { data, error } = await sb()
+      .from('purchases')
+      .update({
+        status: 'approved',
+        approved_by: actor.id,
+        approved_at: new Date().toISOString(),
+      })
+      .eq('id', pid)
+      .select(
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '核准失敗'))
+    const purchase = mapPurchase(data)
+    void safeNotify({
+      recipientIds: [purchase.userId],
+      eventType: 'purchase.approved',
+      title: `採購已核准：${purchase.title}`,
+      detail: `最終應付 NT$${purchase.finalPayable.toLocaleString()}`,
+      href: '/purchases',
+      asTodo: false,
+    })
+    return purchase
+  },
+
+  async rejectPurchase(
+    actor: AppUser,
+    purchaseId: string,
+    reason: string,
+  ): Promise<PurchaseRecord> {
+    const pid = requireUuid(purchaseId, '採購')
+    const { data: current, error: loadError } = await sb()
+      .from('purchases')
+      .select(
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
+      )
+      .eq('id', pid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取採購'))
+    if (!current) throw new AppError('找不到採購')
+    if (current.status !== 'pending_approval') throw new AppError('此採購不在待核准狀態')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+
+    assertCanApprovePurchase({
+      actorRole: permissionRoleOf(actor),
+      actorId: actor.id,
+      requesterId: String(current.user_id),
+    })
+
+    const trimmed = reason.trim()
+    if (!trimmed) throw new AppError('駁回必須填寫原因')
+
+    const { data, error } = await sb()
+      .from('purchases')
+      .update({
+        status: 'rejected',
+        rejected_reason: trimmed,
+        approved_by: actor.id,
+        approved_at: new Date().toISOString(),
+      })
+      .eq('id', pid)
+      .select(
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '駁回失敗'))
+
+    if (current.mode === 'emergency') {
+      const { error: eventError } = await sb().from('emergency_limit_events').insert({
+        employee_id: current.user_id,
+        business_date: current.business_date,
+        event_type: 'RELEASE',
+        amount_delta: -Number(current.final_payable),
+        purchase_id: pid,
+        reason: `駁回釋放：${trimmed}`,
+        created_by: actor.id,
+      })
+      if (eventError) throw new AppError(toUserMessage(eventError, '額度釋放失敗'))
+    }
+
+    const purchase = mapPurchase(data)
+    void safeNotify({
+      recipientIds: [purchase.userId],
+      eventType: 'purchase.rejected',
+      title: `採購已駁回：${purchase.title}`,
+      detail: trimmed,
+      href: '/purchases',
+      asTodo: false,
+    })
+    return purchase
+  },
+
+  async cancelEmergencyPurchase(
+    actor: AppUser,
+    purchaseId: string,
+    reason: string,
+  ): Promise<PurchaseRecord> {
+    const pid = requireUuid(purchaseId, '採購')
+    const { data: current, error: loadError } = await sb()
+      .from('purchases')
+      .select(
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
+      )
+      .eq('id', pid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取採購'))
+    if (!current) throw new AppError('找不到採購')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+    if (current.mode !== 'emergency') throw new AppError('僅緊急採購可走額度釋放')
+    if (current.status === 'cancelled') throw new AppError('已取消')
+    if (
+      !hasPermission(permissionRoleOf(actor), PERMISSIONS.PURCHASE_APPROVE) &&
+      actor.id !== current.user_id
+    ) {
+      throw new AppError('無權取消此緊急採購')
+    }
+
+    const { data, error } = await sb()
+      .from('purchases')
+      .update({
+        status: 'cancelled',
+        rejected_reason: reason,
+      })
+      .eq('id', pid)
+      .select(
+        'id, organization_id, user_id, site_id, supplier_id, mode, status, title, goods_amount, discount, tax, shipping, other_buyer_fees, final_payable, created_at, business_date, approved_by, approved_at, rejected_reason, inbound_material_id, inbound_qty, inbound_at, paid_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '取消失敗'))
+
+    const { error: eventError } = await sb().from('emergency_limit_events').insert({
+      employee_id: current.user_id,
+      business_date: current.business_date,
+      event_type: 'RELEASE',
+      amount_delta: -Number(current.final_payable),
+      purchase_id: pid,
+      reason,
+      created_by: actor.id,
+    })
+    if (eventError) throw new AppError(toUserMessage(eventError, '額度釋放失敗'))
+
+    return mapPurchase(data)
+  },
+
+  async listRepairCases(): Promise<RepairCase[]> {
+    const { data, error } = await sb()
+      .from('repair_cases')
+      .select(
+        'id, organization_id, case_number, problem_description, title, status, site_id, customer_id, customer_name, created_at, updated_at, created_by',
+      )
+      .order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入維修案件'))
+    return (data ?? []).map((row) =>
+      mapRepairCaseRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listQuotations(): Promise<Quotation[]> {
+    const { data, error } = await sb()
+      .from('quotations')
+      .select(QUOTE_SELECT)
+      .is('deleted_at', null)
+      .order('updated_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入報價'))
+    return (data ?? []).map((row) =>
+      mapQuotationRow(row as Record<string, unknown>),
+    )
+  },
+
+  async getQuotation(quoteId: string): Promise<Quotation> {
+    const qid = requireUuid(quoteId, '報價')
+    const { data, error } = await sb()
+      .from('quotations')
+      .select(QUOTE_SELECT)
+      .eq('id', qid)
+      .is('deleted_at', null)
+      .maybeSingle()
+    if (error) throw new AppError(toUserMessage(error, '無法讀取報價'))
+    if (!data) throw new AppError('找不到報價')
+    return mapQuotationRow(data as Record<string, unknown>)
+  },
+
+  async createQuotation(
+    actor: AppUser,
+    input: {
+      title: string
+      projectId?: string | null
+      repairCaseId?: string | null
+      taxMode: TaxMode
+      customerName?: string
+      siteAddress?: string
+      paymentTerms?: string
+      validUntil?: string | null
+      notes?: string
+      discount?: number
+    },
+  ): Promise<Quotation> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const projectId = optionalUuid(input.projectId, '工程')
+    const repairCaseId = optionalUuid(input.repairCaseId, '維修案件')
+    assertQuoteAssociation({ projectId, repairCaseId })
+    if (!input.taxMode) throw new AppError('建立報價必須選擇稅務模式（REV-03）')
+    const taxRate = input.taxMode === 'zero' ? 0 : 0.05
+    const quoteNumber = `Q-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+
+    const { data, error } = await sb()
+      .from('quotations')
+      .insert({
+        project_id: projectId,
+        repair_case_id: repairCaseId,
+        title: input.title.trim(),
+        status: 'draft',
+        workflow_status: 'editing',
+        quote_number: quoteNumber,
+        customer_name: (input.customerName || '').trim(),
+        site_address: (input.siteAddress || '').trim(),
+        tax_mode: input.taxMode,
+        tax_rate: taxRate,
+        amount_before_tax: 0,
+        discount: Number(input.discount ?? 0) || 0,
+        tax_amount: 0,
+        amount_after_tax: 0,
+        notes: input.notes ?? null,
+        payment_terms: input.paymentTerms ?? '依約定',
+        valid_until: input.validUntil ?? null,
+        current_version: 0,
+        frozen: false,
+        created_by: actor.id,
+      })
+      .select(QUOTE_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立報價'))
+    const quote = mapQuotationRow(data as Record<string, unknown>)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    return quote
+  },
+
+  async updateQuotationMeta(
+    actor: AppUser,
+    quoteId: string,
+    patch: Partial<{
+      title: string
+      customerName: string
+      siteAddress: string
+      taxMode: TaxMode
+      discount: number
+      notes: string | null
+      paymentTerms: string | null
+      validUntil: string | null
+    }>,
+  ): Promise<Quotation> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const current = await this.getQuotation(quoteId)
+    assertSameOrganization(actor.organizationId, current.organizationId)
+    assertQuoteDraftEditable({ workflowStatus: current.workflowStatus })
+    const nextWs =
+      current.workflowStatus === 'exported' ||
+      current.workflowStatus === 'sent_to_customer'
+        ? 'editing'
+        : current.workflowStatus
+    const { data, error } = await sb()
+      .from('quotations')
+      .update({
+        title: patch.title ?? current.title,
+        customer_name: patch.customerName ?? current.customerName,
+        site_address: patch.siteAddress ?? current.siteAddress,
+        tax_mode: patch.taxMode ?? current.taxMode,
+        discount: patch.discount ?? current.discount,
+        notes: patch.notes === undefined ? current.notes : patch.notes,
+        payment_terms:
+          patch.paymentTerms === undefined
+            ? current.paymentTerms
+            : patch.paymentTerms,
+        valid_until:
+          patch.validUntil === undefined ? current.validUntil : patch.validUntil,
+        workflow_status: nextWs,
+        status: legacyStatusFromWorkflow(nextWs),
+      })
+      .eq('id', quoteId)
+      .select(QUOTE_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新報價'))
+    return mapQuotationRow(data as Record<string, unknown>)
+  },
+
+  /** Export creates immutable version snapshot (primary formal action). */
+  async exportQuotationVersion(
+    actor: AppUser,
+    quoteId: string,
+    format: QuoteExportFormat = 'snapshot',
+  ): Promise<{ quote: Quotation; version: QuotationVersion }> {
+    assertCanExportQuote(permissionRoleOf(actor))
+    const qid = requireUuid(quoteId, '報價')
+    const current = await this.getQuotation(qid)
+    assertSameOrganization(actor.organizationId, current.organizationId)
+    if (current.workflowStatus === 'cancelled') {
+      throw new AppError('已取消報價不可匯出')
+    }
+    const items = await this.listQuotationItems(qid)
+    const versionNo = current.currentVersion + 1
+    const snapshot = buildQuoteExportSnapshot({
+      quote: current,
+      items,
+      versionNo,
+    })
+    const { data: ver, error: verErr } = await sb()
+      .from('quotation_versions')
+      .insert({
+        quotation_id: qid,
+        version_no: versionNo,
+        quote_number: current.quoteNumber,
+        snapshot,
+        exported_by: actor.id,
+        export_format: format,
+      })
+      .select(
+        'id, organization_id, quotation_id, version_no, quote_number, snapshot, exported_at, exported_by, export_format',
+      )
+      .single()
+    if (verErr) throw new AppError(toUserMessage(verErr, '無法建立匯出版本'))
+
+    const { data, error } = await sb()
+      .from('quotations')
+      .update({
+        current_version: versionNo,
+        last_exported_at: ver.exported_at,
+        workflow_status: 'exported',
+        status: 'published',
+        published_at: ver.exported_at,
+      })
+      .eq('id', qid)
+      .select(QUOTE_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新報價狀態'))
+
+    const quote = mapQuotationRow(data as Record<string, unknown>)
+    const version: QuotationVersion = {
+      id: String(ver.id),
+      organizationId: String(ver.organization_id),
+      quotationId: String(ver.quotation_id),
+      versionNo: Number(ver.version_no),
+      quoteNumber: String(ver.quote_number),
+      snapshot: ver.snapshot as QuoteExportSnapshot,
+      exportedAt: String(ver.exported_at),
+      exportedBy: (ver.exported_by as string | null) ?? null,
+      exportFormat: ver.export_format as QuoteExportFormat,
+    }
+    if (quote.createdBy) {
+      void safeNotify({
+        recipientIds: [quote.createdBy],
+        eventType: 'quote.published',
+        title: `報價已匯出：${quote.title}`,
+        detail: `${quote.quoteNumber} v${versionNo} · NT$${quote.amountAfterTax.toLocaleString()}`,
+        href: `/quotes/${quote.id}`,
+        asTodo: false,
+      })
+    }
+    return { quote, version }
+  },
+
+  /** @deprecated Prefer exportQuotationVersion */
+  async publishQuotation(actor: AppUser, quoteId: string): Promise<Quotation> {
+    return (await this.exportQuotationVersion(actor, quoteId, 'snapshot')).quote
+  },
+
+  async setQuoteWorkflowStatus(
+    actor: AppUser,
+    quoteId: string,
+    workflowStatus: QuoteWorkflowStatus,
+  ): Promise<Quotation> {
+    if (
+      workflowStatus === 'accepted' ||
+      workflowStatus === 'rejected' ||
+      workflowStatus === 'sent_to_customer'
+    ) {
+      assertCanMarkQuoteAccept(permissionRoleOf(actor))
+    }
+    const current = await this.getQuotation(quoteId)
+    assertSameOrganization(actor.organizationId, current.organizationId)
+    if (
+      workflowStatus === 'accepted' &&
+      current.workflowStatus !== 'exported' &&
+      current.workflowStatus !== 'sent_to_customer' &&
+      current.workflowStatus !== 'rejected'
+    ) {
+      throw new AppError('請先匯出或提供客戶後再標記接受')
+    }
+    const { data, error } = await sb()
+      .from('quotations')
+      .update({
+        workflow_status: workflowStatus,
+        status: legacyStatusFromWorkflow(workflowStatus),
+      })
+      .eq('id', quoteId)
+      .select(QUOTE_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新狀態'))
+    return mapQuotationRow(data as Record<string, unknown>)
+  },
+
+  async listQuotationVersions(quotationId: string): Promise<QuotationVersion[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('quotation_versions')
+      .select(
+        'id, organization_id, quotation_id, version_no, quote_number, snapshot, exported_at, exported_by, export_format, deleted_at, deleted_by, delete_reason',
+      )
+      .eq('quotation_id', qid)
+      .is('deleted_at', null)
+      .order('version_no', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入版本'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      quotationId: String(row.quotation_id),
+      versionNo: Number(row.version_no),
+      quoteNumber: String(row.quote_number),
+      snapshot: row.snapshot as QuoteExportSnapshot,
+      exportedAt: String(row.exported_at),
+      exportedBy: (row.exported_by as string | null) ?? null,
+      exportFormat: row.export_format as QuoteExportFormat,
+      deletedAt: (row.deleted_at as string | null) ?? null,
+      deletedBy: (row.deleted_by as string | null) ?? null,
+      deleteReason: (row.delete_reason as string | null) ?? null,
+    }))
+  },
+
+  async softDeleteQuotationVersion(
+    actor: AppUser,
+    versionId: string,
+    reason?: string,
+  ): Promise<void> {
+    const vid = requireUuid(versionId, '報價版本')
+    const { data: ver, error: loadError } = await sb()
+      .from('quotation_versions')
+      .select(
+        'id, organization_id, quotation_id, version_no, deleted_at',
+      )
+      .eq('id', vid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取版本'))
+    if (!ver) throw new AppError('找不到版本')
+    assertSameOrganization(actor.organizationId, String(ver.organization_id))
+    const quote = await this.getQuotation(String(ver.quotation_id))
+    assertCanSoftDeleteQuoteVersion(permissionRoleOf(actor), quote, {
+      versionNo: Number(ver.version_no),
+      deletedAt: (ver.deleted_at as string | null) ?? null,
+    })
+    const { error } = await sb()
+      .from('quotation_versions')
+      .update({
+        deleted_at: new Date().toISOString(),
+        deleted_by: actor.id,
+        delete_reason: reason?.trim() || '使用者刪除歷史版本',
+      })
+      .eq('id', vid)
+      .is('deleted_at', null)
+    if (error) throw new AppError(toUserMessage(error, '刪除版本失敗'))
+  },
+
+  async softDeleteQuotation(
+    actor: AppUser,
+    quoteId: string,
+    reason?: string,
+  ): Promise<void> {
+    const quote = await this.getQuotation(quoteId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    assertCanSoftDeleteQuoteCase(permissionRoleOf(actor), quote)
+    const now = new Date().toISOString()
+    const { error } = await sb()
+      .from('quotations')
+      .update({
+        deleted_at: now,
+        deleted_by: actor.id,
+        delete_reason: reason?.trim() || '使用者刪除報價案件',
+      })
+      .eq('id', quoteId)
+      .is('deleted_at', null)
+    if (error) throw new AppError(toUserMessage(error, '刪除案件失敗'))
+    // Hide versions with soft-delete (audit retained)
+    await sb()
+      .from('quotation_versions')
+      .update({
+        deleted_at: now,
+        deleted_by: actor.id,
+        delete_reason: '隨案件刪除而隱藏',
+      })
+      .eq('quotation_id', quoteId)
+      .is('deleted_at', null)
+  },
+
+  async listChangeOrders(quotationId?: string): Promise<ChangeOrder[]> {
+    let q = sb()
+      .from('change_orders')
+      .select(
+        'id, organization_id, quotation_id, change_number, kind, title, status, tax_mode, tax_rate, amount_before_tax, discount, tax_amount, amount_after_tax, notes, accepted_at, accepted_by, created_at, updated_at, created_by',
+      )
+      .order('updated_at', { ascending: false })
+    if (quotationId) {
+      q = q.eq('quotation_id', requireUuid(quotationId, '報價'))
+    }
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入追加減'))
+    return (data ?? []).map((row) => mapChangeOrderRow(row as Record<string, unknown>))
+  },
+
+  async getChangeOrder(changeOrderId: string): Promise<ChangeOrder> {
+    const id = requireUuid(changeOrderId, '追加減')
+    const { data, error } = await sb()
+      .from('change_orders')
+      .select(
+        'id, organization_id, quotation_id, change_number, kind, title, status, tax_mode, tax_rate, amount_before_tax, discount, tax_amount, amount_after_tax, notes, accepted_at, accepted_by, created_at, updated_at, created_by',
+      )
+      .eq('id', id)
+      .maybeSingle()
+    if (error) throw new AppError(toUserMessage(error, '無法讀取追加減'))
+    if (!data) throw new AppError('找不到追加減')
+    return mapChangeOrderRow(data as Record<string, unknown>)
+  },
+
+  async listChangeOrderItems(changeOrderId: string): Promise<ChangeOrderItem[]> {
+    const cid = requireUuid(changeOrderId, '追加減')
+    const { data, error } = await sb()
+      .from('change_order_items')
+      .select(
+        'id, organization_id, change_order_id, line_no, kind, description, qty, unit, unit_price, amount, created_at, updated_at',
+      )
+      .eq('change_order_id', cid)
+      .order('line_no', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入追加減細項'))
+    return (data ?? []).map((row) => mapChangeOrderItemRow(row as Record<string, unknown>))
+  },
+
+  async createChangeOrder(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      kind: ChangeOrderKind
+      title: string
+      notes?: string
+      discount?: number
+    },
+  ): Promise<ChangeOrder> {
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canCreateChangeOrder(actor.role, quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const changeNumber = `CO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+    const { data, error } = await sb()
+      .from('change_orders')
+      .insert({
+        quotation_id: quote.id,
+        change_number: changeNumber,
+        kind: input.kind,
+        title: input.title.trim() || (input.kind === 'addition' ? '追加' : '追減'),
+        status: 'draft',
+        tax_mode: quote.taxMode,
+        tax_rate: quote.taxRate,
+        discount: Number(input.discount ?? 0) || 0,
+        notes: input.notes ?? null,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, quotation_id, change_number, kind, title, status, tax_mode, tax_rate, amount_before_tax, discount, tax_amount, amount_after_tax, notes, accepted_at, accepted_by, created_at, updated_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立追加減'))
+    return mapChangeOrderRow(data as Record<string, unknown>)
+  },
+
+  async addChangeOrderItem(
+    actor: AppUser,
+    input: {
+      changeOrderId: string
+      kind: QuotationItemKind
+      description: string
+      qty: number
+      unit?: string
+      unitPrice: number
+    },
+  ): Promise<ChangeOrderItem> {
+    const co = await this.getChangeOrder(input.changeOrderId)
+    assertSameOrganization(actor.organizationId, co.organizationId)
+    assertChangeOrderEditable({ status: co.status })
+    if (!hasPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE)) {
+      throw new AppError('無權編輯追加減')
+    }
+    const existing = await this.listChangeOrderItems(co.id)
+    const amount = calcQuoteItemAmount({
+      qty: input.qty,
+      unitPrice: input.unitPrice,
+    })
+    const { data, error } = await sb()
+      .from('change_order_items')
+      .insert({
+        change_order_id: co.id,
+        line_no: existing.length + 1,
+        kind: input.kind,
+        description: input.description.trim(),
+        qty: input.qty,
+        unit: input.unit || '式',
+        unit_price: input.unitPrice,
+        amount,
+      })
+      .select(
+        'id, organization_id, change_order_id, line_no, kind, description, qty, unit, unit_price, amount, created_at, updated_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法新增細項'))
+    return mapChangeOrderItemRow(data as Record<string, unknown>)
+  },
+
+  async removeChangeOrderItem(actor: AppUser, itemId: string): Promise<void> {
+    const iid = requireUuid(itemId, '細項')
+    const { data: item, error: loadError } = await sb()
+      .from('change_order_items')
+      .select('id, organization_id, change_order_id')
+      .eq('id', iid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取細項'))
+    if (!item) throw new AppError('找不到細項')
+    assertSameOrganization(actor.organizationId, String(item.organization_id))
+    const co = await this.getChangeOrder(String(item.change_order_id))
+    assertChangeOrderEditable({ status: co.status })
+    if (!hasPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE)) {
+      throw new AppError('無權編輯追加減')
+    }
+    const { error } = await sb()
+      .from('change_order_items')
+      .delete()
+      .eq('id', iid)
+    if (error) throw new AppError(toUserMessage(error, '無法刪除細項'))
+  },
+
+  async setChangeOrderStatus(
+    actor: AppUser,
+    changeOrderId: string,
+    status: ChangeOrderStatus,
+  ): Promise<ChangeOrder> {
+    if (
+      status === 'accepted' ||
+      status === 'rejected' ||
+      status === 'sent_to_customer'
+    ) {
+      assertCanMarkChangeOrderAccept(permissionRoleOf(actor))
+    }
+    const co = await this.getChangeOrder(changeOrderId)
+    assertSameOrganization(actor.organizationId, co.organizationId)
+    if (co.status === 'accepted' || co.status === 'cancelled') {
+      throw new AppError('已接受或已取消的追加減不可再改狀態')
+    }
+    if (status === 'accepted') {
+      const items = await this.listChangeOrderItems(co.id)
+      if (items.length === 0) {
+        throw new AppError('請先新增至少一筆細項再標記接受')
+      }
+    }
+    const patch: Record<string, unknown> = { status }
+    if (status === 'accepted') {
+      patch.accepted_at = new Date().toISOString()
+      patch.accepted_by = actor.id
+    }
+    const { data, error } = await sb()
+      .from('change_orders')
+      .update(patch)
+      .eq('id', co.id)
+      .select(
+        'id, organization_id, quotation_id, change_number, kind, title, status, tax_mode, tax_rate, amount_before_tax, discount, tax_amount, amount_after_tax, notes, accepted_at, accepted_by, created_at, updated_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新追加減狀態'))
+    return mapChangeOrderRow(data as Record<string, unknown>)
+  },
+
+  async listBillingMilestones(quotationId: string): Promise<BillingMilestone[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('billing_milestones')
+      .select(BILLING_MILESTONE_SELECT)
+      .eq('quotation_id', qid)
+      .order('sequence', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入請款節點'))
+    return (data ?? []).map((row) =>
+      mapBillingMilestoneRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listBillingDocuments(quotationId?: string): Promise<BillingDocument[]> {
+    let q = sb()
+      .from('billing_documents')
+      .select(BILLING_DOC_SELECT)
+      .order('updated_at', { ascending: false })
+    if (quotationId) {
+      q = q.eq('quotation_id', requireUuid(quotationId, '報價'))
+    }
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入請款單'))
+    return (data ?? []).map((row) =>
+      mapBillingDocumentRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listBillingDocumentItems(
+    documentId: string,
+  ): Promise<BillingDocumentItem[]> {
+    const did = requireUuid(documentId, '請款單')
+    const { data, error } = await sb()
+      .from('billing_document_items')
+      .select(
+        'id, organization_id, billing_document_id, line_no, description, qty, unit, unit_price, amount, created_at',
+      )
+      .eq('billing_document_id', did)
+      .order('line_no', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入請款細項'))
+    return (data ?? []).map((row) =>
+      mapBillingDocumentItemRow(row as Record<string, unknown>),
+    )
+  },
+
+  async createBillingMilestone(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      code: string
+      title: string
+      plannedAmount: number
+      sequence?: number
+    },
+  ): Promise<BillingMilestone> {
+    assertCanManageBilling(permissionRoleOf(actor))
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canCreateBillingForQuote(quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const existing = await this.listBillingMilestones(quote.id)
+    const code = input.code.trim().toUpperCase()
+    if (!code) throw new AppError('請款節點代碼不可空白')
+    if (existing.some((m) => m.code === code)) {
+      throw new AppError('同一報價不可重複請款節點代碼')
+    }
+    const { data, error } = await sb()
+      .from('billing_milestones')
+      .insert({
+        quotation_id: quote.id,
+        code,
+        title: input.title.trim() || code,
+        sequence: input.sequence ?? existing.length + 1,
+        planned_amount: Math.max(0, Number(input.plannedAmount) || 0),
+        status: 'planned',
+        created_by: actor.id,
+      })
+      .select(BILLING_MILESTONE_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立請款節點'))
+    return mapBillingMilestoneRow(data as Record<string, unknown>)
+  },
+
+  async createBillingDocument(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      milestoneId: string
+      title?: string
+      notes?: string
+    },
+  ): Promise<BillingDocument> {
+    assertCanManageBilling(permissionRoleOf(actor))
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canCreateBillingForQuote(quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const milestones = await this.listBillingMilestones(quote.id)
+    const milestone = milestones.find((m) => m.id === input.milestoneId)
+    if (!milestone) throw new AppError('找不到請款節點')
+    if (milestone.status === 'cancelled') {
+      throw new AppError('已取消的請款節點不可開立請款')
+    }
+    const docs = await this.listBillingDocuments(quote.id)
+    if (docs.some((d) => d.milestoneId === milestone.id && d.status === 'issued')) {
+      throw new AppError('此請款節點已有正式請款單，不得重複開立')
+    }
+    const documentNumber = `BILL-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+    const { data, error } = await sb()
+      .from('billing_documents')
+      .insert({
+        quotation_id: quote.id,
+        milestone_id: milestone.id,
+        document_number: documentNumber,
+        title: (input.title || milestone.title).trim(),
+        status: 'draft',
+        tax_mode: quote.taxMode,
+        tax_rate: quote.taxRate,
+        notes: input.notes ?? null,
+        created_by: actor.id,
+      })
+      .select(BILLING_DOC_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立請款單'))
+    const doc = mapBillingDocumentRow(data as Record<string, unknown>)
+    if (milestone.plannedAmount > 0) {
+      await this.addBillingDocumentItem(actor, {
+        billingDocumentId: doc.id,
+        description: milestone.title,
+        qty: 1,
+        unit: '式',
+        unitPrice: milestone.plannedAmount,
+      })
+      const refreshed = await this.listBillingDocuments(quote.id)
+      return refreshed.find((d) => d.id === doc.id) ?? doc
+    }
+    return doc
+  },
+
+  async addBillingDocumentItem(
+    actor: AppUser,
+    input: {
+      billingDocumentId: string
+      description: string
+      qty: number
+      unit?: string
+      unitPrice: number
+    },
+  ): Promise<BillingDocumentItem> {
+    assertCanManageBilling(permissionRoleOf(actor))
+    const did = requireUuid(input.billingDocumentId, '請款單')
+    const { data: docRow, error: loadError } = await sb()
+      .from('billing_documents')
+      .select(BILLING_DOC_SELECT)
+      .eq('id', did)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取請款單'))
+    if (!docRow) throw new AppError('找不到請款單')
+    const doc = mapBillingDocumentRow(docRow as Record<string, unknown>)
+    assertSameOrganization(actor.organizationId, doc.organizationId)
+    assertBillingDocumentEditable({ status: doc.status })
+    const existing = await this.listBillingDocumentItems(doc.id)
+    const amount = calcQuoteItemAmount({
+      qty: input.qty,
+      unitPrice: input.unitPrice,
+    })
+    const { data, error } = await sb()
+      .from('billing_document_items')
+      .insert({
+        billing_document_id: doc.id,
+        line_no: existing.length + 1,
+        description: input.description.trim(),
+        qty: input.qty,
+        unit: input.unit || '式',
+        unit_price: input.unitPrice,
+        amount,
+      })
+      .select(
+        'id, organization_id, billing_document_id, line_no, description, qty, unit, unit_price, amount, created_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法新增請款細項'))
+    const mapped = mapBillingDocumentItemRow(data as Record<string, unknown>)
+    const totals = calcBillingTotals({
+      items: [...existing, mapped],
+      taxMode: doc.taxMode,
+      taxRate: doc.taxRate,
+    })
+    await sb()
+      .from('billing_documents')
+      .update({
+        amount_before_tax: totals.amountBeforeTax,
+        tax_amount: totals.taxAmount,
+        amount_after_tax: totals.amountAfterTax,
+        tax_rate: totals.taxRate,
+      })
+      .eq('id', doc.id)
+      .eq('status', 'draft')
+    return mapped
+  },
+
+  async issueBillingDocument(
+    actor: AppUser,
+    documentId: string,
+  ): Promise<BillingDocument> {
+    assertCanManageBilling(permissionRoleOf(actor))
+    const did = requireUuid(documentId, '請款單')
+    const { data: docRow, error: loadError } = await sb()
+      .from('billing_documents')
+      .select(BILLING_DOC_SELECT)
+      .eq('id', did)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取請款單'))
+    if (!docRow) throw new AppError('找不到請款單')
+    const doc = mapBillingDocumentRow(docRow as Record<string, unknown>)
+    assertSameOrganization(actor.organizationId, doc.organizationId)
+    assertBillingDocumentEditable({ status: doc.status })
+    const items = await this.listBillingDocumentItems(doc.id)
+    if (items.length === 0) throw new AppError('請先新增請款細項再開立')
+    const quote = await this.getQuotation(doc.quotationId)
+    const changeOrders = await this.listChangeOrders(quote.id)
+    const contract = effectiveContractAmountWithChangeOrders({
+      quotes: [quote],
+      changeOrders,
+    })
+    const allDocs = await this.listBillingDocuments(quote.id)
+    const alreadyIssued = sumIssuedBillingAmount(allDocs)
+    assertIssueDoesNotExceedContract({
+      contract,
+      alreadyIssued,
+      issuingAmount: doc.amountAfterTax,
+    })
+    if (
+      allDocs.some(
+        (d) =>
+          d.milestoneId === doc.milestoneId &&
+          d.status === 'issued' &&
+          d.id !== doc.id,
+      )
+    ) {
+      throw new AppError('此請款節點已有正式請款單，不得重複開立')
+    }
+    const milestones = await this.listBillingMilestones(quote.id)
+    const milestone = milestones.find((m) => m.id === doc.milestoneId)
+    if (!milestone) throw new AppError('找不到請款節點')
+    const now = new Date().toISOString()
+    const snapshot = buildBillingSnapshot({
+      document: doc,
+      milestone,
+      quote,
+      items,
+      issuedAt: now,
+    })
+    const { data, error } = await sb()
+      .from('billing_documents')
+      .update({
+        status: 'issued',
+        snapshot,
+        issued_at: now,
+        issued_by: actor.id,
+      })
+      .eq('id', doc.id)
+      .eq('status', 'draft')
+      .select(BILLING_DOC_SELECT)
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '開立請款單失敗'))
+    await sb()
+      .from('billing_milestones')
+      .update({ status: 'billed' })
+      .eq('id', milestone.id)
+    return mapBillingDocumentRow(data as Record<string, unknown>)
+  },
+
+  async listCustomerPayments(quotationId: string): Promise<CustomerPayment[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('customer_payments')
+      .select(
+        'id, organization_id, quotation_id, payment_number, amount, method, status, received_at, notes, created_at, created_by',
+      )
+      .eq('quotation_id', qid)
+      .order('received_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入收款'))
+    return (data ?? []).map((row) => mapCustomerPaymentRow(row as Record<string, unknown>))
+  },
+
+  async listPaymentAllocations(filters: {
+    paymentId?: string
+    billingDocumentId?: string
+    quotationId?: string
+  }): Promise<PaymentAllocation[]> {
+    let q = sb()
+      .from('payment_allocations')
+      .select(
+        'id, organization_id, payment_id, billing_document_id, amount, created_at, created_by',
+      )
+    if (filters.paymentId) q = q.eq('payment_id', requireUuid(filters.paymentId, '收款'))
+    if (filters.billingDocumentId) {
+      q = q.eq(
+        'billing_document_id',
+        requireUuid(filters.billingDocumentId, '請款單'),
+      )
+    }
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入收款分配'))
+    let rows = (data ?? []).map((row) =>
+      mapPaymentAllocationRow(row as Record<string, unknown>),
+    )
+    if (filters.quotationId) {
+      const pays = await this.listCustomerPayments(filters.quotationId)
+      const ids = new Set(pays.map((p) => p.id))
+      rows = rows.filter((a) => ids.has(a.paymentId))
+    }
+    return rows
+  },
+
+  async listCustomerAdvances(quotationId: string): Promise<CustomerAdvance[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('customer_advances')
+      .select(
+        'id, organization_id, quotation_id, advance_number, amount, remaining_amount, status, received_at, notes, created_at, created_by',
+      )
+      .eq('quotation_id', qid)
+      .order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入預收款'))
+    return (data ?? []).map((row) => mapCustomerAdvanceRow(row as Record<string, unknown>))
+  },
+
+  async listAdvanceApplications(filters: {
+    advanceId?: string
+    billingDocumentId?: string
+    quotationId?: string
+  }): Promise<AdvanceApplication[]> {
+    let q = sb()
+      .from('advance_applications')
+      .select(
+        'id, organization_id, advance_id, billing_document_id, amount, created_at, created_by',
+      )
+    if (filters.advanceId) q = q.eq('advance_id', requireUuid(filters.advanceId, '預收'))
+    if (filters.billingDocumentId) {
+      q = q.eq(
+        'billing_document_id',
+        requireUuid(filters.billingDocumentId, '請款單'),
+      )
+    }
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入預收抵充'))
+    let rows = (data ?? []).map((row) =>
+      mapAdvanceApplicationRow(row as Record<string, unknown>),
+    )
+    if (filters.quotationId) {
+      const adv = await this.listCustomerAdvances(filters.quotationId)
+      const ids = new Set(adv.map((a) => a.id))
+      rows = rows.filter((a) => ids.has(a.advanceId))
+    }
+    return rows
+  },
+
+  async createCustomerPayment(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      amount: number
+      method: PaymentMethod
+      notes?: string
+    },
+  ): Promise<CustomerPayment> {
+    assertCanManagePayments(permissionRoleOf(actor))
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canRecordPaymentForQuote(quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const amount = Number(input.amount) || 0
+    if (amount <= 0) throw new AppError('收款金額必須大於 0')
+    const paymentNumber = `PAY-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+    const { data, error } = await sb()
+      .from('customer_payments')
+      .insert({
+        quotation_id: quote.id,
+        payment_number: paymentNumber,
+        amount,
+        method: input.method,
+        status: 'confirmed',
+        notes: input.notes ?? null,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, quotation_id, payment_number, amount, method, status, received_at, notes, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登錄收款'))
+    return mapCustomerPaymentRow(data as Record<string, unknown>)
+  },
+
+  async allocatePayment(
+    actor: AppUser,
+    input: {
+      paymentId: string
+      billingDocumentId: string
+      amount: number
+    },
+  ): Promise<PaymentAllocation> {
+    assertCanManagePayments(permissionRoleOf(actor))
+    const pid = requireUuid(input.paymentId, '收款')
+    const { data: payRow, error: payErr } = await sb()
+      .from('customer_payments')
+      .select(
+        'id, organization_id, quotation_id, payment_number, amount, method, status, received_at, notes, created_at, created_by',
+      )
+      .eq('id', pid)
+      .maybeSingle()
+    if (payErr) throw new AppError(toUserMessage(payErr, '無法讀取收款'))
+    if (!payRow) throw new AppError('找不到收款')
+    const payment = mapCustomerPaymentRow(payRow as Record<string, unknown>)
+    assertSameOrganization(actor.organizationId, payment.organizationId)
+    if (payment.status !== 'confirmed') throw new AppError('找不到已確認收款')
+    const docs = await this.listBillingDocuments(payment.quotationId)
+    const doc = docs.find((d) => d.id === input.billingDocumentId)
+    if (!doc || doc.status !== 'issued') {
+      throw new AppError('只能分配到已開立的請款單')
+    }
+    const onPayment = await this.listPaymentAllocations({ paymentId: payment.id })
+    const onBilling = await this.listPaymentAllocations({
+      billingDocumentId: doc.id,
+    })
+    const onBillingAdv = await this.listAdvanceApplications({
+      billingDocumentId: doc.id,
+    })
+    assertAllocationFits({
+      paymentAmount: payment.amount,
+      alreadyAllocatedOnPayment: sumAllocations(onPayment),
+      allocating: input.amount,
+      billingOpenAmount: billingDocumentOpenAmount({
+        document: doc,
+        allocations: onBilling,
+        advanceApplications: onBillingAdv,
+      }),
+    })
+    const { data, error } = await sb()
+      .from('payment_allocations')
+      .insert({
+        payment_id: payment.id,
+        billing_document_id: doc.id,
+        amount: Number(input.amount),
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, payment_id, billing_document_id, amount, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '收款分配失敗'))
+    return mapPaymentAllocationRow(data as Record<string, unknown>)
+  },
+
+  async createCustomerAdvance(
+    actor: AppUser,
+    input: { quotationId: string; amount: number; notes?: string },
+  ): Promise<CustomerAdvance> {
+    assertCanManagePayments(permissionRoleOf(actor))
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canRecordPaymentForQuote(quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const amount = Number(input.amount) || 0
+    if (amount <= 0) throw new AppError('預收金額必須大於 0')
+    const advanceNumber = `ADV-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+    const { data, error } = await sb()
+      .from('customer_advances')
+      .insert({
+        quotation_id: quote.id,
+        advance_number: advanceNumber,
+        amount,
+        remaining_amount: amount,
+        status: 'open',
+        notes: input.notes ?? null,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, quotation_id, advance_number, amount, remaining_amount, status, received_at, notes, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登錄預收款'))
+    return mapCustomerAdvanceRow(data as Record<string, unknown>)
+  },
+
+  async applyCustomerAdvance(
+    actor: AppUser,
+    input: {
+      advanceId: string
+      billingDocumentId: string
+      amount: number
+    },
+  ): Promise<AdvanceApplication> {
+    assertCanManagePayments(permissionRoleOf(actor))
+    const aid = requireUuid(input.advanceId, '預收')
+    const { data: advRow, error: advErr } = await sb()
+      .from('customer_advances')
+      .select(
+        'id, organization_id, quotation_id, advance_number, amount, remaining_amount, status, received_at, notes, created_at, created_by',
+      )
+      .eq('id', aid)
+      .maybeSingle()
+    if (advErr) throw new AppError(toUserMessage(advErr, '無法讀取預收'))
+    if (!advRow) throw new AppError('找不到預收款')
+    const advance = mapCustomerAdvanceRow(advRow as Record<string, unknown>)
+    assertSameOrganization(actor.organizationId, advance.organizationId)
+    if (advance.status !== 'open') throw new AppError('預收款已關閉或作廢')
+    const docs = await this.listBillingDocuments(advance.quotationId)
+    const doc = docs.find((d) => d.id === input.billingDocumentId)
+    if (!doc || doc.status !== 'issued') {
+      throw new AppError('只能抵充已開立的請款單')
+    }
+    const onBilling = await this.listPaymentAllocations({
+      billingDocumentId: doc.id,
+    })
+    const onBillingAdv = await this.listAdvanceApplications({
+      billingDocumentId: doc.id,
+    })
+    assertAdvanceApplicationFits({
+      advanceRemaining: advance.remainingAmount,
+      applying: input.amount,
+      billingOpenAmount: billingDocumentOpenAmount({
+        document: doc,
+        allocations: onBilling,
+        advanceApplications: onBillingAdv,
+      }),
+    })
+    const amt = Number(input.amount)
+    const { data, error } = await sb()
+      .from('advance_applications')
+      .insert({
+        advance_id: advance.id,
+        billing_document_id: doc.id,
+        amount: amt,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, advance_id, billing_document_id, amount, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '預收抵充失敗'))
+    const remaining = Math.round((advance.remainingAmount - amt) * 100) / 100
+    await sb()
+      .from('customer_advances')
+      .update({
+        remaining_amount: remaining,
+        status: remaining <= 0.009 ? 'closed' : 'open',
+      })
+      .eq('id', advance.id)
+    return mapAdvanceApplicationRow(data as Record<string, unknown>)
+  },
+
+  async listCustomerCreditNotes(
+    quotationId: string,
+  ): Promise<CustomerCreditNote[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('customer_credit_notes')
+      .select(
+        'id, organization_id, quotation_id, billing_document_id, credit_number, amount, reason, status, issued_at, created_at, created_by',
+      )
+      .eq('quotation_id', qid)
+      .order('issued_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入折讓'))
+    return (data ?? []).map((row) =>
+      mapCustomerCreditNoteRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listCustomerRefunds(quotationId: string): Promise<CustomerRefund[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('customer_refunds')
+      .select(
+        'id, organization_id, quotation_id, payment_id, refund_number, amount, method, status, reason, refunded_at, created_at, created_by',
+      )
+      .eq('quotation_id', qid)
+      .order('refunded_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入退款'))
+    return (data ?? []).map((row) =>
+      mapCustomerRefundRow(row as Record<string, unknown>),
+    )
+  },
+
+  async createCustomerCreditNote(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      amount: number
+      reason: string
+      billingDocumentId?: string | null
+    },
+  ): Promise<CustomerCreditNote> {
+    assertCanManageRefunds(permissionRoleOf(actor))
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canIssueCreditOrRefund(quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const docs = await this.listBillingDocuments(quote.id)
+    const notes = await this.listCustomerCreditNotes(quote.id)
+    assertCreditNoteFits({
+      billed: sumIssuedBillingAmount(docs),
+      alreadyCredited: sumIssuedCredits(notes),
+      crediting: input.amount,
+    })
+    if (input.billingDocumentId) {
+      const doc = docs.find((d) => d.id === input.billingDocumentId)
+      if (!doc || doc.status !== 'issued') {
+        throw new AppError('折讓僅能關聯已開立請款單')
+      }
+    }
+    const creditNumber = `CN-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+    const { data, error } = await sb()
+      .from('customer_credit_notes')
+      .insert({
+        quotation_id: quote.id,
+        billing_document_id: input.billingDocumentId || null,
+        credit_number: creditNumber,
+        amount: Number(input.amount),
+        reason: input.reason.trim() || '折讓',
+        status: 'issued',
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, quotation_id, billing_document_id, credit_number, amount, reason, status, issued_at, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法開立折讓'))
+    return mapCustomerCreditNoteRow(data as Record<string, unknown>)
+  },
+
+  async createCustomerRefund(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      paymentId: string
+      amount: number
+      method: PaymentMethod
+      reason: string
+    },
+  ): Promise<CustomerRefund> {
+    assertCanManageRefunds(permissionRoleOf(actor))
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    const gate = canIssueCreditOrRefund(quote)
+    if (!gate.ok) throw new AppError(gate.reason)
+    const payments = await this.listCustomerPayments(quote.id)
+    const payment = payments.find((p) => p.id === input.paymentId)
+    if (!payment || payment.status !== 'confirmed') {
+      throw new AppError('退款必須對應已確認的原收款（原收款保留）')
+    }
+    const prior = await this.listCustomerRefunds(quote.id)
+    assertRefundFits({
+      paymentAmount: payment.amount,
+      alreadyRefundedOnPayment: refundsOnPayment(payment.id, prior),
+      refunding: input.amount,
+    })
+    const refundNumber = `REF-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${crypto.randomUUID().slice(0, 4).toUpperCase()}`
+    const { data, error } = await sb()
+      .from('customer_refunds')
+      .insert({
+        quotation_id: quote.id,
+        payment_id: payment.id,
+        refund_number: refundNumber,
+        amount: Number(input.amount),
+        method: input.method,
+        status: 'confirmed',
+        reason: input.reason.trim() || '退款',
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, quotation_id, payment_id, refund_number, amount, method, status, reason, refunded_at, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登錄退款'))
+    return mapCustomerRefundRow(data as Record<string, unknown>)
+  },
+
+  async listCaseOperatingCosts(
+    quotationId: string,
+  ): Promise<CaseOperatingCost[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('case_operating_costs')
+      .select(
+        'id, organization_id, quotation_id, kind, description, amount, status, warranty_free, confirmed_at, created_at, created_by',
+      )
+      .eq('quotation_id', qid)
+      .order('confirmed_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入營運成本'))
+    return (data ?? []).map((row) =>
+      mapCaseOperatingCostRow(row as Record<string, unknown>),
+    )
+  },
+
+  async createCaseOperatingCost(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      kind: OperatingCostKind
+      description: string
+      amount: number
+      warrantyFree?: boolean
+    },
+  ): Promise<CaseOperatingCost> {
+    assertCanRecordOperatingCost(
+      actor.role,
+      Boolean(actor.financeAuthorized),
+    )
+    assertOperatingCostAmount(input.amount)
+    const quote = await this.getQuotation(input.quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    if (quote.deletedAt) throw new AppError('報價案件已刪除')
+    const { data, error } = await sb()
+      .from('case_operating_costs')
+      .insert({
+        quotation_id: quote.id,
+        kind: input.kind,
+        description: input.description.trim() || '已確認營運成本',
+        amount: Number(input.amount),
+        status: 'confirmed',
+        warranty_free: Boolean(input.warrantyFree),
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, quotation_id, kind, description, amount, status, warranty_free, confirmed_at, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登錄營運成本'))
+    return mapCaseOperatingCostRow(data as Record<string, unknown>)
+  },
+
+  async listCustomers(): Promise<Customer[]> {
+    const { data, error } = await sb()
+      .from('customers')
+      .select(
+        'id, organization_id, name, phone, notes, created_at, updated_at, created_by',
+      )
+      .order('name', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入客戶'))
+    return (data ?? []).map((row) =>
+      mapCustomerRow(row as Record<string, unknown>),
+    )
+  },
+
+  async createCustomer(
+    actor: AppUser,
+    input: { name: string; phone?: string | null; notes?: string | null },
+  ): Promise<Customer> {
+    const name = assertCustomerName(input.name)
+    const { data, error } = await sb()
+      .from('customers')
+      .insert({
+        name,
+        phone: input.phone?.trim() || null,
+        notes: input.notes?.trim() || null,
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, name, phone, notes, created_at, updated_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立客戶'))
+    return mapCustomerRow(data as Record<string, unknown>)
+  },
+
+  async listCustomerContacts(customerId: string): Promise<CustomerContact[]> {
+    const cid = requireUuid(customerId, '客戶')
+    const { data, error } = await sb()
+      .from('customer_contacts')
+      .select(
+        'id, organization_id, customer_id, name, phone, email, is_primary, notes, created_at',
+      )
+      .eq('customer_id', cid)
+      .order('is_primary', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入聯絡人'))
+    return (data ?? []).map((row) =>
+      mapCustomerContactRow(row as Record<string, unknown>),
+    )
+  },
+
+  async addCustomerContact(
+    actor: AppUser,
+    input: {
+      customerId: string
+      name: string
+      phone?: string | null
+      email?: string | null
+      isPrimary?: boolean
+      notes?: string | null
+    },
+  ): Promise<CustomerContact> {
+    const cid = requireUuid(input.customerId, '客戶')
+    const name = assertContactName(input.name)
+    if (input.isPrimary) {
+      await sb()
+        .from('customer_contacts')
+        .update({ is_primary: false })
+        .eq('customer_id', cid)
+    }
+    const { data, error } = await sb()
+      .from('customer_contacts')
+      .insert({
+        customer_id: cid,
+        name,
+        phone: input.phone?.trim() || null,
+        email: input.email?.trim() || null,
+        is_primary: Boolean(input.isPrimary),
+        notes: input.notes?.trim() || null,
+      })
+      .select(
+        'id, organization_id, customer_id, name, phone, email, is_primary, notes, created_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法新增聯絡人'))
+    void actor
+    return mapCustomerContactRow(data as Record<string, unknown>)
+  },
+
+  async listCustomerSiteLinks(
+    customerId?: string,
+  ): Promise<CustomerSiteLink[]> {
+    let q = sb()
+      .from('customer_site_links')
+      .select('id, organization_id, customer_id, site_id, created_at')
+    if (customerId) {
+      q = q.eq('customer_id', requireUuid(customerId, '客戶'))
+    }
+    const { data, error } = await q.order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入客戶地址關聯'))
+    return (data ?? []).map((row) =>
+      mapCustomerSiteLinkRow(row as Record<string, unknown>),
+    )
+  },
+
+  async linkCustomerToSite(
+    actor: AppUser,
+    input: { customerId: string; siteId: string },
+  ): Promise<CustomerSiteLink> {
+    const cid = requireUuid(input.customerId, '客戶')
+    const sid = requireUuid(input.siteId, '工地')
+    const existing = await this.listCustomerSiteLinks()
+    assertCanLinkCustomerToSite({
+      customerId: cid,
+      siteId: sid,
+      existingLinks: existing,
+    })
+    const { data, error } = await sb()
+      .from('customer_site_links')
+      .insert({
+        customer_id: cid,
+        site_id: sid,
+      })
+      .select('id, organization_id, customer_id, site_id, created_at')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法關聯客戶與地址'))
+    void actor
+    return mapCustomerSiteLinkRow(data as Record<string, unknown>)
+  },
+
+  async listQuotationItems(quotationId: string): Promise<QuotationItem[]> {
+    const qid = requireUuid(quotationId, '報價')
+    const { data, error } = await sb()
+      .from('quotation_items')
+      .select(
+        'id, organization_id, quotation_id, line_no, kind, description, qty, unit, unit_price, amount, created_at, updated_at',
+      )
+      .eq('quotation_id', qid)
+      .order('line_no', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入報價細項'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      quotationId: String(row.quotation_id),
+      lineNo: Number(row.line_no),
+      kind: row.kind as QuotationItemKind,
+      description: String(row.description),
+      qty: Number(row.qty),
+      unit: String(row.unit),
+      unitPrice: Number(row.unit_price),
+      amount: Number(row.amount),
+      createdAt: String(row.created_at),
+      updatedAt: row.updated_at ? String(row.updated_at) : undefined,
+    }))
+  },
+
+  async addQuotationItem(
+    actor: AppUser,
+    input: {
+      quotationId: string
+      kind: QuotationItemKind
+      description: string
+      qty: number
+      unit?: string
+      unitPrice: number
+    },
+  ): Promise<QuotationItem> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const qid = requireUuid(input.quotationId, '報價')
+    const quote = await this.getQuotation(qid)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    assertQuoteDraftEditable({ workflowStatus: quote.workflowStatus })
+
+    const description = input.description.trim()
+    if (!description) throw new AppError('請填寫細項說明')
+    const amount = calcQuoteItemAmount({
+      qty: input.qty,
+      unitPrice: input.unitPrice,
+    })
+
+    const { data: existing, error: lineError } = await sb()
+      .from('quotation_items')
+      .select('line_no')
+      .eq('quotation_id', qid)
+      .order('line_no', { ascending: false })
+      .limit(1)
+    if (lineError) throw new AppError(toUserMessage(lineError, '無法讀取細項'))
+    const lineNo = Number(existing?.[0]?.line_no ?? 0) + 1
+
+    const { data, error } = await sb()
+      .from('quotation_items')
+      .insert({
+        quotation_id: qid,
+        line_no: lineNo,
+        kind: input.kind,
+        description,
+        qty: input.qty,
+        unit: (input.unit || '式').trim() || '式',
+        unit_price: input.unitPrice,
+        amount,
+      })
+      .select(
+        'id, organization_id, quotation_id, line_no, kind, description, qty, unit, unit_price, amount, created_at, updated_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法新增報價細項'))
+    if (
+      quote.workflowStatus === 'exported' ||
+      quote.workflowStatus === 'sent_to_customer'
+    ) {
+      await sb()
+        .from('quotations')
+        .update({
+          workflow_status: 'editing',
+          status: 'draft',
+        })
+        .eq('id', qid)
+    }
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      quotationId: String(data.quotation_id),
+      lineNo: Number(data.line_no),
+      kind: data.kind as QuotationItemKind,
+      description: String(data.description),
+      qty: Number(data.qty),
+      unit: String(data.unit),
+      unitPrice: Number(data.unit_price),
+      amount: Number(data.amount),
+      createdAt: String(data.created_at),
+      updatedAt: data.updated_at ? String(data.updated_at) : undefined,
+    }
+  },
+
+  async updateQuotationItem(
+    actor: AppUser,
+    itemId: string,
+    patch: Partial<{
+      kind: QuotationItemKind
+      description: string
+      qty: number
+      unit: string
+      unitPrice: number
+    }>,
+  ): Promise<QuotationItem> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const iid = requireUuid(itemId, '報價細項')
+    const { data: item, error: loadError } = await sb()
+      .from('quotation_items')
+      .select(
+        'id, organization_id, quotation_id, kind, description, qty, unit, unit_price',
+      )
+      .eq('id', iid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取細項'))
+    if (!item) throw new AppError('找不到細項')
+    assertSameOrganization(actor.organizationId, String(item.organization_id))
+    const quote = await this.getQuotation(String(item.quotation_id))
+    assertQuoteDraftEditable({ workflowStatus: quote.workflowStatus })
+    const qty = patch.qty ?? Number(item.qty)
+    const unitPrice = patch.unitPrice ?? Number(item.unit_price)
+    const amount = calcQuoteItemAmount({ qty, unitPrice })
+    const { data, error } = await sb()
+      .from('quotation_items')
+      .update({
+        kind: patch.kind ?? item.kind,
+        description: (patch.description ?? String(item.description)).trim(),
+        qty,
+        unit: patch.unit ?? String(item.unit),
+        unit_price: unitPrice,
+        amount,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', iid)
+      .select(
+        'id, organization_id, quotation_id, line_no, kind, description, qty, unit, unit_price, amount, created_at, updated_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新細項'))
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      quotationId: String(data.quotation_id),
+      lineNo: Number(data.line_no),
+      kind: data.kind as QuotationItemKind,
+      description: String(data.description),
+      qty: Number(data.qty),
+      unit: String(data.unit),
+      unitPrice: Number(data.unit_price),
+      amount: Number(data.amount),
+      createdAt: String(data.created_at),
+      updatedAt: data.updated_at ? String(data.updated_at) : undefined,
+    }
+  },
+
+  async removeQuotationItem(actor: AppUser, itemId: string): Promise<void> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const iid = requireUuid(itemId, '報價細項')
+    const { data: item, error: loadError } = await sb()
+      .from('quotation_items')
+      .select('id, organization_id, quotation_id')
+      .eq('id', iid)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取細項'))
+    if (!item) throw new AppError('找不到細項')
+    assertSameOrganization(actor.organizationId, String(item.organization_id))
+    const quote = await this.getQuotation(String(item.quotation_id))
+    assertQuoteDraftEditable({ workflowStatus: quote.workflowStatus })
+    const { error } = await sb().from('quotation_items').delete().eq('id', iid)
+    if (error) throw new AppError(toUserMessage(error, '無法刪除報價細項'))
+  },
+
+  async reorderQuotationItems(
+    actor: AppUser,
+    quotationId: string,
+    orderedIds: string[],
+  ): Promise<void> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.QUOTE_CREATE, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const quote = await this.getQuotation(quotationId)
+    assertSameOrganization(actor.organizationId, quote.organizationId)
+    assertQuoteDraftEditable({ workflowStatus: quote.workflowStatus })
+    for (let i = 0; i < orderedIds.length; i++) {
+      const { error } = await sb()
+        .from('quotation_items')
+        .update({ line_no: i + 1, updated_at: new Date().toISOString() })
+        .eq('id', orderedIds[i])
+        .eq('quotation_id', quotationId)
+      if (error) throw new AppError(toUserMessage(error, '無法排序細項'))
+    }
+  },
+
+  async bindLineUserId(lineUserId: string | null): Promise<AppUser> {
+    const trimmed = lineUserId?.trim() || null
+    const { data: authData, error: authError } = await sb().auth.getUser()
+    if (authError) throw new AppError(toUserMessage(authError, '無法讀取登入狀態'))
+    if (!authData.user) throw new AppError('尚未登入')
+
+    const { data, error } = await sb()
+      .from('profiles')
+      .update({ line_user_id: trimmed })
+      .eq('id', authData.user.id)
+      .select(
+        'id, organization_id, name, role, email, phone, pay_type, line_user_id, finance_authorized, created_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法更新 LINE 綁定'))
+    return mapUser(data)
+  },
+
+  async createLineBindCode(): Promise<{ code: string; expiresAt: string }> {
+    const { data, error } = await sb().rpc('create_line_bind_code')
+    if (error) throw new AppError(toUserMessage(error, '無法產生 LINE 綁定碼'))
+    const row = Array.isArray(data) ? data[0] : data
+    if (!row?.code) throw new AppError('無法產生 LINE 綁定碼')
+    return {
+      code: String(row.code),
+      expiresAt: String(row.expires_at),
+    }
+  },
+
+  async listMaterials(actor?: AppUser): Promise<MaterialStock[]> {
+    if (actor) {
+      assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_READ, {
+        financeAuthorized: actor.financeAuthorized,
+      })
+    }
+    const { data, error } = await sb()
+      .from('materials')
+      .select(
+        'id, organization_id, name, unit, qty, unit_cost, sku, tracking_mode, base_unit_code, updated_at',
+      )
+      .order('name', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入庫存'))
+    const { data: reservations } = await sb()
+      .from('stock_reservations')
+      .select('material_id, qty, status')
+      .eq('status', 'active')
+    const reservedByMaterial = new Map<string, number>()
+    for (const r of reservations ?? []) {
+      const mid = String(r.material_id)
+      reservedByMaterial.set(
+        mid,
+        roundMoney((reservedByMaterial.get(mid) || 0) + Number(r.qty), 4),
+      )
+    }
+    return (data ?? []).map((row) => {
+      const qty = Number(row.qty)
+      const reservedQty = reservedByMaterial.get(String(row.id)) || 0
+      return {
+        id: String(row.id),
+        organizationId: String(row.organization_id),
+        name: String(row.name),
+        unit: String(row.unit),
+        qty,
+        unitCost: Number(row.unit_cost),
+        sku: row.sku ? String(row.sku) : undefined,
+        trackingMode: (row.tracking_mode as MaterialStock['trackingMode']) || 'quantity',
+        baseUnitCode: row.base_unit_code
+          ? String(row.base_unit_code)
+          : String(row.unit),
+        reservedQty,
+        availableQty: roundMoney(qty - reservedQty, 4),
+        updatedAt: String(row.updated_at),
+      }
+    })
+  },
+
+  async listMaterialUnits(materialId?: string): Promise<MaterialUnit[]> {
+    let q = sb()
+      .from('material_units')
+      .select(
+        'id, organization_id, material_id, code, label, factor_to_base, is_base',
+      )
+    if (materialId) q = q.eq('material_id', requireUuid(materialId, '材料'))
+    const { data, error } = await q.order('is_base', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入單位'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      materialId: String(row.material_id),
+      code: String(row.code),
+      label: String(row.label),
+      factorToBase: Number(row.factor_to_base),
+      isBase: Boolean(row.is_base),
+    }))
+  },
+
+  async listMaterialSerials(materialId?: string): Promise<MaterialSerial[]> {
+    let q = sb()
+      .from('material_serials')
+      .select(
+        'id, organization_id, material_id, serial_number, status, unit_cost, location_id, created_at, created_by',
+      )
+    if (materialId) q = q.eq('material_id', requireUuid(materialId, '材料'))
+    const { data, error } = await q.order('serial_number', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入序號'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      materialId: String(row.material_id),
+      serialNumber: String(row.serial_number),
+      status: row.status as MaterialSerial['status'],
+      unitCost: Number(row.unit_cost),
+      locationId: (row.location_id as string | null) ?? null,
+      createdAt: String(row.created_at),
+      createdBy: String(row.created_by ?? ''),
+    }))
+  },
+
+  async addMaterialUnit(
+    actor: AppUser,
+    input: {
+      materialId: string
+      code: string
+      label: string
+      factorToBase: number
+    },
+  ): Promise<MaterialUnit> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_ADJUST, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const materialId = requireUuid(input.materialId, '材料')
+    const code = input.code.trim()
+    if (!code) throw new AppError('單位代碼必填')
+    const factor = assertUnitFactor(input.factorToBase)
+    const { data, error } = await sb()
+      .from('material_units')
+      .insert({
+        material_id: materialId,
+        code,
+        label: input.label.trim() || code,
+        factor_to_base: factor,
+        is_base: false,
+      })
+      .select(
+        'id, organization_id, material_id, code, label, factor_to_base, is_base',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法新增單位'))
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      materialId: String(data.material_id),
+      code: String(data.code),
+      label: String(data.label),
+      factorToBase: Number(data.factor_to_base),
+      isBase: Boolean(data.is_base),
+    }
+  },
+
+  async registerMaterialSerial(
+    actor: AppUser,
+    input: {
+      materialId: string
+      serialNumber: string
+      unitCost: number
+      locationId?: string | null
+    },
+  ): Promise<MaterialSerial> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_INBOUND, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const materials = await this.listMaterials(actor)
+    const mat = materials.find((m) => m.id === input.materialId)
+    if (!mat) throw new AppError('找不到材料')
+    if ((mat.trackingMode || 'quantity') !== 'serial') {
+      throw new AppError('僅序號追蹤材料可登錄序號')
+    }
+    const existing = await this.listMaterialSerials()
+    const serial = assertSerialUniqueInOrg({
+      serial: input.serialNumber,
+      existingSerials: existing.map((s) => s.serialNumber),
+    })
+    const locationId =
+      input.locationId || (await this.ensureDefaultWarehouse(actor))
+    const unitCost = roundMoney(Number(input.unitCost) || 0, 4)
+    const { data, error } = await sb()
+      .from('material_serials')
+      .insert({
+        material_id: requireUuid(mat.id, '材料'),
+        serial_number: serial,
+        status: 'in_stock',
+        unit_cost: unitCost,
+        location_id: requireUuid(locationId, '庫位'),
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, material_id, serial_number, status, unit_cost, location_id, created_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登錄序號'))
+    await this.upsertStockBalanceDelta({
+      materialId: mat.id,
+      locationId,
+      delta: 1,
+    })
+    const { error: updError } = await sb()
+      .from('materials')
+      .update({
+        qty: roundMoney(mat.qty + 1, 4),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', mat.id)
+    if (updError) throw new AppError(toUserMessage(updError, '無法更新庫存'))
+    await this.appendStockMovement(actor, {
+      movementType: 'inbound',
+      materialId: mat.id,
+      materialName: mat.name,
+      qty: 1,
+      unitCost,
+      toLocationId: locationId,
+      note: `序號 ${serial}`,
+      clientOperationId: `serial-in-${String(data.id)}`,
+    })
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      materialId: String(data.material_id),
+      serialNumber: String(data.serial_number),
+      status: data.status as MaterialSerial['status'],
+      unitCost: Number(data.unit_cost),
+      locationId: (data.location_id as string | null) ?? null,
+      createdAt: String(data.created_at),
+      createdBy: String(data.created_by ?? ''),
+    }
+  },
+
+  convertMaterialQty(
+    units: MaterialUnit[],
+    qty: number,
+    fromCode: string,
+    toCode: string,
+  ): number {
+    const from = units.find((u) => u.code === fromCode)
+    const to = units.find((u) => u.code === toCode)
+    if (!from || !to) throw new AppError('找不到單位設定')
+    return convertMaterialQty({
+      qty,
+      fromFactorToBase: from.factorToBase,
+      toFactorToBase: to.factorToBase,
+    })
+  },
+
+  async listStockLocations(): Promise<StockLocation[]> {
+    const { data, error } = await sb()
+      .from('stock_locations')
+      .select('id, organization_id, kind, name, site_id, is_default, created_at')
+      .order('name', { ascending: true })
+    if (error) throw new AppError(toUserMessage(error, '無法載入庫位'))
+    return (data ?? []).map((row) =>
+      mapStockLocationRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listStockBalances(materialId?: string): Promise<StockBalance[]> {
+    let q = sb()
+      .from('stock_balances')
+      .select('id, organization_id, material_id, location_id, qty, updated_at')
+    if (materialId) q = q.eq('material_id', requireUuid(materialId, '材料'))
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入庫位餘額'))
+    return (data ?? []).map((row) =>
+      mapStockBalanceRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listStockMovements(materialId?: string): Promise<StockMovement[]> {
+    let q = sb()
+      .from('stock_movements')
+      .select(
+        'id, organization_id, movement_type, material_id, material_name, qty, unit_cost, from_location_id, to_location_id, reservation_id, note, client_operation_id, posted_at, created_by, reversal_of',
+      )
+    if (materialId) q = q.eq('material_id', requireUuid(materialId, '材料'))
+    const { data, error } = await q.order('posted_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入流水帳'))
+    return (data ?? []).map((row) =>
+      mapStockMovementRow(row as Record<string, unknown>),
+    )
+  },
+
+  async listStockReservations(materialId?: string): Promise<StockReservation[]> {
+    let q = sb()
+      .from('stock_reservations')
+      .select(
+        'id, organization_id, material_id, location_id, qty, status, note, client_operation_id, created_at, created_by, released_at',
+      )
+    if (materialId) q = q.eq('material_id', requireUuid(materialId, '材料'))
+    const { data, error } = await q.order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入預留'))
+    return (data ?? []).map((row) =>
+      mapStockReservationRow(row as Record<string, unknown>),
+    )
+  },
+
+  async ensureDefaultWarehouse(actor: AppUser): Promise<string> {
+    const locs = await this.listStockLocations()
+    const existing =
+      locs.find((l) => l.isDefault) || locs.find((l) => l.kind === 'warehouse')
+    if (existing) return existing.id
+    const { data, error } = await sb()
+      .from('stock_locations')
+      .insert({
+        kind: 'warehouse',
+        name: '總倉',
+        is_default: true,
+        site_id: null,
+      })
+      .select('id')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立預設倉庫'))
+    void actor
+    return String(data.id)
+  },
+
+  async upsertStockBalanceDelta(input: {
+    materialId: string
+    locationId: string
+    delta: number
+  }): Promise<void> {
+    const materialId = requireUuid(input.materialId, '材料')
+    const locationId = requireUuid(input.locationId, '庫位')
+    const { data: existing } = await sb()
+      .from('stock_balances')
+      .select('id, qty')
+      .eq('material_id', materialId)
+      .eq('location_id', locationId)
+      .maybeSingle()
+    const nextQty = roundMoney(Number(existing?.qty || 0) + input.delta, 4)
+    if (nextQty < -0.0001) throw new AppError('禁止負庫存')
+    if (existing) {
+      const { error } = await sb()
+        .from('stock_balances')
+        .update({ qty: Math.max(0, nextQty), updated_at: new Date().toISOString() })
+        .eq('id', existing.id)
+      if (error) throw new AppError(toUserMessage(error, '無法更新庫位餘額'))
+      return
+    }
+    const { error } = await sb().from('stock_balances').insert({
+      material_id: materialId,
+      location_id: locationId,
+      qty: Math.max(0, nextQty),
+    })
+    if (error) throw new AppError(toUserMessage(error, '無法建立庫位餘額'))
+  },
+
+  async appendStockMovement(
+    actor: AppUser,
+    input: {
+      movementType: StockMovement['movementType']
+      materialId: string
+      materialName: string
+      qty: number
+      unitCost: number
+      fromLocationId?: string | null
+      toLocationId?: string | null
+      reservationId?: string | null
+      note?: string | null
+      clientOperationId: string
+    },
+  ): Promise<StockMovement> {
+    const { data, error } = await sb()
+      .from('stock_movements')
+      .insert({
+        movement_type: input.movementType,
+        material_id: requireUuid(input.materialId, '材料'),
+        material_name: input.materialName,
+        qty: input.qty,
+        unit_cost: input.unitCost,
+        from_location_id: optionalUuid(input.fromLocationId, '來源庫位'),
+        to_location_id: optionalUuid(input.toLocationId, '目的庫位'),
+        reservation_id: optionalUuid(input.reservationId, '預留'),
+        note: input.note?.trim() || null,
+        client_operation_id: input.clientOperationId.trim(),
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, movement_type, material_id, material_name, qty, unit_cost, from_location_id, to_location_id, reservation_id, note, client_operation_id, posted_at, created_by, reversal_of',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法寫入流水帳'))
+    return mapStockMovementRow(data as Record<string, unknown>)
+  },
+
+  async transferStock(
+    actor: AppUser,
+    input: {
+      materialId: string
+      qty: number
+      fromLocationId: string
+      toLocationId: string
+      note?: string | null
+      clientOperationId: string
+    },
+  ): Promise<StockMovement> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_ADJUST, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const qty = assertPositiveQty(input.qty, '調撥數量')
+    if (input.fromLocationId === input.toLocationId) {
+      throw new AppError('調撥來源與目的庫位不可相同')
+    }
+    const materials = await this.listMaterials(actor)
+    const mat = materials.find((m) => m.id === input.materialId)
+    if (!mat) throw new AppError('找不到材料')
+    assertAvailableForConsume({
+      onHand: mat.qty,
+      reserved: mat.reservedQty || 0,
+      qty,
+      label: '調撥數量',
+    })
+    await this.upsertStockBalanceDelta({
+      materialId: mat.id,
+      locationId: input.fromLocationId,
+      delta: -qty,
+    })
+    await this.upsertStockBalanceDelta({
+      materialId: mat.id,
+      locationId: input.toLocationId,
+      delta: qty,
+    })
+    assertTransferDoesNotAffectCost({
+      beforeUnitCost: mat.unitCost,
+      afterUnitCost: mat.unitCost,
+      beforeOrgQty: mat.qty,
+      afterOrgQty: mat.qty,
+    })
+    return this.appendStockMovement(actor, {
+      movementType: 'transfer',
+      materialId: mat.id,
+      materialName: mat.name,
+      qty,
+      unitCost: mat.unitCost,
+      fromLocationId: input.fromLocationId,
+      toLocationId: input.toLocationId,
+      note: input.note,
+      clientOperationId: input.clientOperationId,
+    })
+  },
+
+  async reserveStock(
+    actor: AppUser,
+    input: {
+      materialId: string
+      qty: number
+      locationId?: string | null
+      note?: string | null
+      clientOperationId: string
+    },
+  ): Promise<StockReservation> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_ADJUST, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const qty = assertPositiveQty(input.qty, '預留數量')
+    const materials = await this.listMaterials(actor)
+    const mat = materials.find((m) => m.id === input.materialId)
+    if (!mat) throw new AppError('找不到材料')
+    assertAvailableForConsume({
+      onHand: mat.qty,
+      reserved: mat.reservedQty || 0,
+      qty,
+      label: '預留數量',
+    })
+    const locationId =
+      input.locationId || (await this.ensureDefaultWarehouse(actor))
+    const { data, error } = await sb()
+      .from('stock_reservations')
+      .insert({
+        material_id: requireUuid(mat.id, '材料'),
+        location_id: requireUuid(locationId, '庫位'),
+        qty,
+        status: 'active',
+        note: input.note?.trim() || null,
+        client_operation_id: input.clientOperationId.trim(),
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, material_id, location_id, qty, status, note, client_operation_id, created_at, created_by, released_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立預留'))
+    const row = mapStockReservationRow(data as Record<string, unknown>)
+    await this.appendStockMovement(actor, {
+      movementType: 'reserve',
+      materialId: mat.id,
+      materialName: mat.name,
+      qty,
+      unitCost: mat.unitCost,
+      fromLocationId: locationId,
+      reservationId: row.id,
+      note: row.note,
+      clientOperationId: `mv-${input.clientOperationId}`,
+    })
+    return row
+  },
+
+  async releaseReservation(
+    actor: AppUser,
+    input: { reservationId: string; clientOperationId: string },
+  ): Promise<StockReservation> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_ADJUST, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const rid = requireUuid(input.reservationId, '預留')
+    const { data: current, error: loadError } = await sb()
+      .from('stock_reservations')
+      .select(
+        'id, organization_id, material_id, location_id, qty, status, note, client_operation_id, created_at, created_by, released_at',
+      )
+      .eq('id', rid)
+      .maybeSingle()
+    if (loadError || !current) {
+      throw new AppError(toUserMessage(loadError, '找不到預留'))
+    }
+    const mapped = mapStockReservationRow(current as Record<string, unknown>)
+    assertReservationRelease({
+      status: mapped.status,
+      releaseQty: mapped.qty,
+      reservedQty: mapped.qty,
+    })
+    const { data, error } = await sb()
+      .from('stock_reservations')
+      .update({
+        status: 'released',
+        released_at: new Date().toISOString(),
+      })
+      .eq('id', rid)
+      .select(
+        'id, organization_id, material_id, location_id, qty, status, note, client_operation_id, created_at, created_by, released_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法釋放預留'))
+    const materials = await this.listMaterials(actor)
+    const mat = materials.find((m) => m.id === mapped.materialId)
+    await this.appendStockMovement(actor, {
+      movementType: 'release',
+      materialId: mapped.materialId,
+      materialName: mat?.name || mapped.materialId,
+      qty: mapped.qty,
+      unitCost: mat?.unitCost || 0,
+      fromLocationId: mapped.locationId,
+      reservationId: mapped.id,
+      clientOperationId: input.clientOperationId,
+    })
+    return mapStockReservationRow(data as Record<string, unknown>)
+  },
+
+  async listMaterialUsages(repairCaseId?: string): Promise<MaterialUsage[]> {
+    let q = sb()
+      .from('material_usages')
+      .select(
+        'id, organization_id, material_id, material_name, qty, unit_cost, total_cost, repair_case_id, site_id, note, client_operation_id, posted_at, created_by',
+      )
+    if (repairCaseId) {
+      q = q.eq('repair_case_id', requireUuid(repairCaseId, '維修案件'))
+    }
+    const { data, error } = await q.order('posted_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入耗用'))
+    return (data ?? []).map((row) =>
+      mapMaterialUsageRow(row as Record<string, unknown>),
+    )
+  },
+
+  async postMaterialUsage(
+    actor: AppUser,
+    input: {
+      materialId: string
+      qty: number
+      repairCaseId?: string | null
+      siteId?: string | null
+      note?: string | null
+      clientOperationId: string
+    },
+  ): Promise<MaterialUsage> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_ADJUST, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const qty = assertUsageQty(input.qty)
+    const materialId = requireUuid(input.materialId, '材料')
+    const existing = await this.listMaterialUsages()
+    assertUsageNotAlreadyPosted({
+      clientOperationId: input.clientOperationId,
+      existingOperationIds: existing.map((u) => u.clientOperationId),
+    })
+    const { data: material, error: loadError } = await sb()
+      .from('materials')
+      .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
+      .eq('id', materialId)
+      .maybeSingle()
+    if (loadError || !material) {
+      throw new AppError(toUserMessage(loadError, '找不到材料'))
+    }
+    assertSameOrganization(actor.organizationId, String(material.organization_id))
+    const listed = await this.listMaterials(actor)
+    const withReserve = listed.find((m) => m.id === materialId)
+    const reservedQty = withReserve?.reservedQty || 0
+    assertAvailableForConsume({
+      onHand: Number(material.qty),
+      reserved: reservedQty,
+      qty,
+      label: '耗用數量',
+    })
+    assertNoNegativeStock({
+      availableQty: Number(material.qty) - reservedQty,
+      usageQty: qty,
+    })
+    const unitCost = Number(material.unit_cost)
+    const totalCost = computeUsageCost({ qty, unitCost })
+    const nextQty = roundMoney(Number(material.qty) - qty, 4)
+    const locationId = await this.ensureDefaultWarehouse(actor)
+    await this.upsertStockBalanceDelta({
+      materialId,
+      locationId,
+      delta: -qty,
+    })
+    const { error: updError } = await sb()
+      .from('materials')
+      .update({ qty: nextQty, updated_at: new Date().toISOString() })
+      .eq('id', materialId)
+    if (updError) throw new AppError(toUserMessage(updError, '無法扣減庫存'))
+    const { data, error } = await sb()
+      .from('material_usages')
+      .insert({
+        material_id: materialId,
+        material_name: String(material.name),
+        qty,
+        unit_cost: unitCost,
+        total_cost: totalCost,
+        repair_case_id: optionalUuid(input.repairCaseId, '維修案件'),
+        site_id: optionalUuid(input.siteId, '工地'),
+        note: input.note?.trim() || null,
+        client_operation_id: input.clientOperationId.trim(),
+        created_by: actor.id,
+      })
+      .select(
+        'id, organization_id, material_id, material_name, qty, unit_cost, total_cost, repair_case_id, site_id, note, client_operation_id, posted_at, created_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法過帳耗用'))
+    await this.appendStockMovement(actor, {
+      movementType: 'usage',
+      materialId,
+      materialName: String(material.name),
+      qty,
+      unitCost,
+      fromLocationId: locationId,
+      note: input.note,
+      clientOperationId: `mv-usage-${input.clientOperationId.trim()}`,
+    })
+    return mapMaterialUsageRow(data as Record<string, unknown>)
+  },
+
+  async createQuoteFromRepairUsages(
+    actor: AppUser,
+    input: {
+      repairCaseId: string
+      title?: string
+      taxMode?: TaxMode
+    },
+  ): Promise<Quotation> {
+    const rid = requireUuid(input.repairCaseId, '維修案件')
+    const cases = await this.listRepairCases()
+    const repair = cases.find((c) => c.id === rid)
+    if (!repair) throw new AppError('找不到維修案件')
+    const usages = await this.listMaterialUsages(rid)
+    if (usages.length === 0) throw new AppError('尚無耗用可轉報價')
+    const quote = await this.createQuotation(actor, {
+      title: input.title || `維修報價 · ${repair.problemDescription}`,
+      repairCaseId: rid,
+      projectId: null,
+      taxMode: input.taxMode || 'zero',
+      customerName: repair.customerName || '',
+    })
+    for (const u of usages) {
+      await this.addQuotationItem(actor, {
+        quotationId: quote.id,
+        kind: 'material',
+        description: `${u.materialName}（耗用）`,
+        qty: u.qty,
+        unitPrice: u.unitCost,
+      })
+    }
+    return this.getQuotation(quote.id)
+  },
+
+  async inboundMaterial(
+    actor: AppUser,
+    input: {
+      materialId: string
+      qty: number
+      unitCost: number
+      locationId?: string | null
+      clientOperationId?: string
+    },
+  ): Promise<MaterialStock> {
+    assertPermission(permissionRoleOf(actor), PERMISSIONS.INVENTORY_INBOUND, {
+      financeAuthorized: actor.financeAuthorized,
+    })
+    const materialId = requireUuid(input.materialId, '材料')
+    const inboundQty = assertPositiveQty(input.qty, '入庫數量')
+    if (input.unitCost < 0) throw new AppError('入庫單價不可為負')
+
+    const { data: current, error: loadError } = await sb()
+      .from('materials')
+      .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
+      .eq('id', materialId)
+      .maybeSingle()
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取材料'))
+    if (!current) throw new AppError('找不到材料')
+    assertSameOrganization(actor.organizationId, String(current.organization_id))
+
+    const next = applyInboundMovingAverage({
+      oldQty: Number(current.qty),
+      oldUnitCost: Number(current.unit_cost),
+      inboundQty,
+      inboundUnitCost: input.unitCost,
+    })
+    if (next.qty < 0) throw new AppError('禁止負庫存')
+
+    const locationId =
+      input.locationId || (await this.ensureDefaultWarehouse(actor))
+    await this.upsertStockBalanceDelta({
+      materialId,
+      locationId,
+      delta: inboundQty,
+    })
+
+    const { data, error } = await sb()
+      .from('materials')
+      .update({
+        qty: next.qty,
+        unit_cost: next.unitCost,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', materialId)
+      .select('id, organization_id, name, unit, qty, unit_cost, updated_at')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '入庫失敗'))
+    await this.appendStockMovement(actor, {
+      movementType: 'inbound',
+      materialId,
+      materialName: String(current.name),
+      qty: inboundQty,
+      unitCost: roundMoney(input.unitCost, 4),
+      toLocationId: locationId,
+      clientOperationId:
+        input.clientOperationId?.trim() || `inbound-${crypto.randomUUID()}`,
+    })
+    const reserved = (await this.listMaterials(actor)).find(
+      (m) => m.id === materialId,
+    )
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      name: String(data.name),
+      unit: String(data.unit),
+      qty: Number(data.qty),
+      unitCost: Number(data.unit_cost),
+      reservedQty: reserved?.reservedQty || 0,
+      availableQty: reserved?.availableQty ?? Number(data.qty),
+      updatedAt: String(data.updated_at),
+    }
+  },
+
+  async listNotices(userId: string): Promise<AppNotice[]> {
+    const uid = requireUuid(userId, '使用者')
+    const { data, error } = await sb()
+      .from('notices')
+      .select(
+        'id, organization_id, user_id, kind, title, detail, status, unread, href, created_at',
+      )
+      .eq('user_id', uid)
+      .order('created_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入通知'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      userId: String(row.user_id),
+      kind: row.kind as AppNotice['kind'],
+      title: String(row.title),
+      detail: String(row.detail),
+      status: row.status as AppNotice['status'],
+      unread: Boolean(row.unread),
+      createdAt: String(row.created_at),
+      href: (row.href as string | undefined) ?? undefined,
+    }))
+  },
+
+  async markNoticeRead(id: string): Promise<void> {
+    const nid = requireUuid(id, '通知')
+    const { error } = await sb()
+      .from('notices')
+      .update({ unread: false })
+      .eq('id', nid)
+    if (error) throw new AppError(toUserMessage(error, '無法標記已讀'))
+  },
+
+  async completeNotice(id: string): Promise<void> {
+    const nid = requireUuid(id, '通知')
+    const { error } = await sb()
+      .from('notices')
+      .update({ unread: false, status: 'done' })
+      .eq('id', nid)
+    if (error) throw new AppError(toUserMessage(error, '無法完成待辦'))
+  },
+
+  async deleteNotice(userId: string, id: string): Promise<void> {
+    const uid = requireUuid(userId, '使用者')
+    const nid = requireUuid(id, '通知')
+    const { error } = await sb()
+      .from('notices')
+      .delete()
+      .eq('id', nid)
+      .eq('user_id', uid)
+    if (error) throw new AppError(toUserMessage(error, '無法刪除通知'))
+  },
+
+  async clearReadNotices(userId: string): Promise<number> {
+    const uid = requireUuid(userId, '使用者')
+    const { data, error } = await sb()
+      .from('notices')
+      .delete()
+      .eq('user_id', uid)
+      .eq('unread', false)
+      .select('id')
+    if (error) throw new AppError(toUserMessage(error, '無法清除已讀通知'))
+    return (data ?? []).length
+  },
+
+  /**
+   * Today’s team: only members with attendance today.
+   * Shows 最後地點 (footprint or site), not full GPS for peers.
+   */
+  async listTeamPresence(): Promise<TeamPresence[]> {
+    const day = taipeiDateString()
+    const dayStart = `${day}T00:00:00+08:00`
+    const dayEnd = `${day}T23:59:59.999+08:00`
+
+    const { data: shifts, error: attError } = await sb()
+      .from('attendance')
+      .select('id, user_id, status, clock_in_at, clock_out_at, site_id')
+      .gte('clock_in_at', dayStart)
+      .lte('clock_in_at', dayEnd)
+      .order('clock_in_at', { ascending: false })
+    if (attError) throw new AppError(toUserMessage(attError, '無法載入到班狀態'))
+
+    if (!shifts?.length) return []
+
+    const latestByUser = new Map<string, (typeof shifts)[number]>()
+    for (const row of shifts) {
+      const uid = String(row.user_id)
+      if (!latestByUser.has(uid)) latestByUser.set(uid, row)
+    }
+
+    const userIds = [...latestByUser.keys()]
+    const { data: profiles, error: profileError } = await sb()
+      .from('profiles')
+      .select('id, name, account_status, login_id, phone')
+      .in('id', userIds)
+    if (profileError) throw new AppError(toUserMessage(profileError, '無法載入團隊'))
+    // Hide soft-deleted / disabled shells so they don't look like duplicate teammates.
+    const activeProfiles = (profiles ?? []).filter((p) => {
+      const status = String(p.account_status ?? 'active')
+      if (status === 'disabled') return false
+      if (String(p.name ?? '').includes('（已刪除）')) return false
+      return true
+    })
+    const activeIds = new Set(activeProfiles.map((p) => String(p.id)))
+    const nameById = new Map(
+      activeProfiles.map((p) => [String(p.id), String(p.name)]),
+    )
+
+    const { data: checkins, error: locError } = await sb()
+      .from('location_checkins')
+      .select(
+        'user_id, recorded_at, label, address, site_id, latitude, longitude',
+      )
+      .in('user_id', userIds)
+      .gte('recorded_at', dayStart)
+      .lte('recorded_at', dayEnd)
+      .order('recorded_at', { ascending: false })
+    if (locError) throw new AppError(toUserMessage(locError, '無法載入地點紀錄'))
+
+    const latestLocByUser = new Map<
+      string,
+      {
+        user_id: unknown
+        recorded_at: unknown
+        label: unknown
+        address: unknown
+        site_id: unknown
+        latitude: unknown
+        longitude: unknown
+      }
+    >()
+    for (const row of checkins ?? []) {
+      const uid = String(row.user_id)
+      if (!latestLocByUser.has(uid)) latestLocByUser.set(uid, row)
+    }
+
+    const siteIds = [
+      ...new Set(
+        [
+          ...[...latestByUser.values()].map((s) => s.site_id as string | null),
+          ...[...latestLocByUser.values()].map((c) => c.site_id as string | null),
+        ].filter((id): id is string => Boolean(id)),
+      ),
+    ]
+    let siteNames = new Map<string, string>()
+    if (siteIds.length > 0) {
+      const { data: sites, error: siteError } = await sb()
+        .from('sites')
+        .select('id, name')
+        .in('id', siteIds)
+      if (siteError) throw new AppError(toUserMessage(siteError, '無法載入工地名稱'))
+      siteNames = new Map((sites ?? []).map((s) => [String(s.id), String(s.name)]))
+    }
+
+    return userIds
+      .filter((uid) => activeIds.has(uid))
+      .map((uid) => {
+        const shift = latestByUser.get(uid)!
+        const clockedIn = String(shift.status) === 'clocked_in'
+        const siteId = shift.site_id as string | null
+        const siteName = siteId ? siteNames.get(siteId) ?? null : null
+        const loc = latestLocByUser.get(uid)
+        let lastLocation: string | null = null
+        let lastLocationAt: string | null = null
+        if (loc) {
+          lastLocationAt = String(loc.recorded_at)
+          if (loc.site_id) {
+            lastLocation = siteNames.get(String(loc.site_id)) ?? null
+          }
+          lastLocation =
+            lastLocation ||
+            (loc.label as string | null) ||
+            (loc.address as string | null) ||
+            (loc.latitude != null && loc.longitude != null
+              ? `${Number(loc.latitude).toFixed(4)}, ${Number(loc.longitude).toFixed(4)}`
+              : null)
+        } else if (siteName) {
+          lastLocation = siteName
+          lastLocationAt = String(shift.clock_in_at)
+        }
+
+        return {
+          userId: uid,
+          name: nameById.get(uid) ?? '未知',
+          clockedIn,
+          siteName,
+          lastLocation,
+          lastLocationAt,
+          clockInAt: String(shift.clock_in_at),
+          clockOutAt: (shift.clock_out_at as string | null) ?? null,
+        } satisfies TeamPresence
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'))
+  },
+
+  /** Active org members for pickers (todos, assignees). Excludes disabled / soft-deleted. */
+  async listActiveOrgMembers(actor: AppUser): Promise<AppUser[]> {
+    const { data, error } = await sb()
+      .from('profiles')
+      .select(PROFILE_SELECT_CORE)
+      .eq('organization_id', actor.organizationId)
+      .neq('account_status', 'disabled')
+      .order('name')
+    if (error) {
+      // Fallback without account_status filter if column missing.
+      if (/account_status|column/i.test(error.message)) {
+        const fallback = await sb()
+          .from('profiles')
+          .select(
+            'id, organization_id, name, role, email, login_id, phone, pay_type, line_user_id, finance_authorized, nickname, birth_date, job_title, hired_at, profile_notes, created_at',
+          )
+          .eq('organization_id', actor.organizationId)
+          .order('name')
+        if (fallback.error) {
+          throw new AppError(toUserMessage(fallback.error, '無法載入成員'))
+        }
+        return (fallback.data ?? []).map((row) => mapUser(row))
+      }
+      throw new AppError(toUserMessage(error, '無法載入成員'))
+    }
+    return (data ?? [])
+      .map((row) => mapUser(row))
+      .filter(
+        (m) => m.accountStatus !== 'disabled' && !isPurgedDirectoryMember(m),
+      )
+  },
+
+  async listLocationCheckins(input: {
+    userId: string
+    day?: string
+    attendanceId?: string | null
+  }): Promise<LocationCheckin[]> {
+    const uid = requireUuid(input.userId, '使用者')
+    let q = sb()
+      .from('location_checkins')
+      .select(
+        'id, organization_id, user_id, recorded_at, source, site_id, label, address, latitude, longitude, note, attendance_id',
+      )
+      .eq('user_id', uid)
+      .order('recorded_at', { ascending: true })
+      .limit(200)
+
+    if (input.attendanceId) {
+      q = q.eq('attendance_id', requireUuid(input.attendanceId, '出勤'))
+    } else if (input.day) {
+      const dayStart = `${input.day}T00:00:00+08:00`
+      const dayEnd = `${input.day}T23:59:59.999+08:00`
+      q = q.gte('recorded_at', dayStart).lte('recorded_at', dayEnd)
+    }
+
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入地點紀錄'))
+
+    const siteIds = [
+      ...new Set(
+        (data ?? [])
+          .map((r) => r.site_id as string | null)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ]
+    let siteNames = new Map<string, string>()
+    if (siteIds.length > 0) {
+      const { data: sites } = await sb().from('sites').select('id, name').in('id', siteIds)
+      siteNames = new Map((sites ?? []).map((s) => [String(s.id), String(s.name)]))
+    }
+
+    return (data ?? []).map((row) => mapLocationCheckin(row, siteNames))
+  },
+
+  async createLocationCheckin(
+    actor: AppUser,
+    input: {
+      siteId?: string | null
+      label?: string | null
+      address?: string | null
+      latitude?: number | null
+      longitude?: number | null
+      note?: string | null
+      source?: LocationCheckin['source']
+    },
+  ): Promise<LocationCheckin> {
+    const open = await this.getOpenAttendance(actor.id)
+    const source = input.source ?? 'manual'
+    const { data, error } = await sb()
+      .from('location_checkins')
+      .insert({
+        organization_id: actor.organizationId,
+        user_id: actor.id,
+        recorded_at: new Date().toISOString(),
+        source,
+        site_id: input.siteId || null,
+        label: input.label?.trim() || null,
+        address: input.address?.trim() || null,
+        latitude: input.latitude ?? null,
+        longitude: input.longitude ?? null,
+        note: input.note?.trim() || null,
+        attendance_id: open?.id ?? null,
+      })
+      .select(
+        'id, organization_id, user_id, recorded_at, source, site_id, label, address, latitude, longitude, note, attendance_id',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立地點紀錄'))
+    return mapLocationCheckin(data, new Map())
+  },
+
+  async listPhotoUploads(siteId?: string | null): Promise<PhotoUpload[]> {
+    let q = sb()
+      .from('photo_uploads')
+      .select(
+        'id, organization_id, uploaded_by, site_id, photo_type, storage_path, content_type, byte_size, source, status, created_at',
+      )
+      .neq('status', 'discarded')
+      .order('created_at', { ascending: false })
+      .limit(200)
+    if (siteId) {
+      q = q.eq('site_id', requireUuid(siteId, '工地'))
+    }
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入施工照片'))
+
+    const rows = data ?? []
+    const uploaderIds = [...new Set(rows.map((r) => String(r.uploaded_by)))]
+    const siteIds = [
+      ...new Set(
+        rows
+          .map((r) => r.site_id as string | null)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ]
+
+    const nameByUser = new Map<string, string>()
+    if (uploaderIds.length > 0) {
+      const { data: profiles } = await sb()
+        .from('profiles')
+        .select('id, name')
+        .in('id', uploaderIds)
+      for (const p of profiles ?? []) {
+        nameByUser.set(String(p.id), String(p.name))
+      }
+    }
+
+    const nameBySite = new Map<string, string>()
+    if (siteIds.length > 0) {
+      const { data: sites } = await sb().from('sites').select('id, name').in('id', siteIds)
+      for (const s of sites ?? []) {
+        nameBySite.set(String(s.id), String(s.name))
+      }
+    }
+
+    const paths = rows.map((r) => String(r.storage_path))
+    const previewByPath = new Map<string, string>()
+    if (paths.length > 0) {
+      const { data: signed } = await sb()
+        .storage.from('site-photos')
+        .createSignedUrls(paths, 3600)
+      for (const item of signed ?? []) {
+        if (item.path && item.signedUrl) {
+          previewByPath.set(item.path, item.signedUrl)
+        }
+      }
+    }
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      uploadedBy: String(row.uploaded_by),
+      uploaderName: nameByUser.get(String(row.uploaded_by)),
+      siteId: row.site_id ? String(row.site_id) : null,
+      siteName: row.site_id ? nameBySite.get(String(row.site_id)) ?? null : null,
+      photoType: (row.photo_type as PhotoUpload['photoType']) ?? 'unclassified',
+      storagePath: String(row.storage_path),
+      contentType: row.content_type ? String(row.content_type) : null,
+      byteSize: row.byte_size == null ? null : Number(row.byte_size),
+      source: String(row.source),
+      status: row.status as PhotoUpload['status'],
+      previewUrl: previewByPath.get(String(row.storage_path)) ?? null,
+      createdAt: String(row.created_at),
+    }))
+  },
+
+  async linkPhotoUpload(
+    photoId: string,
+    siteId: string,
+    photoType?: string | null,
+  ): Promise<void> {
+    const type = assertPhotoType(photoType || 'unclassified')
+    const { error } = await sb()
+      .from('photo_uploads')
+      .update({
+        site_id: requireUuid(siteId, '工地'),
+        photo_type: type,
+        status: 'linked',
+      })
+      .eq('id', requireUuid(photoId, '照片'))
+    if (error) throw new AppError(toUserMessage(error, '無法指定工地'))
+  },
+
+  async classifyPhotoUpload(
+    photoId: string,
+    photoType: string,
+  ): Promise<void> {
+    const type = assertPhotoType(photoType)
+    const { error } = await sb()
+      .from('photo_uploads')
+      .update({ photo_type: type })
+      .eq('id', requireUuid(photoId, '照片'))
+    if (error) throw new AppError(toUserMessage(error, '無法更新照片分類'))
+  },
+
+  async discardPhotoUpload(photoId: string): Promise<void> {
+    const { error } = await sb()
+      .from('photo_uploads')
+      .update({ status: 'discarded' })
+      .eq('id', requireUuid(photoId, '照片'))
+    if (error) throw new AppError(toUserMessage(error, '無法捨棄照片'))
+  },
+
+  async deletePhotoUploads(photoIds: string[]): Promise<number> {
+    const ids = [...new Set(photoIds.map((id) => requireUuid(id, '照片')))]
+    if (ids.length === 0) return 0
+
+    const { data: rows, error: loadError } = await sb()
+      .from('photo_uploads')
+      .select('id, storage_path')
+      .in('id', ids)
+    if (loadError) throw new AppError(toUserMessage(loadError, '無法讀取照片'))
+    const paths = (rows ?? [])
+      .map((r) => String(r.storage_path || ''))
+      .filter(Boolean)
+
+    if (paths.length > 0) {
+      const { error: storageError } = await sb()
+        .storage.from('site-photos')
+        .remove(paths)
+      if (storageError) {
+        throw new AppError(toUserMessage(storageError, '無法刪除照片檔案'))
+      }
+    }
+
+    const { error } = await sb().from('photo_uploads').delete().in('id', ids)
+    if (error) throw new AppError(toUserMessage(error, '無法刪除照片紀錄'))
+    return ids.length
+  },
+
+  async downloadPhotoBlobs(
+    photos: Array<{ id: string; storagePath: string; contentType?: string | null }>,
+  ): Promise<Array<{ id: string; blob: Blob; filename: string }>> {
+    const out: Array<{ id: string; blob: Blob; filename: string }> = []
+    for (const photo of photos) {
+      const { data, error } = await sb()
+        .storage.from('site-photos')
+        .download(photo.storagePath)
+      if (error || !data) {
+        throw new AppError(toUserMessage(error, '無法下載照片'))
+      }
+      const ext = photo.storagePath.includes('.')
+        ? photo.storagePath.split('.').pop() || 'jpg'
+        : 'jpg'
+      out.push({
+        id: photo.id,
+        blob: data,
+        filename: `photo-${photo.id.slice(0, 8)}.${ext}`,
+      })
+    }
+    return out
+  },
+
+  async uploadAppPhoto(input: {
+    file: File
+    siteId?: string | null
+    photoType?: string | null
+  }): Promise<PhotoUpload> {
+    const { data: authData, error: authError } = await sb().auth.getUser()
+    if (authError) throw new AppError(toUserMessage(authError, '無法讀取登入狀態'))
+    if (!authData.user) throw new AppError('尚未登入')
+
+    const me = await this.getCurrentUser()
+    if (!me) throw new AppError('找不到個人資料')
+
+    const photoType = assertPhotoType(input.photoType || 'unclassified')
+    const siteId = optionalUuid(input.siteId)
+    if (!siteId) {
+      throw new AppError('請先選擇工地，再上傳照片（工地檔案只顯示該工地）')
+    }
+    const mime = input.file.type || 'image/jpeg'
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg'
+    const path = `${me.organizationId}/${me.id}/${crypto.randomUUID()}.${ext}`
+
+    const { error: uploadError } = await sb().storage.from('site-photos').upload(path, input.file, {
+      contentType: mime,
+      upsert: false,
+    })
+    if (uploadError) {
+      throw new AppError(toUserMessage(uploadError, '無法上傳照片'))
+    }
+
+    const { data, error } = await sb()
+      .from('photo_uploads')
+      .insert({
+        organization_id: me.organizationId,
+        uploaded_by: me.id,
+        site_id: siteId,
+        photo_type: photoType,
+        storage_path: path,
+        content_type: mime,
+        byte_size: input.file.size,
+        source: 'app',
+        status: 'linked',
+      })
+      .select(
+        'id, organization_id, uploaded_by, site_id, photo_type, storage_path, content_type, byte_size, source, status, created_at',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法寫入照片紀錄'))
+
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      uploadedBy: String(data.uploaded_by),
+      siteId: data.site_id ? String(data.site_id) : null,
+      photoType: (data.photo_type as PhotoUpload['photoType']) ?? photoType,
+      storagePath: String(data.storage_path),
+      contentType: data.content_type ? String(data.content_type) : null,
+      byteSize: data.byte_size == null ? null : Number(data.byte_size),
+      source: String(data.source),
+      status: data.status as PhotoUpload['status'],
+      createdAt: String(data.created_at),
+    }
+  },
+
+  async listConstructionReports(siteId?: string): Promise<ConstructionReport[]> {
+    let query = sb()
+      .from('construction_reports')
+      .select('id, organization_id, site_id, author_id, body, photo_upload_id, created_at')
+      .order('created_at', { ascending: false })
+      .limit(100)
+    if (siteId) {
+      query = query.eq('site_id', requireUuid(siteId, '工地'))
+    }
+    const { data, error } = await query
+    if (error) throw new AppError(toUserMessage(error, '無法載入施工回報'))
+
+    const rows = data ?? []
+    const siteIds = [...new Set(rows.map((r) => String(r.site_id)))]
+    const authorIds = [...new Set(rows.map((r) => String(r.author_id)))]
+    const photoIds = rows
+      .map((r) => r.photo_upload_id as string | null)
+      .filter((id): id is string => Boolean(id))
+
+    const siteNames = new Map<string, string>()
+    if (siteIds.length > 0) {
+      const { data: sites } = await sb().from('sites').select('id, name').in('id', siteIds)
+      for (const s of sites ?? []) siteNames.set(String(s.id), String(s.name))
+    }
+
+    const authorNames = new Map<string, string>()
+    if (authorIds.length > 0) {
+      const { data: profiles } = await sb()
+        .from('profiles')
+        .select('id, name')
+        .in('id', authorIds)
+      for (const p of profiles ?? []) authorNames.set(String(p.id), String(p.name))
+    }
+
+    const photoPathById = new Map<string, string>()
+    if (photoIds.length > 0) {
+      const { data: photos } = await sb()
+        .from('photo_uploads')
+        .select('id, storage_path')
+        .in('id', photoIds)
+      for (const p of photos ?? []) {
+        photoPathById.set(String(p.id), String(p.storage_path))
+      }
+    }
+
+    const previewByPath = new Map<string, string>()
+    const paths = [...photoPathById.values()]
+    if (paths.length > 0) {
+      const { data: signed } = await sb()
+        .storage.from('site-photos')
+        .createSignedUrls(paths, 3600)
+      for (const item of signed ?? []) {
+        if (item.path && item.signedUrl) previewByPath.set(item.path, item.signedUrl)
+      }
+    }
+
+    return rows.map((row) => {
+      const photoId = row.photo_upload_id ? String(row.photo_upload_id) : null
+      const path = photoId ? photoPathById.get(photoId) : null
+      return {
+        id: String(row.id),
+        organizationId: String(row.organization_id),
+        siteId: String(row.site_id),
+        siteName: siteNames.get(String(row.site_id)),
+        authorId: String(row.author_id),
+        authorName: authorNames.get(String(row.author_id)),
+        body: String(row.body ?? ''),
+        photoUploadId: photoId,
+        photoPreviewUrl: path ? previewByPath.get(path) ?? null : null,
+        createdAt: String(row.created_at),
+      }
+    })
+  },
+
+  async createConstructionReport(input: {
+    siteId: string
+    body?: string
+    photoUploadId?: string | null
+  }): Promise<ConstructionReport> {
+    const me = await this.getCurrentUser()
+    if (!me) throw new AppError('尚未登入')
+
+    const body = (input.body ?? '').trim()
+    const photoUploadId = optionalUuid(input.photoUploadId)
+    if (!body && !photoUploadId) {
+      throw new AppError('請填寫文字或附上照片')
+    }
+
+    const { data, error } = await sb()
+      .from('construction_reports')
+      .insert({
+        organization_id: me.organizationId,
+        site_id: requireUuid(input.siteId, '工地'),
+        author_id: me.id,
+        body,
+        photo_upload_id: photoUploadId,
+      })
+      .select('id, organization_id, site_id, author_id, body, photo_upload_id, created_at')
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立施工回報'))
+
+    if (photoUploadId) {
+      await sb()
+        .from('photo_uploads')
+        .update({ site_id: requireUuid(input.siteId, '工地'), status: 'linked' })
+        .eq('id', photoUploadId)
+        .eq('status', 'pending')
+    }
+
+    return {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: String(data.site_id),
+      authorId: String(data.author_id),
+      authorName: me.name,
+      body: String(data.body ?? ''),
+      photoUploadId: data.photo_upload_id ? String(data.photo_upload_id) : null,
+      createdAt: String(data.created_at),
+    }
+  },
+
+  async createManualTodo(input: {
+    title: string
+    detail?: string
+    href?: string | null
+  }): Promise<void> {
+    const me = await this.getCurrentUser()
+    if (!me) throw new AppError('尚未登入')
+    const title = input.title.trim()
+    if (!title) throw new AppError('請填寫待辦標題')
+
+    const { error } = await sb().rpc('create_org_notices', {
+      p_recipient_ids: [me.id],
+      p_kind: 'todo',
+      p_title: title,
+      p_detail: input.detail?.trim() || '',
+      p_href: input.href ?? null,
+      p_as_todo: true,
+    })
+    if (error) throw new AppError(toUserMessage(error, '無法新增待辦'))
+  },
+
+  async createAssignedTodo(
+    actor: AppUser,
+    input: {
+      title: string
+      detail?: string
+      href?: string | null
+      assigneeUserId: string
+    },
+  ): Promise<void> {
+    const title = input.title.trim()
+    if (!title) throw new AppError('請填寫待辦標題')
+    const assignee = requireUuid(input.assigneeUserId, '指派對象')
+    const { error } = await sb().rpc('create_org_notices', {
+      p_recipient_ids: [assignee],
+      p_kind: 'todo',
+      p_title: title,
+      p_detail: input.detail?.trim() || `由 ${actor.name} 指派`,
+      p_href: input.href ?? '/todos',
+      p_as_todo: true,
+    })
+    if (error) throw new AppError(toUserMessage(error, '無法指派待辦'))
+    await this.appendAuditLog(actor, {
+      action: 'todo.assign',
+      targetType: 'todo',
+      targetId: assignee,
+      after: { title, assigneeUserId: assignee },
+    })
+  },
+
+  async appendAuditLog(
+    actor: AppUser,
+    input: {
+      action: AuditAction | string
+      targetType: string
+      targetId: string
+      before?: unknown
+      after?: unknown
+      result?: 'ok' | 'error'
+      message?: string
+    },
+  ): Promise<void> {
+    await sb().from('audit_logs').insert({
+      action: input.action,
+      actor_id: actor.id,
+      actor_name: actor.name,
+      target_type: input.targetType,
+      target_id: input.targetId,
+      before_json: input.before == null ? null : JSON.stringify(input.before),
+      after_json: input.after == null ? null : JSON.stringify(input.after),
+      result: input.result || 'ok',
+      message: input.message || null,
+    })
+  },
+
+  async listAuditLogs(): Promise<AuditLogEntry[]> {
+    const { data, error } = await sb()
+      .from('audit_logs')
+      .select(
+        'id, organization_id, action, actor_id, actor_name, target_type, target_id, before_json, after_json, result, message, created_at',
+      )
+      .order('created_at', { ascending: false })
+      .limit(80)
+    if (error) throw new AppError(toUserMessage(error, '無法載入操作紀錄'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      action: String(row.action),
+      actorId: String(row.actor_id),
+      actorName: String(row.actor_name),
+      targetType: String(row.target_type),
+      targetId: String(row.target_id),
+      beforeJson: (row.before_json as string | null) ?? null,
+      afterJson: (row.after_json as string | null) ?? null,
+      result: row.result as 'ok' | 'error',
+      message: (row.message as string | null) ?? null,
+      createdAt: String(row.created_at),
+    }))
+  },
+
+  async getOrgSpendSettings(actor: AppUser): Promise<OrgSpendSettings> {
+    const { data, error } = await sb()
+      .from('org_spend_settings')
+      .select(
+        'organization_id, report_review_threshold_ntd, emergency_single_limit_ntd, emergency_daily_limit_ntd, daily_purchase_limit_ntd, updated_at, updated_by',
+      )
+      .eq('organization_id', actor.organizationId)
+      .maybeSingle()
+    if (error) {
+      throw new AppError(toUserMessage(error, '無法讀取額度設定'))
+    }
+    if (!data) {
+      return defaultOrgSpendSettings(actor.organizationId)
+    }
+    return {
+      organizationId: String(data.organization_id),
+      reportReviewThresholdNtd: Number(data.report_review_threshold_ntd),
+      emergencySingleLimitNtd: Number(data.emergency_single_limit_ntd),
+      emergencyDailyLimitNtd: Number(data.emergency_daily_limit_ntd),
+      dailyPurchaseLimitNtd: Number(data.daily_purchase_limit_ntd),
+      updatedAt: String(data.updated_at),
+      updatedBy: (data.updated_by as string | null) ?? null,
+    }
+  },
+
+  async updateOrgSpendSettings(
+    actor: AppUser,
+    input: {
+      reportReviewThresholdNtd: number
+      emergencySingleLimitNtd: number
+      emergencyDailyLimitNtd: number
+      dailyPurchaseLimitNtd: number
+    },
+  ): Promise<OrgSpendSettings> {
+    if (!isBossLike(actor)) {
+      throw new AppError('僅老闆可設定額度')
+    }
+    const next = assertSpendSettingsInput(input)
+    const payload = {
+      organization_id: actor.organizationId,
+      report_review_threshold_ntd: next.reportReviewThresholdNtd,
+      emergency_single_limit_ntd: next.emergencySingleLimitNtd,
+      emergency_daily_limit_ntd: next.emergencyDailyLimitNtd,
+      daily_purchase_limit_ntd: next.dailyPurchaseLimitNtd,
+      updated_at: new Date().toISOString(),
+      updated_by: actor.id,
+    }
+    const { data, error } = await sb()
+      .from('org_spend_settings')
+      .upsert(payload, { onConflict: 'organization_id' })
+      .select(
+        'organization_id, report_review_threshold_ntd, emergency_single_limit_ntd, emergency_daily_limit_ntd, daily_purchase_limit_ntd, updated_at, updated_by',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法儲存額度設定'))
+    const row: OrgSpendSettings = {
+      organizationId: String(data.organization_id),
+      reportReviewThresholdNtd: Number(data.report_review_threshold_ntd),
+      emergencySingleLimitNtd: Number(data.emergency_single_limit_ntd),
+      emergencyDailyLimitNtd: Number(data.emergency_daily_limit_ntd),
+      dailyPurchaseLimitNtd: Number(data.daily_purchase_limit_ntd),
+      updatedAt: String(data.updated_at),
+      updatedBy: (data.updated_by as string | null) ?? null,
+    }
+    await this.appendAuditLog(actor, {
+      action: 'permission.update',
+      targetType: 'org_spend_settings',
+      targetId: actor.organizationId,
+      after: row,
+    })
+    return row
+  },
+
+  async listExpenseReports(actor: AppUser): Promise<ExpenseReport[]> {
+    let q = sb()
+      .from('expense_reports')
+      .select(
+        'id, organization_id, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
+      )
+    if (!isBossLike(actor)) q = q.eq('reported_by', actor.id)
+    const { data, error } = await q.order('reported_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入支出'))
+    return (data ?? []).map((row) => ({
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      siteId: row.site_id ? String(row.site_id) : null,
+      siteName: String(row.site_name),
+      locationText: (row.location_text as string | null) ?? null,
+      item: String(row.item),
+      amount: Number(row.amount),
+      note: (row.note as string | null) ?? null,
+      receiptPhotoPath: (row.receipt_photo_path as string | null) ?? null,
+      status: row.status as ExpenseReport['status'],
+      reportedBy: String(row.reported_by),
+      reportedByName: String(row.reported_by_name),
+      reportedAt: String(row.reported_at),
+      reviewedBy: (row.reviewed_by as string | null) ?? null,
+      reviewedAt: (row.reviewed_at as string | null) ?? null,
+      reviewNote: (row.review_note as string | null) ?? null,
+    }))
+  },
+
+  async uploadReceiptPhoto(input: {
+    file: File
+    siteId?: string | null
+  }): Promise<string> {
+    const me = await this.getCurrentUser()
+    if (!me) throw new AppError('尚未登入')
+    const siteId = input.siteId ? requireUuid(input.siteId, '工地') : null
+    const mime = input.file.type || 'image/jpeg'
+    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg'
+    const path = `${me.organizationId}/${me.id}/receipt-${crypto.randomUUID()}.${ext}`
+    const { error: uploadError } = await sb()
+      .storage.from('site-photos')
+      .upload(path, input.file, { contentType: mime, upsert: false })
+    if (uploadError) {
+      throw new AppError(toUserMessage(uploadError, '無法上傳收據照片'))
+    }
+    await sb().from('photo_uploads').insert({
+      organization_id: me.organizationId,
+      uploaded_by: me.id,
+      site_id: siteId,
+      photo_type: 'unclassified',
+      storage_path: path,
+      content_type: mime,
+      byte_size: input.file.size,
+      source: 'app-receipt',
+      status: siteId ? 'linked' : 'pending',
+    })
+    return path
+  },
+
+  async createExpenseReport(
+    actor: AppUser,
+    input: {
+      siteId?: string | null
+      item: string
+      amount: number
+      note?: string | null
+      locationText?: string | null
+      receiptPhotoPath?: string | null
+      misc?: boolean
+    },
+  ): Promise<ExpenseReport> {
+    let target = resolveFieldCashTarget({
+      siteId: input.siteId,
+      locationText: input.locationText,
+      misc: input.misc,
+    })
+    if (!target.isMisc) {
+      const siteId = requireUuid(target.siteId, '工地')
+      const sites = await this.listSites(actor)
+      const site = sites.find((s) => s.id === siteId)
+      if (!site) throw new AppError('找不到工地／案件')
+      target = { ...target, siteId: site.id, siteName: site.name }
+    }
+    const amount = assertPositiveMoney(input.amount, '支出金額')
+    const settings = await this.getOrgSpendSettings(actor)
+    const needsReview = requiresBossReview(
+      amount,
+      settings.reportReviewThresholdNtd,
+    )
+    const now = new Date().toISOString()
+    const { data, error } = await sb()
+      .from('expense_reports')
+      .insert({
+        site_id: target.siteId,
+        site_name: target.siteName,
+        location_text: target.locationText,
+        item: assertExpenseItem(input.item),
+        amount,
+        note: input.note?.trim() || null,
+        receipt_photo_path: input.receiptPhotoPath?.trim() || null,
+        status: needsReview ? 'pending_review' : 'confirmed',
+        reported_by: actor.id,
+        reported_by_name: actor.name,
+        reviewed_by: needsReview ? null : actor.id,
+        reviewed_at: needsReview ? null : now,
+        review_note: needsReview
+          ? null
+          : `小額免審（門檻 NT$${settings.reportReviewThresholdNtd.toLocaleString()}）`,
+      })
+      .select(
+        'id, organization_id, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法建立支出'))
+    const row = {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: data.site_id ? String(data.site_id) : null,
+      siteName: String(data.site_name),
+      locationText: (data.location_text as string | null) ?? null,
+      item: String(data.item),
+      amount: Number(data.amount),
+      note: (data.note as string | null) ?? null,
+      receiptPhotoPath: (data.receipt_photo_path as string | null) ?? null,
+      status: data.status as ExpenseReport['status'],
+      reportedBy: String(data.reported_by),
+      reportedByName: String(data.reported_by_name),
+      reportedAt: String(data.reported_at),
+      reviewedBy: (data.reviewed_by as string | null) ?? null,
+      reviewedAt: (data.reviewed_at as string | null) ?? null,
+      reviewNote: (data.review_note as string | null) ?? null,
+    }
+    await this.appendAuditLog(actor, {
+      action: 'expense.create',
+      targetType: 'expense_report',
+      targetId: row.id,
+      after: row,
+    })
+    return row
+  },
+
+  async reviewExpenseReport(
+    actor: AppUser,
+    input: {
+      id: string
+      decision: 'confirm' | 'return' | 'cancel'
+      note?: string | null
+    },
+  ): Promise<ExpenseReport> {
+    const id = requireUuid(input.id, '支出')
+    const current = (await this.listExpenseReports(actor)).find((e) => e.id === id)
+    if (!current) throw new AppError('找不到支出回報')
+    assertBossFinalize({
+      actorRole: permissionRoleOf(actor),
+      actorId: actor.id,
+      reporterId: current.reportedBy,
+    })
+    assertCanReviewExpense(current.status)
+    const status =
+      input.decision === 'confirm'
+        ? 'confirmed'
+        : input.decision === 'return'
+          ? 'returned'
+          : 'cancelled'
+    const { data, error } = await sb()
+      .from('expense_reports')
+      .update({
+        status,
+        reviewed_by: actor.id,
+        reviewed_at: new Date().toISOString(),
+        review_note: input.note?.trim() || null,
+      })
+      .eq('id', id)
+      .select(
+        'id, organization_id, site_id, site_name, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法審核支出'))
+    const row = {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: String(data.site_id),
+      siteName: String(data.site_name),
+      item: String(data.item),
+      amount: Number(data.amount),
+      note: (data.note as string | null) ?? null,
+      receiptPhotoPath: (data.receipt_photo_path as string | null) ?? null,
+      status: data.status as ExpenseReport['status'],
+      reportedBy: String(data.reported_by),
+      reportedByName: String(data.reported_by_name),
+      reportedAt: String(data.reported_at),
+      reviewedBy: (data.reviewed_by as string | null) ?? null,
+      reviewedAt: (data.reviewed_at as string | null) ?? null,
+      reviewNote: (data.review_note as string | null) ?? null,
+    }
+    await this.appendAuditLog(actor, {
+      action:
+        input.decision === 'confirm'
+          ? 'expense.confirm'
+          : input.decision === 'return'
+            ? 'expense.return'
+            : 'expense.cancel',
+      targetType: 'expense_report',
+      targetId: row.id,
+      before: current,
+      after: row,
+    })
+    if (input.decision === 'return' || input.decision === 'cancel') {
+      const reason = input.note?.trim() || ''
+      void safeNotify({
+        recipientIds: [current.reportedBy],
+        eventType:
+          input.decision === 'return' ? 'expense.returned' : 'expense.cancelled',
+        title:
+          input.decision === 'return'
+            ? `支出已退回修改：${current.item}`
+            : `支出已取消（作廢）：${current.item}`,
+        detail: `NT$${current.amount.toLocaleString()} · ${current.siteName}${reason ? ` · ${reason}` : ''}`,
+        href: '/expenses',
+        asTodo: input.decision === 'return',
+      })
+    }
+    return row
+  },
+
+  async cancelExpenseReport(
+    actor: AppUser,
+    input: { id: string; note?: string | null },
+  ): Promise<ExpenseReport> {
+    assertBossCancelFinance(permissionRoleOf(actor))
+    const id = requireUuid(input.id, '支出')
+    const current = (await this.listExpenseReports(actor)).find((e) => e.id === id)
+    if (!current) throw new AppError('找不到支出回報')
+    assertCanCancelExpense(current.status)
+    const note =
+      input.note?.trim() ||
+      (current.status === 'confirmed' ? '老闆刪除已確認支出' : '老闆刪除支出')
+    const { data, error } = await sb()
+      .from('expense_reports')
+      .update({
+        status: 'cancelled',
+        reviewed_by: actor.id,
+        reviewed_at: new Date().toISOString(),
+        review_note: note,
+      })
+      .eq('id', id)
+      .select(
+        'id, organization_id, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法刪除支出'))
+    const row: ExpenseReport = {
+      id: String(data.id),
+      organizationId: String(data.organization_id),
+      siteId: data.site_id ? String(data.site_id) : null,
+      siteName: String(data.site_name),
+      locationText: (data.location_text as string | null) ?? null,
+      item: String(data.item),
+      amount: Number(data.amount),
+      note: (data.note as string | null) ?? null,
+      receiptPhotoPath: (data.receipt_photo_path as string | null) ?? null,
+      status: data.status as ExpenseReport['status'],
+      reportedBy: String(data.reported_by),
+      reportedByName: String(data.reported_by_name),
+      reportedAt: String(data.reported_at),
+      reviewedBy: (data.reviewed_by as string | null) ?? null,
+      reviewedAt: (data.reviewed_at as string | null) ?? null,
+      reviewNote: (data.review_note as string | null) ?? null,
+    }
+    await this.appendAuditLog(actor, {
+      action: 'expense.cancel',
+      targetType: 'expense_report',
+      targetId: row.id,
+      before: current,
+      after: row,
+    })
+    void safeNotify({
+      recipientIds: [current.reportedBy],
+      eventType: 'expense.cancelled',
+      title: `支出已取消（作廢）：${current.item}`,
+      detail: `NT$${current.amount.toLocaleString()} · ${current.siteName} · ${note}`,
+      href: '/expenses',
+      asTodo: false,
+    })
+    return row
+  },
+
+  /** Permanently remove a cancelled expense (boss only). */
+  async purgeExpenseReport(
+    actor: AppUser,
+    input: { id: string },
+  ): Promise<void> {
+    assertBossCancelFinance(permissionRoleOf(actor))
+    const id = requireUuid(input.id, '支出')
+    const current = (await this.listExpenseReports(actor)).find((e) => e.id === id)
+    if (!current) throw new AppError('找不到支出回報')
+    if (current.status !== 'cancelled') {
+      throw new AppError('僅已取消（作廢）的支出可永久刪除')
+    }
+    const { error } = await sb().from('expense_reports').delete().eq('id', id)
+    if (error) throw new AppError(toUserMessage(error, '無法永久刪除支出'))
+    await this.appendAuditLog(actor, {
+      action: 'expense.cancel',
+      targetType: 'expense_report',
+      targetId: id,
+      before: current,
+      after: { purged: true },
+      message: '永久刪除已作廢支出',
+    })
+  },
+
+  async listEmployeeAdvances(actor: AppUser): Promise<EmployeeAdvance[]> {
+    let q = sb()
+      .from('employee_advances')
+      .select(
+        'id, organization_id, employee_id, employee_name, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_at, settled_at, settled_by, expense_report_id',
+      )
+      .order('reported_at', { ascending: false })
+      .limit(200)
+    if (!isBossLike(actor)) {
+      q = q.eq('employee_id', actor.id)
+    }
+    const { data, error } = await q
+    if (error) throw new AppError(toUserMessage(error, '無法載入代墊'))
+    return (data ?? []).map((row) => mapEmployeeAdvance(row))
+  },
+
+  async createEmployeeAdvance(
+    actor: AppUser,
+    input: {
+      siteId?: string | null
+      item: string
+      amount: number
+      note?: string | null
+      locationText?: string | null
+      receiptPhotoPath?: string | null
+      misc?: boolean
+    },
+  ): Promise<EmployeeAdvance> {
+    let target = resolveFieldCashTarget({
+      siteId: input.siteId,
+      locationText: input.locationText,
+      misc: input.misc,
+    })
+    if (!target.isMisc) {
+      const siteId = requireUuid(target.siteId, '工地')
+      const sites = await this.listSites(actor)
+      const site = sites.find((s) => s.id === siteId)
+      if (!site) throw new AppError('找不到工地／案件')
+      target = { ...target, siteId: site.id, siteName: site.name }
+    }
+    const amount = assertPositiveMoney(input.amount, '代墊金額')
+    const { data, error } = await sb()
+      .from('employee_advances')
+      .insert({
+        employee_id: actor.id,
+        employee_name: actor.name,
+        site_id: target.siteId,
+        site_name: target.siteName,
+        location_text: target.locationText,
+        item: assertAdvanceItem(input.item),
+        amount,
+        note: input.note?.trim() || null,
+        receipt_photo_path: input.receiptPhotoPath?.trim() || null,
+        status: 'open',
+      })
+      .select(
+        'id, organization_id, employee_id, employee_name, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_at, settled_at, settled_by, expense_report_id',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法登記代墊'))
+    const row = mapEmployeeAdvance(data)
+    await this.appendAuditLog(actor, {
+      action: 'advance.create',
+      targetType: 'employee_advance',
+      targetId: row.id,
+      after: row,
+    })
+    return row
+  },
+
+  async batchSettleEmployeeAdvances(
+    actor: AppUser,
+    input: { advanceIds: string[]; note?: string | null },
+  ): Promise<{ expense: ExpenseReport; advances: EmployeeAdvance[] }> {
+    assertCanSettleAdvances({
+      actorRole: permissionRoleOf(actor),
+      selectedIds: input.advanceIds,
+    })
+    const ids = input.advanceIds.map((id) => requireUuid(id, '代墊'))
+    const all = await this.listEmployeeAdvances(actor)
+    const selected = all.filter((a) => ids.includes(a.id) && a.status === 'open')
+    if (selected.length === 0) throw new AppError('沒有可核銷的代墊')
+    const total = selected.reduce((s, a) => s + a.amount, 0)
+    const names = [...new Set(selected.map((a) => a.employeeName))].join('、')
+    const now = new Date().toISOString()
+    const { data: expData, error: expError } = await sb()
+      .from('expense_reports')
+      .insert({
+        site_id: null,
+        site_name: '代墊核銷',
+        location_text: null,
+        item: buildSettleExpenseItem(selected.length),
+        amount: total,
+        note:
+          input.note?.trim() ||
+          `核銷 ${selected.length} 筆代墊（${names}）`,
+        receipt_photo_path: null,
+        status: 'confirmed',
+        reported_by: actor.id,
+        reported_by_name: actor.name,
+        reviewed_by: actor.id,
+        reviewed_at: now,
+        review_note: '代墊批量核銷',
+      })
+      .select(
+        'id, organization_id, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_by, reported_by_name, reported_at, reviewed_by, reviewed_at, review_note',
+      )
+      .single()
+    if (expError) {
+      throw new AppError(toUserMessage(expError, '無法建立核銷支出'))
+    }
+    const expense: ExpenseReport = {
+      id: String(expData.id),
+      organizationId: String(expData.organization_id),
+      siteId: expData.site_id ? String(expData.site_id) : null,
+      siteName: String(expData.site_name),
+      locationText: (expData.location_text as string | null) ?? null,
+      item: String(expData.item),
+      amount: Number(expData.amount),
+      note: (expData.note as string | null) ?? null,
+      receiptPhotoPath: (expData.receipt_photo_path as string | null) ?? null,
+      status: expData.status as ExpenseReport['status'],
+      reportedBy: String(expData.reported_by),
+      reportedByName: String(expData.reported_by_name),
+      reportedAt: String(expData.reported_at),
+      reviewedBy: (expData.reviewed_by as string | null) ?? null,
+      reviewedAt: (expData.reviewed_at as string | null) ?? null,
+      reviewNote: (expData.review_note as string | null) ?? null,
+    }
+
+    const { error: updError } = await sb()
+      .from('employee_advances')
+      .update({
+        status: 'settled',
+        settled_at: now,
+        settled_by: actor.id,
+        expense_report_id: expense.id,
+      })
+      .in(
+        'id',
+        selected.map((a) => a.id),
+      )
+      .eq('status', 'open')
+    if (updError) {
+      throw new AppError(toUserMessage(updError, '代墊核銷狀態更新失敗'))
+    }
+
+    const advances = (await this.listEmployeeAdvances(actor)).filter((a) =>
+      selected.some((s) => s.id === a.id),
+    )
+    await this.appendAuditLog(actor, {
+      action: 'advance.settle',
+      targetType: 'employee_advance',
+      targetId: expense.id,
+      after: { expenseId: expense.id, advanceIds: selected.map((a) => a.id), total },
+    })
+    return { expense, advances }
+  },
+
+  async cancelEmployeeAdvance(
+    actor: AppUser,
+    input: { id: string; note?: string | null },
+  ): Promise<EmployeeAdvance> {
+    const id = requireUuid(input.id, '代墊')
+    const current = (await this.listEmployeeAdvances(actor)).find((a) => a.id === id)
+    if (!current) throw new AppError('找不到代墊')
+    assertCanCancelAdvance({ actorRole: permissionRoleOf(actor), status: current.status })
+
+    if (current.status === 'settled' && current.expenseReportId) {
+      const linked = (await this.listExpenseReports(actor)).find(
+        (e) => e.id === current.expenseReportId,
+      )
+      if (linked && linked.status !== 'cancelled') {
+        await this.cancelExpenseReport(actor, {
+          id: linked.id,
+          note: input.note?.trim() || '取消代墊核銷連帶取消支出',
+        })
+      }
+    }
+
+    const { data, error } = await sb()
+      .from('employee_advances')
+      .update({
+        status: 'cancelled',
+        note:
+          input.note?.trim() ||
+          current.note ||
+          (current.status === 'settled' ? '老闆取消已核銷代墊' : '老闆取消代墊'),
+      })
+      .eq('id', id)
+      .select(
+        'id, organization_id, employee_id, employee_name, site_id, site_name, location_text, item, amount, note, receipt_photo_path, status, reported_at, settled_at, settled_by, expense_report_id',
+      )
+      .single()
+    if (error) throw new AppError(toUserMessage(error, '無法取消代墊'))
+    const row = mapEmployeeAdvance(data)
+    await this.appendAuditLog(actor, {
+      action: 'advance.cancel',
+      targetType: 'employee_advance',
+      targetId: row.id,
+      before: current,
+      after: row,
+    })
+    return row
+  },
+
+  async listCashReceipts(actor: AppUser): Promise<CashReceiptReport[]> {
+    let q = sb()
+      .from('cash_receipt_reports')
+      .select(CASH_RECEIPT_SELECT)
+    if (!isBossLike(actor)) q = q.eq('reported_by', actor.id)
+    const { data, error } = await q.order('reported_at', { ascending: false })
+    if (error) throw new AppError(toUserMessage(error, '無法載入收款'))
+    return (data ?? []).map((row) => mapCashReceiptRow(row))
+  },
+
+  async createCashReceipt(
+    actor: AppUser,
+    input: {
+      siteId?: string | null
+      amount: number
+      sourceNote?: string | null
+      locationText?: string | null
+      proofPhotoPath?: string | null
+      misc?: boolean
+      quotationId?: string | null
+      receivedOn?: string | null
+    },
+  ): Promise<CashReceiptReport> {
+    let target = resolveFieldCashTarget({
+      siteId: input.siteId,
+      locationText: input.locationText,
+      misc: input.misc,
+    })
+    if (!target.isMisc) {
+      const siteId = requireUuid(target.siteId, '工地')
+      const sites = await this.listSites(actor)
+      const site = sites.find((s) => s.id === siteId)
+      if (!site) throw new AppError('找不到工地／案件')
+      target = { ...target, siteId: site.id, siteName: site.name }
+    }
+    let quotationId: string | null = null
+    if (input.quotationId?.trim()) {
+      quotationId = requireUuid(input.quotationId, '報價')
+      const quotes = await this.listQuotations()
+      const q = quotes.find((x) => x.id === quotationId)
+      if (!q || q.deletedAt) throw new AppError('找不到報價')
+      if (target.siteId && q.projectId && q.projectId !== target.siteId) {
+        throw new AppError('報價不屬於此工地')
+      }
+    }
+    const receivedOn =
+      (input.receivedOn && /^\d{4}-\d{2}-\d{2}$/.test(input.receivedOn)
+        ? input.receivedOn
         : null) || taipeiDateString()
     const { data, error } = await sb()
       .from('cash_receipt_reports')
