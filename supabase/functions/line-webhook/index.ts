@@ -2310,6 +2310,13 @@ async function getOpenAttendance(
   clock_in_at: string
   site_id: string | null
 } | null> {
+  const { error: autoCloseError } = await admin.rpc(
+    'auto_close_expired_attendance',
+    { p_user_id: userId },
+  )
+  if (autoCloseError) {
+    console.warn('[line-webhook] attendance auto-close failed', autoCloseError.message)
+  }
   const { data, error } = await admin
     .from('attendance')
     .select('id, clock_in_at, site_id')
