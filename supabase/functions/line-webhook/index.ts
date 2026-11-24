@@ -1992,6 +1992,22 @@ function formatTaipeiTime(iso: string): string {
   }
 }
 
+function taipeiDateKey(iso: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(iso))
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? ''
+  return `${value('year')}-${value('month')}-${value('day')}`
+}
+
+function taipeiDayEndIso(iso: string): string {
+  return new Date(`${taipeiDateKey(iso)}T23:59:59+08:00`).toISOString()
+}
+
 function extractBindCode(text: string): string | null {
   const normalized = text
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
@@ -2309,22 +2325,33 @@ async function getOpenAttendance(
   id: string
   clock_in_at: string
   site_id: string | null
+  note: string | null
 } | null> {
-  const { error: autoCloseError } = await admin.rpc(
-    'auto_close_expired_attendance',
-    { p_user_id: userId },
-  )
-  if (autoCloseError) {
-    console.warn('[line-webhook] attendance auto-close failed', autoCloseError.message)
-  }
   const { data, error } = await admin
     .from('attendance')
-    .select('id, clock_in_at, site_id')
+    .select('id, clock_in_at, site_id, note')
     .eq('user_id', userId)
     .eq('status', 'clocked_in')
     .maybeSingle()
   if (error) {
     console.warn('[line-webhook] open attendance failed', error.message)
+    return null
+  }
+
+  if (data && taipeiDateKey(data.clock_in_at) < taipeiDateKey(new Date().toISOString())) {
+    const { error: closeError } = await admin
+      .from('attendance')
+      .update({
+        status: 'clocked_out',
+        clock_out_at: taipeiDayEndIso(data.clock_in_at),
+        note: `${data.note ? `${data.note} ` : ''}[跨日自動下班]`,
+      })
+      .eq('id', data.id)
+      .eq('user_id', userId)
+      .eq('status', 'clocked_in')
+    if (closeError) {
+      console.warn('[line-webhook] attendance auto-close failed', closeError.message)
+    }
     return null
   }
   return data
