@@ -4274,22 +4274,17 @@ alter table public.attendance
     or clock_out_at <= public.attendance_day_end(clock_in_at)
   );
 
-create or replace function public.auto_close_expired_attendance(
-  p_user_id uuid default null
-)
+create or replace function public.auto_close_my_expired_attendance()
 returns integer
 language plpgsql
-security definer
+security invoker
 set search_path = public
 as $$
 declare
-  v_target_user uuid;
   v_closed integer := 0;
 begin
-  if auth.role() = 'authenticated' then
-    v_target_user := auth.uid();
-  else
-    v_target_user := p_user_id;
+  if (select auth.uid()) is null then
+    raise exception 'authentication required';
   end if;
 
   update public.attendance
@@ -4299,19 +4294,46 @@ begin
   where status = 'clocked_in'
     and (clock_in_at at time zone 'Asia/Taipei')::date
         < (now() at time zone 'Asia/Taipei')::date
-    and (v_target_user is null or user_id = v_target_user);
+    and user_id = (select auth.uid());
 
   get diagnostics v_closed = row_count;
   return v_closed;
 end;
 $$;
 
-revoke all on function public.auto_close_expired_attendance(uuid) from public;
-grant execute on function public.auto_close_expired_attendance(uuid)
-  to authenticated, service_role;
+revoke all on function public.auto_close_my_expired_attendance() from public;
+grant execute on function public.auto_close_my_expired_attendance()
+  to authenticated;
 
-comment on function public.auto_close_expired_attendance(uuid) is
-  'Close stale attendance shifts at 23:59:59 of their Asia/Taipei clock-in day.';
+comment on function public.auto_close_my_expired_attendance() is
+  'Close the signed-in user stale shift at 23:59:59 of its Taipei clock-in day.';
+
+create schema if not exists private;
+revoke all on schema private from public, anon, authenticated;
+
+create or replace function private.auto_close_expired_attendance()
+returns integer
+language plpgsql
+security invoker
+set search_path = public, private
+as $$
+declare
+  v_closed integer := 0;
+begin
+  update public.attendance
+  set status = 'clocked_out',
+      clock_out_at = public.attendance_day_end(clock_in_at),
+      note = trim(coalesce(note, '') || ' [跨日自動下班]')
+  where status = 'clocked_in'
+    and (clock_in_at at time zone 'Asia/Taipei')::date
+        < (now() at time zone 'Asia/Taipei')::date;
+
+  get diagnostics v_closed = row_count;
+  return v_closed;
+end;
+$$;
+
+revoke all on function private.auto_close_expired_attendance() from public;
 
 create extension if not exists pg_cron with schema pg_catalog;
 grant usage on schema cron to postgres;
@@ -4332,7 +4354,7 @@ begin
   perform cron.schedule(
     'attendance-auto-close-taipei',
     '0 16 * * *',
-    'select public.auto_close_expired_attendance(null);'
+    'select private.auto_close_expired_attendance();'
   );
 end;
 $$;
