@@ -132,10 +132,7 @@ const LINE_BRAND = {
 } as const
 
 function lineTheme(profile?: Profile) {
-  const admin =
-    profile?.role === 'boss' ||
-    profile?.role === 'owner' ||
-    profile?.access_template === 'owner'
+  const admin = isBossEquivalentProfile(profile)
   return admin ? LINE_BRAND.admin : LINE_BRAND.staff
 }
 
@@ -235,11 +232,7 @@ async function handleEvent(
   const lineUserId = String(event.source?.userId ?? '').trim()
 
   if (event.type === 'follow') {
-    return [
-      textMsg(
-        '歡迎加入工程管家。\n請用下方圖文選單操作。\n首次請到網站「個人中心」綁定 LINE。',
-      ),
-    ]
+    return [await buildRoleImagemap(admin, lineUserId)]
   }
 
   if (event.type === 'postback') {
@@ -268,7 +261,19 @@ async function handleEvent(
 
   const bindCode = extractBindCode(text)
   if (bindCode) {
-    return [textMsg(await handleBind(admin, bindCode, lineUserId))]
+    const result = await handleBind(admin, bindCode, lineUserId)
+    if (result.startsWith('綁定成功')) {
+      return [textMsg(result), await buildRoleImagemap(admin, lineUserId)]
+    }
+    return [textMsg(result)]
+  }
+
+  if (isBindingHelpRequest(text)) {
+    return [bindingHelpMessage()]
+  }
+
+  if (isImagemapPanelRequest(text)) {
+    return [await buildRoleImagemap(admin, lineUserId)]
   }
 
   // Quote cases: view-only (list / detail / export link) — no LINE editor
@@ -1189,6 +1194,153 @@ async function buildTodosMessages(admin: Sb, profile: Profile): Promise<LineMess
 function appBaseUrl(): string {
   const fromEnv = (Deno.env.get('APP_BASE_URL') ?? '').trim().replace(/\/$/, '')
   return fromEnv || 'https://plumber-electrician-seven.vercel.app'
+}
+
+type ImagemapPanel = 'staff' | 'manager' | 'binding'
+
+type ImagemapArea = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+function isBossEquivalentProfile(profile?: Profile | null): boolean {
+  if (!profile) return false
+  return (
+    profile.role === 'boss' ||
+    profile.role === 'owner' ||
+    profile.access_template === 'owner'
+  )
+}
+
+function isImagemapPanelRequest(text: string): boolean {
+  return /^(功能選單|功能面板|工作面板|師傅工作面板|管理面板|開啟選單|選單)$/u.test(
+    text.trim(),
+  )
+}
+
+function isBindingHelpRequest(text: string): boolean {
+  return /^(帳號綁定教學|綁定教學|如何綁定|LINE 綁定教學)$/iu.test(text.trim())
+}
+
+function sixImagemapAreas(): ImagemapArea[] {
+  return [
+    { x: 0, y: 0, width: 346, height: 520 },
+    { x: 346, y: 0, width: 346, height: 520 },
+    { x: 692, y: 0, width: 348, height: 520 },
+    { x: 0, y: 520, width: 346, height: 520 },
+    { x: 346, y: 520, width: 346, height: 520 },
+    { x: 692, y: 520, width: 348, height: 520 },
+  ]
+}
+
+function imagemapBaseUrl(panel: ImagemapPanel): string {
+  return `${appBaseUrl()}/line/imagemap/${panel}`
+}
+
+function staffImagemap(): LineMessage {
+  const areas = sixImagemapAreas()
+  const messages = ['上傳照片', '出勤打卡', '紀錄地點', '新增記帳', '待辦事項']
+  const actions: Record<string, unknown>[] = messages.map((text, index) => ({
+    type: 'message',
+    label: text,
+    text,
+    area: areas[index],
+  }))
+  actions.push({
+    type: 'uri',
+    label: '個人中心',
+    linkUri: `${appBaseUrl()}/profile`,
+    area: areas[5],
+  })
+  return {
+    type: 'imagemap',
+    baseUrl: imagemapBaseUrl('staff'),
+    altText: '師傅工作面板：上傳照片、出勤打卡、紀錄地點、新增記帳、待辦事項、個人中心',
+    baseSize: { width: 1040, height: 1040 },
+    actions,
+  }
+}
+
+function managerImagemap(): LineMessage {
+  const areas = sixImagemapAreas()
+  const links = [
+    ['申請審核', '/notifications'],
+    ['團隊出勤', '/team'],
+    ['工地管理', '/sites'],
+    ['工程收支', '/expenses'],
+    ['報價管理', '/quotes'],
+    ['薪資管理', '/salary'],
+  ] as const
+  return {
+    type: 'imagemap',
+    baseUrl: imagemapBaseUrl('manager'),
+    altText: '管理面板：申請審核、團隊出勤、工地管理、工程收支、報價管理、薪資管理',
+    baseSize: { width: 1040, height: 1040 },
+    actions: links.map(([label, path], index) => ({
+      type: 'uri',
+      label,
+      linkUri: `${appBaseUrl()}${path}`,
+      area: areas[index],
+    })),
+  }
+}
+
+function bindingImagemap(): LineMessage {
+  return {
+    type: 'imagemap',
+    baseUrl: imagemapBaseUrl('binding'),
+    altText: '帳號尚未綁定：綁定帳號、查看綁定教學或進入工程管家網站',
+    baseSize: { width: 1040, height: 1040 },
+    actions: [
+      {
+        type: 'uri',
+        label: '綁定帳號',
+        linkUri: `${appBaseUrl()}/profile`,
+        area: { x: 0, y: 0, width: 1040, height: 520 },
+      },
+      {
+        type: 'message',
+        label: '綁定教學',
+        text: '帳號綁定教學',
+        area: { x: 0, y: 520, width: 1040, height: 260 },
+      },
+      {
+        type: 'uri',
+        label: '進入網站',
+        linkUri: appBaseUrl(),
+        area: { x: 0, y: 780, width: 1040, height: 260 },
+      },
+    ],
+  }
+}
+
+async function buildRoleImagemap(
+  admin: Sb | null,
+  lineUserId: string,
+): Promise<LineMessage> {
+  if (!admin || !lineUserId) return bindingImagemap()
+  const profile = await requireProfile(admin, lineUserId)
+  if ('error' in profile) return bindingImagemap()
+  return isBossEquivalentProfile(profile) ? managerImagemap() : staffImagemap()
+}
+
+function bindingHelpMessage(): LineMessage {
+  return flexMenu({
+    altText: 'LINE 帳號綁定教學',
+    eyebrow: '帳號綁定教學',
+    title: '四個步驟完成綁定',
+    body:
+      '1. 登入工程管家網站\n2. 進入「個人中心」\n3. 產生 6 碼 LINE 綁定碼\n4. 回到這裡傳送「綁定＋6 碼」',
+    buttons: [
+      {
+        label: '前往個人中心',
+        uri: `${appBaseUrl()}/profile`,
+        style: 'primary',
+      },
+    ],
+  })
 }
 
 function todoViewUri(
@@ -3441,3 +3593,4 @@ function json(payload: unknown, status = 200) {
     headers: { 'Content-Type': 'application/json' },
   })
 }
+
