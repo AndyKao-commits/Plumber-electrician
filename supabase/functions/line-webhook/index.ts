@@ -33,6 +33,7 @@ type Profile = {
   name: string | null
   line_user_id: string | null
   role: string | null
+  access_template: string | null
 }
 
 type FlowType = 'photo_upload' | 'todos' | 'attendance' | 'purchase' | 'location'
@@ -112,6 +113,31 @@ type LineMessage = Record<string, unknown>
 
 const PAUSE_AFTER_MS = 30 * 60 * 1000
 const EXPIRE_AFTER_MS = 24 * 60 * 60 * 1000
+
+const LINE_BRAND = {
+  staff: {
+    background: '#172C3C',
+    surface: '#254657',
+    accent: '#9CD9D2',
+    primaryAction: '#276C60',
+  },
+  admin: {
+    background: '#222C38',
+    surface: '#354353',
+    accent: '#E5C58C',
+    primaryAction: '#B89552',
+  },
+  text: '#FFFFFF',
+  mutedText: '#CBD5DC',
+} as const
+
+function lineTheme(profile?: Profile) {
+  const admin =
+    profile?.role === 'boss' ||
+    profile?.role === 'owner' ||
+    profile?.access_template === 'owner'
+  return admin ? LINE_BRAND.admin : LINE_BRAND.staff
+}
 
 const FLOW_LABELS: Record<FlowType, string> = {
   photo_upload: '上傳照片',
@@ -1147,7 +1173,7 @@ async function buildTodosMessages(admin: Sb, profile: Profile): Promise<LineMess
   if (todos.length === 0) return [textMsg('目前沒有待辦事項')]
 
   const appBase = appBaseUrl()
-  const bubbles = todos.map((t) => todoBubble(t, appBase))
+  const bubbles = todos.map((t) => todoBubble(t, appBase, profile))
   return [
     {
       type: 'flex',
@@ -1184,23 +1210,36 @@ function todoBubble(
     created_at: string
   },
   appBase: string,
+  profile?: Profile,
 ): Record<string, unknown> {
   const detail = (t.detail || '').slice(0, 120) || '（無說明）'
+  const theme = lineTheme(profile)
   return {
     type: 'bubble',
+    styles: {
+      body: { backgroundColor: theme.surface },
+      footer: { backgroundColor: theme.background },
+    },
     body: {
       type: 'box',
       layout: 'vertical',
       contents: [
-        { type: 'text', text: '待辦', size: 'xs', color: '#888888' },
+        { type: 'text', text: '待辦', size: 'xs', color: theme.accent },
         {
           type: 'text',
           text: String(t.title).slice(0, 40),
           weight: 'bold',
           size: 'md',
           wrap: true,
+          color: LINE_BRAND.text,
         },
-        { type: 'text', text: detail, size: 'sm', wrap: true, color: '#555555' },
+        {
+          type: 'text',
+          text: detail,
+          size: 'sm',
+          wrap: true,
+          color: LINE_BRAND.mutedText,
+        },
       ],
       spacing: 'sm',
     },
@@ -1212,7 +1251,7 @@ function todoBubble(
         {
           type: 'button',
           style: 'primary',
-          color: '#1B3A4B',
+          color: theme.primaryAction,
           action: {
             type: 'postback',
             label: '標記完成',
@@ -1440,7 +1479,7 @@ async function requireProfile(
   if (!lineUserId) return { error: '讀不到你的 LINE User ID。' }
   const { data, error } = await admin
     .from('profiles')
-    .select('id, organization_id, name, line_user_id, role')
+    .select('id, organization_id, name, line_user_id, role, access_template')
     .eq('line_user_id', lineUserId)
     .maybeSingle()
   if (error) {
@@ -1831,6 +1870,7 @@ function flexMenu(input: {
   title: string
   body: string
   buttons?: FlexButton[]
+  profile?: Profile
 }): LineMessage {
   return {
     type: 'flex',
@@ -1844,7 +1884,9 @@ function actionBubble(input: {
   title: string
   body: string
   buttons?: FlexButton[]
+  profile?: Profile
 }): Record<string, unknown> {
+  const theme = lineTheme(input.profile)
   const buttons = (input.buttons ?? []).slice(0, 4).map((b, i) => {
     const style = b.style ?? (i === 0 ? 'primary' : 'secondary')
     const action = b.uri
@@ -1858,13 +1900,17 @@ function actionBubble(input: {
     return {
       type: 'button',
       style,
-      color: style === 'primary' ? '#1B3A4B' : undefined,
+      color: style === 'primary' ? theme.primaryAction : undefined,
       action,
     }
   })
 
   const bubble: Record<string, unknown> = {
     type: 'bubble',
+    styles: {
+      body: { backgroundColor: theme.surface },
+      footer: { backgroundColor: theme.background },
+    },
     body: {
       type: 'box',
       layout: 'vertical',
@@ -1874,7 +1920,7 @@ function actionBubble(input: {
           type: 'text',
           text: input.eyebrow.slice(0, 20) || '操作',
           size: 'xs',
-          color: '#888888',
+          color: theme.accent,
         },
         {
           type: 'text',
@@ -1882,13 +1928,14 @@ function actionBubble(input: {
           weight: 'bold',
           size: 'md',
           wrap: true,
+          color: LINE_BRAND.text,
         },
         {
           type: 'text',
           text: input.body.slice(0, 400) || ' ',
           size: 'sm',
           wrap: true,
-          color: '#555555',
+          color: LINE_BRAND.mutedText,
         },
       ],
     },
@@ -1911,6 +1958,7 @@ function siteCarousel(input: {
   sites: Array<{ id: string; name: string }>
   actionPrefix: string
   extraButtons?: FlexButton[]
+  profile?: Profile
 }): LineMessage[] {
   if (input.sites.length === 0) {
     return [
@@ -1919,6 +1967,7 @@ function siteCarousel(input: {
         eyebrow: input.eyebrow,
         title: '沒有可用工地',
         body: '請先到工程管家建立工地。',
+        profile: input.profile,
         buttons: input.extraButtons?.length
           ? input.extraButtons
           : [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
@@ -1931,6 +1980,7 @@ function siteCarousel(input: {
       eyebrow: input.eyebrow,
       title: s.name.slice(0, 40),
       body: ' ',
+      profile: input.profile,
       buttons: [
         {
           label: '選擇',
@@ -1947,6 +1997,7 @@ function siteCarousel(input: {
         eyebrow: input.eyebrow,
         title: '其他選項',
         body: '不指定工地或取消',
+        profile: input.profile,
         buttons: input.extraButtons,
       }),
     )
@@ -2380,6 +2431,7 @@ async function promptAttendanceMenu(
     return [
       flexMenu({
         altText: '出勤打卡：上班中',
+        profile,
         eyebrow: '出勤打卡',
         title: '目前上班中',
         body: `上班時間：${formatTaipei(open.clock_in_at)}\n目前工地：${siteLabel}\n切換工地會新增一筆到訪紀錄`,
@@ -2395,6 +2447,7 @@ async function promptAttendanceMenu(
   return [
     flexMenu({
       altText: '出勤打卡：未上班',
+      profile,
       eyebrow: '出勤打卡',
       title: '目前未上班',
       body: '請選擇要進行的操作',
@@ -2478,6 +2531,7 @@ async function clockInLine(
     ),
     ...siteCarousel({
       altText: '選擇目前工地',
+      profile,
       eyebrow: '出勤打卡',
       sites,
       actionPrefix: 'a=att_site_pick&id=',
@@ -2511,6 +2565,7 @@ async function clockOutLine(
   return [
     flexMenu({
       altText: '下班打卡完成',
+      profile,
       eyebrow: '出勤打卡',
       title: '下班打卡完成',
       body: `時間：${formatTaipei(now)}\n今天的出勤紀錄已保存。`,
@@ -2528,6 +2583,7 @@ async function promptAttendanceSite(
     return [
       flexMenu({
         altText: '請先上班',
+        profile,
         eyebrow: '出勤打卡',
         title: '請先上班',
         body: '選擇工地前需先完成上班打卡',
@@ -2544,6 +2600,7 @@ async function promptAttendanceSite(
 
   return siteCarousel({
     altText: '請選擇工地',
+    profile,
     eyebrow: '切換工地',
     sites,
     actionPrefix: 'a=att_site_pick&id=',
@@ -2610,6 +2667,7 @@ async function assignAttendanceSite(
   return [
     flexMenu({
       altText: `已登記工地：${site.name}`,
+      profile,
       eyebrow: '出勤打卡',
       title: '已登記工地到訪',
       body: `工地：${site.name}\n時間：${formatTaipei(now)}\n（每次切換都會新增一筆到訪紀錄）`,
@@ -2670,6 +2728,7 @@ async function promptCashSiteFor(
     return [
       flexMenu({
         altText: '選擇歸屬',
+        profile,
         eyebrow: '記帳',
         title: '沒有可選工地',
         body: '可改走雜項（加油、買飯、飲料、臨時支援），或請老闆在網站指派工地權限。',
@@ -2682,6 +2741,7 @@ async function promptCashSiteFor(
   }
   return siteCarousel({
     altText: '選擇工地或雜項',
+    profile,
     eyebrow: '記帳',
     sites: sites.slice(0, 9),
     actionPrefix: 'a=cash_site&id=',
