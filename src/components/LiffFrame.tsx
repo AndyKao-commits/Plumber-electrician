@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { PRODUCT } from '@/domain/rules'
+import { isBossLike } from '@/domain/roleGroups'
+import { useUser } from '@/hooks/useUser'
 import {
   closeLiffWindow,
   ensureLiffReady,
@@ -23,6 +25,7 @@ export function LiffFrame({
   liffEntry?: LiffEntry
 }) {
   const inLine = isLikelyLineWebView()
+  const { user } = useUser()
   const [liffReady, setLiffReady] = useState(false)
   const [closing, setClosing] = useState(false)
   const [closeHint, setCloseHint] = useState<string | null>(null)
@@ -49,7 +52,10 @@ export function LiffFrame({
   }
 
   return (
-    <div className="liff-shell">
+    <div
+      className="liff-shell"
+      data-ui-tone={isBossLike(user) ? 'admin' : 'staff'}
+    >
       <header className="liff-top">
         <div>
           <p className="muted" style={{ margin: 0, fontSize: '0.8rem' }}>
