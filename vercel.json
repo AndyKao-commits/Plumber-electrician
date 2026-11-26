@@ -1,8 +1,28 @@
 {
   "rewrites": [
     {
-      "source": "/((?!assets/).*)",
+      "source": "/line/imagemap/:panel/:size",
+      "destination": "/line/imagemap/:panel/:size.png"
+    },
+    {
+      "source": "/((?!assets/|line/imagemap/).*)",
       "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/line/imagemap/:panel/:size",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "image/png"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600, s-maxage=86400"
+        }
+      ]
     }
   ]
 }
+

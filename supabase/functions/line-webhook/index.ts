@@ -1,8 +1,8 @@
 /**
- * LINE webhook — reply-only (DEC-007).
+ * LINE webhook �X reply-only (DEC-007).
  * Phase 1: flow drafts + batch photo upload + todos Flex.
  * Phase 2: attendance clock/switch-site.
- * V1.0: 記帳 → expense_reports / cash_receipt_reports；紀錄地點＝足跡.
+ * V1.0: �O�b �� expense_reports / cash_receipt_reports�F�����a�I�ר���.
  * No proactive push / broadcast / timeout reminders.
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
@@ -132,27 +132,24 @@ const LINE_BRAND = {
 } as const
 
 function lineTheme(profile?: Profile) {
-  const admin =
-    profile?.role === 'boss' ||
-    profile?.role === 'owner' ||
-    profile?.access_template === 'owner'
+  const admin = isBossEquivalentProfile(profile)
   return admin ? LINE_BRAND.admin : LINE_BRAND.staff
 }
 
 const FLOW_LABELS: Record<FlowType, string> = {
-  photo_upload: '上傳照片',
-  todos: '待辦事項',
-  attendance: '出勤打卡',
-  purchase: '記帳',
-  location: '紀錄地點',
+  photo_upload: '�W�ǷӤ�',
+  todos: '�ݿ�ƶ�',
+  attendance: '�X�ԥ��d',
+  purchase: '�O�b',
+  location: '�����a�I',
 }
 
 const PHOTO_TYPE_LABELS: Record<string, string> = {
-  before: '施工前',
-  during: '施工中',
-  after: '施工後',
-  acceptance: '驗收',
-  unclassified: '尚未分類',
+  before: '�I�u�e',
+  during: '�I�u��',
+  after: '�I�u��',
+  acceptance: '�禬',
+  unclassified: '�|������',
 }
 
 Deno.serve(async (req) => {
@@ -215,7 +212,7 @@ Deno.serve(async (req) => {
       console.warn('[line-webhook] event threw', String(err).slice(0, 300))
       try {
         await replyMessages(token, event.replyToken, [
-          textMsg('操作失敗，請稍後再試。未完成的草稿仍會保留。'),
+          textMsg('�ާ@���ѡA�еy��A�աC����������Z���|�O�d�C'),
         ])
         replied += 1
       } catch {
@@ -235,11 +232,7 @@ async function handleEvent(
   const lineUserId = String(event.source?.userId ?? '').trim()
 
   if (event.type === 'follow') {
-    return [
-      textMsg(
-        '歡迎加入工程管家。\n請用下方圖文選單操作。\n首次請到網站「個人中心」綁定 LINE。',
-      ),
-    ]
+    return [await buildRoleImagemap(admin, lineUserId)]
   }
 
   if (event.type === 'postback') {
@@ -268,11 +261,23 @@ async function handleEvent(
 
   const bindCode = extractBindCode(text)
   if (bindCode) {
-    return [textMsg(await handleBind(admin, bindCode, lineUserId))]
+    const result = await handleBind(admin, bindCode, lineUserId)
+    if (result.startsWith('�j�w���\')) {
+      return [textMsg(result), await buildRoleImagemap(admin, lineUserId)]
+    }
+    return [textMsg(result)]
   }
 
-  // Quote cases: view-only (list / detail / export link) — no LINE editor
-  if (/報價管理|報價案件|報價/.test(text) && !/採購/.test(text)) {
+  if (isBindingHelpRequest(text)) {
+    return [bindingHelpMessage()]
+  }
+
+  if (isImagemapPanelRequest(text)) {
+    return [await buildRoleImagemap(admin, lineUserId)]
+  }
+
+  // Quote cases: view-only (list / detail / export link) �X no LINE editor
+  if (/�����޲z|�����ץ�|����/.test(text) && !/����/.test(text)) {
     const profile = await requireProfile(admin, lineUserId)
     if ('error' in profile) return [textMsg(profile.error)]
     return buildQuotesLineMessages(admin, profile)
@@ -290,11 +295,11 @@ async function handleTextCommand(
   if (intent === 'open_app') {
     return [
       flexMenu({
-        altText: '開啟工程管家',
-        eyebrow: '開啟網站',
-        title: '工程管家',
-        body: '查看出勤、收支與工地。',
-        buttons: [{ label: '開啟', uri: appBaseUrl(), style: 'primary' }],
+        altText: '�}�Ҥu�{�ޮa',
+        eyebrow: '�}�Һ���',
+        title: '�u�{�ޮa',
+        body: '�d�ݥX�ԡB����P�u�a�C',
+        buttons: [{ label: '�}��', uri: appBaseUrl(), style: 'primary' }],
       }),
     ]
   }
@@ -309,7 +314,7 @@ async function handleTextCommand(
   // Expired: clear notice, then allow starting a new intent in the same turn
   if (gate.age === 'expired') {
     const notice = gate.messages ?? [
-      textMsg('原本未完成的操作已超過保留時間，草稿已清除。'),
+      textMsg('�쥻���������ާ@�w�W�L�O�d�ɶ��A��Z�w�M���C'),
     ]
     if (isFlowIntent(intent)) {
       return [...notice, ...(await startFlow(admin, profile, intent))]
@@ -317,7 +322,7 @@ async function handleTextCommand(
     return notice
   }
 
-  // Paused: same feature → resume prompt path; other feature → switch guard
+  // Paused: same feature �� resume prompt path; other feature �� switch guard
   if (gate.age === 'paused' && gate.draft) {
     if (intent === 'cancel') {
       return cancelDraftWithCleanup(admin, gate.draft)
@@ -335,10 +340,10 @@ async function handleTextCommand(
     if (!gate.draft) {
       return [
         flexMenu({
-          altText: '沒有進行中的操作',
-          eyebrow: '操作取消',
-          title: '沒有進行中的操作',
-          body: '可從圖文選單開始功能',
+          altText: '�S���i�椤���ާ@',
+          eyebrow: '�ާ@����',
+          title: '�S���i�椤���ާ@',
+          body: '�i�q�Ϥ���}�l�\��',
         }),
       ]
     }
@@ -346,7 +351,7 @@ async function handleTextCommand(
   }
 
   if (intent === 'resume') {
-    if (!gate.draft) return [textMsg('目前沒有可繼續的操作。')]
+    if (!gate.draft) return [textMsg('�ثe�S���i�~�򪺾ާ@�C')]
     return resumeDraft(admin, profile, gate.draft)
   }
 
@@ -405,10 +410,10 @@ async function handlePostback(
     if (!gate.draft) {
       return [
         flexMenu({
-          altText: '沒有進行中的操作',
-          eyebrow: '操作取消',
-          title: '沒有進行中的操作',
-          body: '可從圖文選單開始功能',
+          altText: '�S���i�椤���ާ@',
+          eyebrow: '�ާ@����',
+          title: '�S���i�椤���ާ@',
+          body: '�i�q�Ϥ���}�l�\��',
         }),
       ]
     }
@@ -416,7 +421,7 @@ async function handlePostback(
   }
 
   if (action === 'resume') {
-    if (!gate.draft) return [textMsg('目前沒有可繼續的操作。')]
+    if (!gate.draft) return [textMsg('�ثe�S���i�~�򪺾ާ@�C')]
     if (gate.draft.flow_status === 'paused') {
       await touchDraft(admin, gate.draft.id, {
         flow_status: 'collecting',
@@ -431,20 +436,20 @@ async function handlePostback(
   if (action === 'switch') {
     const to = params.to as FlowType
     if (!isFlowIntent(to)) {
-      return [textMsg('無法辨識要切換的功能。')]
+      return [textMsg('�L�k���ѭn�������\��C')]
     }
     if (gate.draft) {
       const cleanup = await cleanupDraftMedia(admin, gate.draft)
       if (!cleanup.ok) {
         return [
           flexMenu({
-            altText: '切換前請先清除',
-            eyebrow: '切換功能',
-            title: '尚有資料未清除',
-            body: cleanup.message || '請先成功取消目前操作再切換',
+            altText: '�����e�Х��M��',
+            eyebrow: '�����\��',
+            title: '�|����ƥ��M��',
+            body: cleanup.message || '�Х����\�����ثe�ާ@�A����',
             buttons: [
-              { label: '再試取消', data: 'a=cancel', style: 'primary' },
-              { label: '繼續目前操作', data: 'a=resume', style: 'secondary' },
+              { label: '�A�ը���', data: 'a=cancel', style: 'primary' },
+              { label: '�~��ثe�ާ@', data: 'a=resume', style: 'secondary' },
             ],
           }),
         ]
@@ -523,82 +528,82 @@ async function handlePostback(
 
   if (action === 'loc_site_pick') {
     if (!gate.draft || gate.draft.flow_type !== 'location') {
-      return [textMsg('請先點「紀錄地點」。')]
+      return [textMsg('�Х��I�u�����a�I�v�C')]
     }
     return saveLocationBySite(admin, profile, gate.draft, params.id || '')
   }
 
   if (action === 'photo_cancel') {
     if (!gate.draft || gate.draft.flow_type !== 'photo_upload') {
-      return [textMsg('目前沒有進行中的上傳照片流程。')]
+      return [textMsg('�ثe�S���i�椤���W�ǷӤ��y�{�C')]
     }
     return cancelDraftWithCleanup(admin, gate.draft)
   }
 
   if (action === 'cash_kind') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「記帳」。')]
+      return [textMsg('�Х��I�u�O�b�v�C')]
     }
     return selectCashKind(admin, profile, gate.draft, params.k || '')
   }
 
   if (action === 'cash_site') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「記帳」。')]
+      return [textMsg('�Х��I�u�O�b�v�C')]
     }
     return selectCashSite(admin, profile, gate.draft, params.id || '')
   }
 
   if (action === 'cash_misc') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「記帳」。')]
+      return [textMsg('�Х��I�u�O�b�v�C')]
     }
     return selectCashMisc(admin, profile, gate.draft)
   }
 
   if (action === 'cash_loc_skip') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「記帳」。')]
+      return [textMsg('�Х��I�u�O�b�v�C')]
     }
     return skipCashLocation(admin, profile, gate.draft)
   }
 
   if (action === 'cash_receipt_skip') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「記帳」。')]
+      return [textMsg('�Х��I�u�O�b�v�C')]
     }
     return promptCashConfirm(admin, gate.draft)
   }
 
   if (action === 'cash_confirm') {
     if (!gate.draft || gate.draft.flow_type !== 'purchase') {
-      return [textMsg('請先點「記帳」。')]
+      return [textMsg('�Х��I�u�O�b�v�C')]
     }
     return submitFieldCash(admin, profile, gate.draft)
   }
 
   // Legacy postback aliases from older rich menus
   if (action === 'pur_mode' || action === 'pur_site' || action === 'pur_site_skip' || action === 'pur_confirm') {
-    return [textMsg('採購申請已改為「記帳」。請從圖文選單重新開始。')]
+    return [textMsg('���ʥӽФw�אּ�u�O�b�v�C�бq�Ϥ��歫�s�}�l�C')]
   }
 
   if (action === 'photo_site') {
     if (!gate.draft || gate.draft.flow_type !== 'photo_upload') {
-      return [textMsg('目前沒有進行中的上傳照片流程。請先點「上傳照片」。')]
+      return [textMsg('�ثe�S���i�椤���W�ǷӤ��y�{�C�Х��I�u�W�ǷӤ��v�C')]
     }
     return selectPhotoSite(admin, profile, gate.draft, params.id || '')
   }
 
   if (action === 'photo_type') {
     if (!gate.draft || gate.draft.flow_type !== 'photo_upload') {
-      return [textMsg('目前沒有進行中的上傳照片流程。')]
+      return [textMsg('�ثe�S���i�椤���W�ǷӤ��y�{�C')]
     }
     return selectPhotoType(admin, gate.draft, params.t || '')
   }
 
   if (action === 'photo_done') {
     if (!gate.draft || gate.draft.flow_type !== 'photo_upload') {
-      return [textMsg('目前沒有進行中的上傳照片流程。')]
+      return [textMsg('�ثe�S���i�椤���W�ǷӤ��y�{�C')]
     }
     return completePhotoBatch(admin, gate.draft)
   }
@@ -616,7 +621,7 @@ async function handlePostback(
   }
 
   void lineToken
-  return [textMsg('無法處理此操作。')]
+  return [textMsg('�L�k�B�z���ާ@�C')]
 }
 
 async function handleImageEvent(
@@ -646,7 +651,7 @@ async function handleImageEvent(
   if (!gate.draft || gate.draft.flow_type !== 'photo_upload') {
     return [
       textMsg(
-        '請先從圖文選單點「上傳照片」，選擇工地與類型後再傳圖。\n（直接傳圖不會自動開始新流程，以免覆蓋其他未完成操作。）',
+        '�Х��q�Ϥ����I�u�W�ǷӤ��v�A��ܤu�a�P������A�ǹϡC\n�]�����ǹϤ��|�۰ʶ}�l�s�y�{�A�H�K�л\��L�������ާ@�C�^',
       ),
     ]
   }
@@ -654,7 +659,7 @@ async function handleImageEvent(
   const payload = gate.draft.draft_payload || {}
   if (!payload.siteId || !payload.photoType || !payload.batchId) {
     return [
-      textMsg('請先完成工地與照片類型選擇，再傳送照片。'),
+      textMsg('�Х������u�a�P�Ӥ�������ܡA�A�ǰe�Ӥ��C'),
       ...(await resumeDraft(admin, profile, gate.draft)),
     ]
   }
@@ -672,7 +677,7 @@ async function handleImageEvent(
       draft_payload: { ...payload, receiveFailed: failed },
     })
     return [
-      textMsg(`${result.error}\n（目前收圖失敗累計 ${failed} 張；可再傳圖或按取消上傳）`),
+      textMsg(`${result.error}\n�]�ثe���ϥ��Ѳ֭p ${failed} �i�F�i�A�ǹϩΫ������W�ǡ^`),
     ]
   }
 
@@ -684,13 +689,13 @@ async function handleImageEvent(
 
   return [
     flexMenu({
-      altText: `已收到 ${count} 張照片`,
-      eyebrow: '上傳照片',
-      title: `已收到 ${count} 張`,
-      body: '可直接繼續傳圖；傳完請按「完成上傳」。若要放棄此批請按「取消上傳」。',
+      altText: `�w���� ${count} �i�Ӥ�`,
+      eyebrow: '�W�ǷӤ�',
+      title: `�w���� ${count} �i`,
+      body: '�i�����~��ǹϡF�ǧ��Ы��u�����W�ǡv�C�Y�n��󦹧�Ы��u�����W�ǡv�C',
       buttons: [
-        { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
-        { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
+        { label: '�����W��', data: 'a=photo_done', style: 'primary' },
+        { label: '�����W��', data: 'a=photo_cancel', style: 'secondary' },
       ],
     }),
   ]
@@ -765,15 +770,15 @@ async function resumeDraft(
   }
   return [
     flexMenu({
-      altText: '繼續上傳照片',
-      eyebrow: '上傳照片',
-      title: '繼續上傳',
-      body: `工地：${payload.siteName || '—'}\n類型：${
+      altText: '�~��W�ǷӤ�',
+      eyebrow: '�W�ǷӤ�',
+      title: '�~��W��',
+      body: `�u�a�G${payload.siteName || '�X'}\n�����G${
         PHOTO_TYPE_LABELS[String(payload.photoType)] || payload.photoType
-      }\n已收：${payload.photoCount ?? 0} 張\n請直接傳圖`,
+      }\n�w���G${payload.photoCount ?? 0} �i\n�Ъ����ǹ�`,
       buttons: [
-        { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
-        { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
+        { label: '�����W��', data: 'a=photo_done', style: 'primary' },
+        { label: '�����W��', data: 'a=photo_cancel', style: 'secondary' },
       ],
     }),
   ]
@@ -785,11 +790,11 @@ async function handlePhotoText(
   draft: DraftRow,
   text: string,
 ): Promise<LineMessage[]> {
-  if (/完成上傳|完成/.test(text)) return completePhotoBatch(admin, draft)
-  if (/取消上傳|取消/.test(text)) {
+  if (/�����W��|����/.test(text)) return completePhotoBatch(admin, draft)
+  if (/�����W��|����/.test(text)) {
     return cancelDraftWithCleanup(admin, draft)
   }
-  if (/繼續上傳|繼續/.test(text)) return resumeDraft(admin, profile, draft)
+  if (/�~��W��|�~��/.test(text)) return resumeDraft(admin, profile, draft)
 
   const type = photoTypeFromInput(text)
   if (type && (draft.current_step === 'select_type' || draft.draft_payload?.siteId)) {
@@ -817,11 +822,11 @@ async function promptSelectSite(
     await finalizeDraft(admin, draft.id, 'cancelled')
     return [
       flexMenu({
-        altText: '沒有可用工地',
-        eyebrow: '上傳照片',
-        title: '沒有可用工地',
-        body: '請先到工程管家建立工地',
-        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        altText: '�S���i�Τu�a',
+        eyebrow: '�W�ǷӤ�',
+        title: '�S���i�Τu�a',
+        body: '�Х���u�{�ޮa�إߤu�a',
+        buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
@@ -829,37 +834,37 @@ async function promptSelectSite(
   await touchDraft(admin, draft.id, { current_step: 'select_site' })
 
   return siteCarousel({
-    altText: '上傳照片：請選擇工地',
-    eyebrow: '上傳照片',
+    altText: '�W�ǷӤ��G�п�ܤu�a',
+    eyebrow: '�W�ǷӤ�',
     sites,
     actionPrefix: 'a=photo_site&id=',
-    extraButtons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+    extraButtons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
   })
 }
 
 function promptSelectPhotoType(): LineMessage[] {
   const bubbles = Object.entries(PHOTO_TYPE_LABELS).map(([code, label]) =>
     actionBubble({
-      eyebrow: '上傳照片',
+      eyebrow: '�W�ǷӤ�',
       title: label,
-      body: '點下方按鈕選擇此類型',
+      body: '�I�U����s��ܦ�����',
       buttons: [
-        { label: '選擇', data: `a=photo_type&t=${code}`, style: 'primary' },
+        { label: '���', data: `a=photo_type&t=${code}`, style: 'primary' },
       ],
     }),
   )
   bubbles.push(
     actionBubble({
-      eyebrow: '上傳照片',
-      title: '取消',
-      body: '結束上傳流程',
-      buttons: [{ label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' }],
+      eyebrow: '�W�ǷӤ�',
+      title: '����',
+      body: '�����W�Ǭy�{',
+      buttons: [{ label: '�����W��', data: 'a=photo_cancel', style: 'secondary' }],
     }),
   )
   return [
     {
       type: 'flex',
-      altText: '請選擇照片類型',
+      altText: '�п�ܷӤ�����',
       contents: {
         type: 'carousel',
         contents: bubbles.slice(0, 12),
@@ -876,7 +881,7 @@ async function selectPhotoSite(
 ): Promise<LineMessage[]> {
   const sites = await listSites(admin, profile.organization_id)
   const site = sites.find((s) => s.id === siteId)
-  if (!site) return [textMsg('找不到工地，請重新選擇。'), ...(await promptSelectSite(admin, profile, draft))]
+  if (!site) return [textMsg('�䤣��u�a�A�Э��s��ܡC'), ...(await promptSelectSite(admin, profile, draft))]
 
   await touchDraft(admin, draft.id, {
     current_step: 'select_type',
@@ -895,7 +900,7 @@ async function selectPhotoType(
   typeCode: string,
 ): Promise<LineMessage[]> {
   if (!PHOTO_TYPE_LABELS[typeCode]) {
-    return [textMsg('照片類型無效。'), ...promptSelectPhotoType()]
+    return [textMsg('�Ӥ������L�ġC'), ...promptSelectPhotoType()]
   }
   const batchId = crypto.randomUUID()
   const payload = {
@@ -911,13 +916,13 @@ async function selectPhotoType(
   })
   return [
     flexMenu({
-      altText: '請傳送照片',
-      eyebrow: '上傳照片',
-      title: '請傳送照片',
-      body: `工地：${payload.siteName}\n類型：${PHOTO_TYPE_LABELS[typeCode]}\n請連續傳圖（可多張）`,
+      altText: '�жǰe�Ӥ�',
+      eyebrow: '�W�ǷӤ�',
+      title: '�жǰe�Ӥ�',
+      body: `�u�a�G${payload.siteName}\n�����G${PHOTO_TYPE_LABELS[typeCode]}\n�гs��ǹϡ]�i�h�i�^`,
       buttons: [
-        { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
-        { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
+        { label: '�����W��', data: 'a=photo_done', style: 'primary' },
+        { label: '�����W��', data: 'a=photo_cancel', style: 'secondary' },
       ],
     }),
   ]
@@ -930,12 +935,12 @@ async function completePhotoBatch(admin: Sb, draft: DraftRow): Promise<LineMessa
   if (!batchId || expected <= 0) {
     return [
       flexMenu({
-        altText: '尚未收到照片',
-        eyebrow: '上傳照片',
-        title: '尚未收到照片',
-        body: '請先傳圖，或取消上傳',
+        altText: '�|������Ӥ�',
+        eyebrow: '�W�ǷӤ�',
+        title: '�|������Ӥ�',
+        body: '�Х��ǹϡA�Ψ����W��',
         buttons: [
-          { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
+          { label: '�����W��', data: 'a=photo_cancel', style: 'secondary' },
         ],
       }),
     ]
@@ -949,13 +954,13 @@ async function completePhotoBatch(admin: Sb, draft: DraftRow): Promise<LineMessa
     console.warn('[line-webhook] list batch failed', beforeError.message)
     return [
       flexMenu({
-        altText: '完成上傳失敗',
-        eyebrow: '上傳照片',
-        title: '讀取失敗',
-        body: '草稿仍保留，請稍後再試完成上傳',
+        altText: '�����W�ǥ���',
+        eyebrow: '�W�ǷӤ�',
+        title: 'Ū������',
+        body: '��Z���O�d�A�еy��A�է����W��',
         buttons: [
-          { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
-          { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
+          { label: '�����W��', data: 'a=photo_done', style: 'primary' },
+          { label: '�����W��', data: 'a=photo_cancel', style: 'secondary' },
         ],
       }),
     ]
@@ -972,13 +977,13 @@ async function completePhotoBatch(admin: Sb, draft: DraftRow): Promise<LineMessa
       console.warn('[line-webhook] complete batch failed', error.message)
       return [
         flexMenu({
-          altText: '完成上傳失敗',
-          eyebrow: '上傳照片',
-          title: '寫入失敗',
-          body: '草稿仍保留，請稍後再試完成上傳',
+          altText: '�����W�ǥ���',
+          eyebrow: '�W�ǷӤ�',
+          title: '�g�J����',
+          body: '��Z���O�d�A�еy��A�է����W��',
           buttons: [
-            { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
-            { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
+            { label: '�����W��', data: 'a=photo_done', style: 'primary' },
+            { label: '�����W��', data: 'a=photo_cancel', style: 'secondary' },
           ],
         }),
       ]
@@ -998,13 +1003,13 @@ async function completePhotoBatch(admin: Sb, draft: DraftRow): Promise<LineMessa
   if (stillPending > 0) {
     return [
       flexMenu({
-        altText: '部分照片尚未完成',
-        eyebrow: '上傳照片',
-        title: '部分尚未連結',
-        body: `成功：${success} 張\n失敗：${failed} 張\n請再按一次完成上傳，或取消並重傳`,
+        altText: '�����Ӥ��|������',
+        eyebrow: '�W�ǷӤ�',
+        title: '�����|���s��',
+        body: `���\�G${success} �i\n���ѡG${failed} �i\n�ЦA���@�������W�ǡA�Ψ����í���`,
         buttons: [
-          { label: '完成上傳', data: 'a=photo_done', style: 'primary' },
-          { label: '取消上傳', data: 'a=photo_cancel', style: 'secondary' },
+          { label: '�����W��', data: 'a=photo_done', style: 'primary' },
+          { label: '�����W��', data: 'a=photo_cancel', style: 'secondary' },
         ],
       }),
     ]
@@ -1014,13 +1019,13 @@ async function completePhotoBatch(admin: Sb, draft: DraftRow): Promise<LineMessa
   const photosUri = `${appBaseUrl()}/photos`
   return [
     flexMenu({
-      altText: '上傳完成',
-      eyebrow: '上傳照片',
-      title: '上傳完成',
-      body: `成功：${success} 張\n失敗：${failed} 張\n工地：${payload.siteName}\n類型：${
+      altText: '�W�ǧ���',
+      eyebrow: '�W�ǷӤ�',
+      title: '�W�ǧ���',
+      body: `���\�G${success} �i\n���ѡG${failed} �i\n�u�a�G${payload.siteName}\n�����G${
         PHOTO_TYPE_LABELS[String(payload.photoType)] || payload.photoType
       }`,
-      buttons: [{ label: '查看照片', uri: photosUri, style: 'primary' }],
+      buttons: [{ label: '�d�ݷӤ�', uri: photosUri, style: 'primary' }],
     }),
   ]
 }
@@ -1039,19 +1044,19 @@ async function buildQuotesLineMessages(
     .limit(10)
   if (error) {
     console.warn('[line-webhook] quotes query failed', error.message)
-    return [textMsg('讀取報價失敗，請稍後再試。')]
+    return [textMsg('Ū���������ѡA�еy��A�աC')]
   }
   const rows = data ?? []
   if (rows.length === 0) {
     return [
       flexMenu({
-        altText: '尚無報價案件',
-        eyebrow: '報價管理',
-        title: '尚無報價案件',
-        body: '請到工程管家建立報價案件後再查看',
+        altText: '�|�L�����ץ�',
+        eyebrow: '�����޲z',
+        title: '�|�L�����ץ�',
+        body: '�Ш�u�{�ޮa�إ߳����ץ��A�d��',
         buttons: [
           {
-            label: '開啟報價',
+            label: '�}�ҳ���',
             uri: `${appBaseUrl()}/quotes`,
             style: 'primary',
           },
@@ -1065,19 +1070,19 @@ async function buildQuotesLineMessages(
     const status = String(q.workflow_status || 'editing')
     const total = Number(q.amount_after_tax || 0)
     return actionBubble({
-      eyebrow: '報價案件',
-      title: String(q.title || '報價').slice(0, 40),
-      body: `${q.quote_number || ''}\n客戶：${q.customer_name || '—'}\n總額：NT$${total.toLocaleString()}\n狀態：${status}${
-        q.current_version ? ` · v${q.current_version}` : ''
+      eyebrow: '�����ץ�',
+      title: String(q.title || '����').slice(0, 40),
+      body: `${q.quote_number || ''}\n�Ȥ�G${q.customer_name || '�X'}\n�`�B�GNT$${total.toLocaleString()}\n���A�G${status}${
+        q.current_version ? ` �P v${q.current_version}` : ''
       }`,
       buttons: [
         {
-          label: '查看細項',
+          label: '�d�ݲӶ�',
           data: `a=quote_view&id=${q.id}`,
           style: 'primary',
         },
         {
-          label: '開啟匯出',
+          label: '�}�ҶץX',
           uri: `${appBase}/quotes/${q.id}?export=1`,
           style: 'secondary',
         },
@@ -1088,7 +1093,7 @@ async function buildQuotesLineMessages(
   return [
     {
       type: 'flex',
-      altText: `報價案件 ${rows.length} 筆`,
+      altText: `�����ץ� ${rows.length} ��`,
       contents: {
         type: 'carousel',
         contents: bubbles.slice(0, 10),
@@ -1111,7 +1116,7 @@ async function viewQuoteOnLine(
     .eq('organization_id', profile.organization_id)
     .maybeSingle()
   if (error || !quote) {
-    return [textMsg('找不到此報價案件。')]
+    return [textMsg('�䤣�즹�����ץ�C')]
   }
   const { data: items } = await admin
     .from('quotation_items')
@@ -1127,24 +1132,24 @@ async function viewQuoteOnLine(
     .join('\n')
   return [
     flexMenu({
-      altText: `報價 ${quote.title}`,
-      eyebrow: '報價細項',
+      altText: `���� ${quote.title}`,
+      eyebrow: '�����Ӷ�',
       title: String(quote.title).slice(0, 40),
-      body: `${quote.quote_number || ''}\n客戶：${quote.customer_name || '—'}\n地址：${
-        quote.site_address || '—'
-      }\n小計 NT$${Number(quote.amount_before_tax || 0).toLocaleString()} · 折扣 NT$${Number(
+      body: `${quote.quote_number || ''}\n�Ȥ�G${quote.customer_name || '�X'}\n�a�}�G${
+        quote.site_address || '�X'
+      }\n�p�p NT$${Number(quote.amount_before_tax || 0).toLocaleString()} �P �馩 NT$${Number(
         quote.discount || 0,
-      ).toLocaleString()} · 稅額 NT$${Number(quote.tax_amount || 0).toLocaleString()}\n總額 NT$${Number(
+      ).toLocaleString()} �P �|�B NT$${Number(quote.tax_amount || 0).toLocaleString()}\n�`�B NT$${Number(
         quote.amount_after_tax || 0,
-      ).toLocaleString()}\n\n${lines || '（無細項）'}`,
+      ).toLocaleString()}\n\n${lines || '�]�L�Ӷ��^'}`,
       buttons: [
         {
-          label: '匯出報價連結',
+          label: '�ץX�����s��',
           uri: `${appBaseUrl()}/quotes/${quote.id}?export=1`,
           style: 'primary',
         },
         {
-          label: '開啟案件',
+          label: '�}�Үץ�',
           uri: `${appBaseUrl()}/quotes/${quote.id}`,
           style: 'secondary',
         },
@@ -1166,18 +1171,18 @@ async function buildTodosMessages(admin: Sb, profile: Profile): Promise<LineMess
 
   if (error) {
     console.warn('[line-webhook] todos query failed', error.message)
-    return [textMsg('讀取待辦失敗，請稍後再試。')]
+    return [textMsg('Ū���ݿ쥢�ѡA�еy��A�աC')]
   }
 
   const todos = data ?? []
-  if (todos.length === 0) return [textMsg('目前沒有待辦事項')]
+  if (todos.length === 0) return [textMsg('�ثe�S���ݿ�ƶ�')]
 
   const appBase = appBaseUrl()
   const bubbles = todos.map((t) => todoBubble(t, appBase, profile))
   return [
     {
       type: 'flex',
-      altText: `待辦事項 ${todos.length} 筆`,
+      altText: `�ݿ�ƶ� ${todos.length} ��`,
       contents: {
         type: 'carousel',
         contents: bubbles,
@@ -1189,6 +1194,153 @@ async function buildTodosMessages(admin: Sb, profile: Profile): Promise<LineMess
 function appBaseUrl(): string {
   const fromEnv = (Deno.env.get('APP_BASE_URL') ?? '').trim().replace(/\/$/, '')
   return fromEnv || 'https://plumber-electrician-seven.vercel.app'
+}
+
+type ImagemapPanel = 'staff' | 'manager' | 'binding'
+
+type ImagemapArea = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+function isBossEquivalentProfile(profile?: Profile | null): boolean {
+  if (!profile) return false
+  return (
+    profile.role === 'boss' ||
+    profile.role === 'owner' ||
+    profile.access_template === 'owner'
+  )
+}
+
+function isImagemapPanelRequest(text: string): boolean {
+  return /^(�\����|�\�ୱ�O|�u�@���O|�v�Ťu�@���O|�޲z���O|�}�ҿ��|���)$/u.test(
+    text.trim(),
+  )
+}
+
+function isBindingHelpRequest(text: string): boolean {
+  return /^(�b���j�w�о�|�j�w�о�|�p��j�w|LINE �j�w�о�)$/iu.test(text.trim())
+}
+
+function sixImagemapAreas(): ImagemapArea[] {
+  return [
+    { x: 0, y: 0, width: 346, height: 520 },
+    { x: 346, y: 0, width: 346, height: 520 },
+    { x: 692, y: 0, width: 348, height: 520 },
+    { x: 0, y: 520, width: 346, height: 520 },
+    { x: 346, y: 520, width: 346, height: 520 },
+    { x: 692, y: 520, width: 348, height: 520 },
+  ]
+}
+
+function imagemapBaseUrl(panel: ImagemapPanel): string {
+  return `${appBaseUrl()}/line/imagemap/${panel}`
+}
+
+function staffImagemap(): LineMessage {
+  const areas = sixImagemapAreas()
+  const messages = ['�W�ǷӤ�', '�X�ԥ��d', '�����a�I', '�s�W�O�b', '�ݿ�ƶ�']
+  const actions: Record<string, unknown>[] = messages.map((text, index) => ({
+    type: 'message',
+    label: text,
+    text,
+    area: areas[index],
+  }))
+  actions.push({
+    type: 'uri',
+    label: '�ӤH����',
+    linkUri: `${appBaseUrl()}/profile`,
+    area: areas[5],
+  })
+  return {
+    type: 'imagemap',
+    baseUrl: imagemapBaseUrl('staff'),
+    altText: '�v�Ťu�@���O�G�W�ǷӤ��B�X�ԥ��d�B�����a�I�B�s�W�O�b�B�ݿ�ƶ��B�ӤH����',
+    baseSize: { width: 1040, height: 1040 },
+    actions,
+  }
+}
+
+function managerImagemap(): LineMessage {
+  const areas = sixImagemapAreas()
+  const links = [
+    ['�ӽмf��', '/notifications'],
+    ['�ζ��X��', '/team'],
+    ['�u�a�޲z', '/sites'],
+    ['�u�{����', '/expenses'],
+    ['�����޲z', '/quotes'],
+    ['�~��޲z', '/salary'],
+  ] as const
+  return {
+    type: 'imagemap',
+    baseUrl: imagemapBaseUrl('manager'),
+    altText: '�޲z���O�G�ӽмf�֡B�ζ��X�ԡB�u�a�޲z�B�u�{����B�����޲z�B�~��޲z',
+    baseSize: { width: 1040, height: 1040 },
+    actions: links.map(([label, path], index) => ({
+      type: 'uri',
+      label,
+      linkUri: `${appBaseUrl()}${path}`,
+      area: areas[index],
+    })),
+  }
+}
+
+function bindingImagemap(): LineMessage {
+  return {
+    type: 'imagemap',
+    baseUrl: imagemapBaseUrl('binding'),
+    altText: '�b���|���j�w�G�j�w�b���B�d�ݸj�w�оǩζi�J�u�{�ޮa����',
+    baseSize: { width: 1040, height: 1040 },
+    actions: [
+      {
+        type: 'uri',
+        label: '�j�w�b��',
+        linkUri: `${appBaseUrl()}/profile`,
+        area: { x: 0, y: 0, width: 1040, height: 520 },
+      },
+      {
+        type: 'message',
+        label: '�j�w�о�',
+        text: '�b���j�w�о�',
+        area: { x: 0, y: 520, width: 1040, height: 260 },
+      },
+      {
+        type: 'uri',
+        label: '�i�J����',
+        linkUri: appBaseUrl(),
+        area: { x: 0, y: 780, width: 1040, height: 260 },
+      },
+    ],
+  }
+}
+
+async function buildRoleImagemap(
+  admin: Sb | null,
+  lineUserId: string,
+): Promise<LineMessage> {
+  if (!admin || !lineUserId) return bindingImagemap()
+  const profile = await requireProfile(admin, lineUserId)
+  if ('error' in profile) return bindingImagemap()
+  return isBossEquivalentProfile(profile) ? managerImagemap() : staffImagemap()
+}
+
+function bindingHelpMessage(): LineMessage {
+  return flexMenu({
+    altText: 'LINE �b���j�w�о�',
+    eyebrow: '�b���j�w�о�',
+    title: '�|�ӨB�J�����j�w',
+    body:
+      '1. �n�J�u�{�ޮa����\n2. �i�J�u�ӤH���ߡv\n3. ���� 6 �X LINE �j�w�X\n4. �^��o�̶ǰe�u�j�w��6 �X�v',
+    buttons: [
+      {
+        label: '�e���ӤH����',
+        uri: `${appBaseUrl()}/profile`,
+        style: 'primary',
+      },
+    ],
+  })
 }
 
 function todoViewUri(
@@ -1212,7 +1364,7 @@ function todoBubble(
   appBase: string,
   profile?: Profile,
 ): Record<string, unknown> {
-  const detail = (t.detail || '').slice(0, 120) || '（無說明）'
+  const detail = (t.detail || '').slice(0, 120) || '�]�L�����^'
   const theme = lineTheme(profile)
   return {
     type: 'bubble',
@@ -1224,7 +1376,7 @@ function todoBubble(
       type: 'box',
       layout: 'vertical',
       contents: [
-        { type: 'text', text: '待辦', size: 'xs', color: theme.accent },
+        { type: 'text', text: '�ݿ�', size: 'xs', color: theme.accent },
         {
           type: 'text',
           text: String(t.title).slice(0, 40),
@@ -1254,9 +1406,9 @@ function todoBubble(
           color: theme.primaryAction,
           action: {
             type: 'postback',
-            label: '標記完成',
+            label: '�аO����',
             data: `a=todo_done&id=${t.id}`,
-            displayText: '標記完成',
+            displayText: '�аO����',
           },
         },
         {
@@ -1264,7 +1416,7 @@ function todoBubble(
           style: 'secondary',
           action: {
             type: 'uri',
-            label: '查看',
+            label: '�d��',
             uri: todoViewUri(t.href, appBase),
           },
         },
@@ -1278,7 +1430,7 @@ async function completeTodo(
   profile: Profile,
   todoId: string,
 ): Promise<LineMessage[]> {
-  if (!todoId) return [textMsg('待辦編號無效。')]
+  if (!todoId) return [textMsg('�ݿ�s���L�ġC')]
   const { data, error } = await admin
     .from('notices')
     .update({ status: 'done', unread: false })
@@ -1290,10 +1442,10 @@ async function completeTodo(
     .maybeSingle()
   if (error) {
     console.warn('[line-webhook] complete todo failed', error.message)
-    return [textMsg('標記完成失敗，請稍後再試。')]
+    return [textMsg('�аO�������ѡA�еy��A�աC')]
   }
-  if (!data) return [textMsg('找不到此待辦，或無權限操作。')]
-  return [textMsg(`已完成：${data.title}\n網站待辦中心會同步更新。`)]
+  if (!data) return [textMsg('�䤣�즹�ݿ�A�εL�v���ާ@�C')]
+  return [textMsg(`�w�����G${data.title}\n�����ݿ줤�߷|�P�B��s�C`)]
 }
 
 async function viewTodo(
@@ -1308,11 +1460,11 @@ async function viewTodo(
     .eq('user_id', profile.id)
     .eq('organization_id', profile.organization_id)
     .maybeSingle()
-  if (error || !data) return [textMsg('找不到此待辦。')]
-  const href = data.href ? `\n連結：請到工程管家開啟 ${data.href}` : ''
+  if (error || !data) return [textMsg('�䤣�즹�ݿ�C')]
+  const href = data.href ? `\n�s���G�Ш�u�{�ޮa�}�� ${data.href}` : ''
   return [
     textMsg(
-      `【${data.title}】\n${data.detail || '（無說明）'}\n狀態：${data.status}${href}`,
+      `�i${data.title}�j\n${data.detail || '�]�L�����^'}\n���A�G${data.status}${href}`,
     ),
   ]
 }
@@ -1321,18 +1473,18 @@ function switchGuardMessages(draft: DraftRow, next: FlowType): LineMessage[] {
   const summary = summarizeDraft(draft)
   return [
     flexMenu({
-      altText: '有尚未完成的操作',
-      eyebrow: '切換功能',
-      title: '有尚未完成的操作',
-      body: `${FLOW_LABELS[draft.flow_type]}\n已填寫：${summary.filled}\n尚未完成：${summary.pending}`,
+      altText: '���|���������ާ@',
+      eyebrow: '�����\��',
+      title: '���|���������ާ@',
+      body: `${FLOW_LABELS[draft.flow_type]}\n�w��g�G${summary.filled}\n�|�������G${summary.pending}`,
       buttons: [
         {
-          label: `取消並${FLOW_LABELS[next]}`.slice(0, 20),
+          label: `������${FLOW_LABELS[next]}`.slice(0, 20),
           data: `a=switch&to=${next}`,
           style: 'primary',
         },
         {
-          label: `繼續${FLOW_LABELS[draft.flow_type]}`.slice(0, 20),
+          label: `�~��${FLOW_LABELS[draft.flow_type]}`.slice(0, 20),
           data: 'a=resume',
           style: 'secondary',
         },
@@ -1364,17 +1516,17 @@ async function prepareActiveDraft(
     await finalizeDraft(admin, draft.id, 'expired')
     const extra = cleanup.ok
       ? ''
-      : `\n（提醒：部分暫存媒體未能自動清除：${cleanup.message || '請到網站照片頁檢查'}）`
+      : `\n�]�����G�����Ȧs�C�饼��۰ʲM���G${cleanup.message || '�Ш�����Ӥ����ˬd'}�^`
     return {
       draft: null,
       age: 'expired',
       messages: [
-        textMsg(`原本未完成的操作已超過保留時間，草稿已清除。${extra}`),
+        textMsg(`�쥻���������ާ@�w�W�L�O�d�ɶ��A��Z�w�M���C${extra}`),
       ],
     }
   }
 
-  // paused band — do NOT bump last_activity_at (would reset the idle clock)
+  // paused band �X do NOT bump last_activity_at (would reset the idle clock)
   if (draft.flow_status !== 'paused') {
     const { error } = await admin
       .from('line_flow_drafts')
@@ -1394,15 +1546,15 @@ async function prepareActiveDraft(
     age: 'paused',
     messages: [
       flexMenu({
-        altText: '暫停中的操作',
-        eyebrow: '暫停提醒',
-        title: '有暫停中的操作',
-        body: `類型：${FLOW_LABELS[draft.flow_type]}\n工地：${
-          draft.draft_payload?.siteName || '—'
-        }\n已填寫：${summary.filled}\n最後操作：${formatTaipei(draft.last_activity_at)}`,
+        altText: '�Ȱ������ާ@',
+        eyebrow: '�Ȱ�����',
+        title: '���Ȱ������ާ@',
+        body: `�����G${FLOW_LABELS[draft.flow_type]}\n�u�a�G${
+          draft.draft_payload?.siteName || '�X'
+        }\n�w��g�G${summary.filled}\n�̫�ާ@�G${formatTaipei(draft.last_activity_at)}`,
         buttons: [
-          { label: '繼續操作', data: 'a=resume', style: 'primary' },
-          { label: '取消並開始新功能', data: 'a=cancel', style: 'secondary' },
+          { label: '�~��ާ@', data: 'a=resume', style: 'primary' },
+          { label: '�����ö}�l�s�\��', data: 'a=cancel', style: 'secondary' },
         ],
       }),
     ],
@@ -1413,61 +1565,61 @@ function summarizeDraft(draft: DraftRow): { filled: string; pending: string } {
   const p = draft.draft_payload || {}
   if (draft.flow_type === 'attendance') {
     return {
-      filled: p.openShift ? '上班中' : '選單',
-      pending: p.selectingSite ? '選擇工地' : '完成打卡操作',
+      filled: p.openShift ? '�W�Z��' : '���',
+      pending: p.selectingSite ? '��ܤu�a' : '�������d�ާ@',
     }
   }
   if (draft.flow_type === 'purchase') {
     const filled: string[] = []
     const pending: string[] = []
-    if (p.kind === 'expense') filled.push('支出')
-    else if (p.kind === 'receipt') filled.push('收款')
-    else pending.push('選擇支出或收款')
-    if (p.siteName) filled.push('工地')
-    else if (p.kind) pending.push('選擇工地')
+    if (p.kind === 'expense') filled.push('��X')
+    else if (p.kind === 'receipt') filled.push('����')
+    else pending.push('��ܤ�X�Φ���')
+    if (p.siteName) filled.push('�u�a')
+    else if (p.kind) pending.push('��ܤu�a')
     if (p.kind === 'expense') {
-      if (p.item) filled.push('項目')
-      else if (p.siteName) pending.push('填寫項目')
+      if (p.item) filled.push('����')
+      else if (p.siteName) pending.push('��g����')
     } else if (p.kind === 'receipt' && p.sourceNote) {
-      filled.push('來源')
+      filled.push('�ӷ�')
     }
-    if (p.amount != null) filled.push('金額')
-    else if (p.kind === 'expense' ? p.item : p.siteName) pending.push('填寫金額')
-    if (Number(p.receiptCount ?? 0) > 0) filled.push(`${p.receiptCount} 張收據`)
-    if (p.amount != null) pending.push('確認送出')
+    if (p.amount != null) filled.push('���B')
+    else if (p.kind === 'expense' ? p.item : p.siteName) pending.push('��g���B')
+    if (Number(p.receiptCount ?? 0) > 0) filled.push(`${p.receiptCount} �i����`)
+    if (p.amount != null) pending.push('�T�{�e�X')
     return {
-      filled: filled.length ? filled.join('、') : '尚無',
-      pending: pending.length ? pending.join('、') : '確認送出',
+      filled: filled.length ? filled.join('�B') : '�|�L',
+      pending: pending.length ? pending.join('�B') : '�T�{�e�X',
     }
   }
   if (draft.flow_type === 'location') {
     return {
-      filled: draft.current_step === 'await_location' ? '等待分享位置' : '選方式',
+      filled: draft.current_step === 'await_location' ? '���ݤ��ɦ�m' : '��覡',
       pending:
         draft.current_step === 'select_site'
-          ? '選擇工地'
+          ? '��ܤu�a'
           : draft.current_step === 'await_location'
-            ? '分享 LINE 位置'
-            : '選擇分享位置或工地',
+            ? '���� LINE ��m'
+            : '��ܤ��ɦ�m�Τu�a',
     }
   }
   if (draft.flow_type !== 'photo_upload') {
-    return { filled: '進行中', pending: '完成操作' }
+    return { filled: '�i�椤', pending: '�����ާ@' }
   }
   const filled: string[] = []
   const pending: string[] = []
-  if (p.siteName) filled.push('工地')
-  else pending.push('選擇工地')
-  if (p.photoType) filled.push('照片類型')
-  else if (p.siteName) pending.push('選擇照片類型')
-  if (Number(p.photoCount ?? 0) > 0) filled.push(`${p.photoCount} 張照片`)
-  else if (p.photoType) pending.push('傳送照片')
+  if (p.siteName) filled.push('�u�a')
+  else pending.push('��ܤu�a')
+  if (p.photoType) filled.push('�Ӥ�����')
+  else if (p.siteName) pending.push('��ܷӤ�����')
+  if (Number(p.photoCount ?? 0) > 0) filled.push(`${p.photoCount} �i�Ӥ�`)
+  else if (p.photoType) pending.push('�ǰe�Ӥ�')
   if (p.step === 'receiving' || Number(p.photoCount ?? 0) > 0 || p.photoType) {
-    pending.push('確認送出')
+    pending.push('�T�{�e�X')
   }
   return {
-    filled: filled.length ? filled.join('、') : '尚無',
-    pending: pending.length ? pending.join('、') : '確認送出',
+    filled: filled.length ? filled.join('�B') : '�|�L',
+    pending: pending.length ? pending.join('�B') : '�T�{�e�X',
   }
 }
 
@@ -1475,8 +1627,8 @@ async function requireProfile(
   admin: Sb | null,
   lineUserId: string,
 ): Promise<Profile | { error: string }> {
-  if (!admin) return { error: '伺服器尚未設定資料庫。' }
-  if (!lineUserId) return { error: '讀不到你的 LINE User ID。' }
+  if (!admin) return { error: '���A���|���]�w��Ʈw�C' }
+  if (!lineUserId) return { error: 'Ū����A�� LINE User ID�C' }
   const { data, error } = await admin
     .from('profiles')
     .select('id, organization_id, name, line_user_id, role, access_template')
@@ -1484,11 +1636,11 @@ async function requireProfile(
     .maybeSingle()
   if (error) {
     console.warn('[line-webhook] profile lookup failed', error.message)
-    return { error: '查詢帳號時出錯。' }
+    return { error: '�d�߱b���ɥX���C' }
   }
   if (!data) {
     return {
-      error: '尚未綁定。請先到工程管家「個人中心」按「用 LINE 綁定」。',
+      error: '�|���j�w�C�Х���u�{�ޮa�u�ӤH���ߡv���u�� LINE �j�w�v�C',
     }
   }
   return data as Profile
@@ -1541,7 +1693,7 @@ async function createDraft(
     .single()
   if (error) {
     console.warn('[line-webhook] create draft failed', error.message)
-    throw new Error('無法建立流程草稿')
+    throw new Error('�L�k�إ߬y�{��Z')
   }
   return {
     ...(data as DraftRow),
@@ -1624,7 +1776,7 @@ async function deletePhotoBatch(
     .eq('batch_id', batchId)
   if (loadError) {
     console.warn('[line-webhook] load batch failed', loadError.message)
-    return { deleted: 0, failed: 0, error: '無法讀取待刪照片' }
+    return { deleted: 0, failed: 0, error: '�L�kŪ���ݧR�Ӥ�' }
   }
   const list = rows ?? []
   if (list.length === 0) return { deleted: 0, failed: 0 }
@@ -1641,7 +1793,7 @@ async function deletePhotoBatch(
       return {
         deleted: 0,
         failed: list.length,
-        error: '雲端檔案刪除失敗，請再按一次「取消上傳」重試',
+        error: '�����ɮקR�����ѡA�ЦA���@���u�����W�ǡv����',
       }
     }
   }
@@ -1656,7 +1808,7 @@ async function deletePhotoBatch(
     return {
       deleted: 0,
       failed: list.length,
-      error: '照片資料刪除失敗，請再按一次「取消上傳」重試',
+      error: '�Ӥ���ƧR�����ѡA�ЦA���@���u�����W�ǡv����',
     }
   }
   return { deleted: ids.length, failed: 0 }
@@ -1676,7 +1828,7 @@ async function cleanupDraftMedia(
         ok: false,
         message:
           result.error ||
-          `尚有 ${result.failed} 張照片未能刪除，請再按「取消上傳」重試`,
+          `�|�� ${result.failed} �i�Ӥ�����R���A�ЦA���u�����W�ǡv����`,
       }
     }
     return { ok: true }
@@ -1691,7 +1843,7 @@ async function cleanupDraftMedia(
       .remove(paths)
     if (storageError) {
       console.warn('[line-webhook] receipt cleanup failed', storageError.message)
-      return { ok: false, message: '收據照片刪除失敗，請再取消一次重試' }
+      return { ok: false, message: '���ڷӤ��R�����ѡA�ЦA�����@������' }
     }
     await admin.from('photo_uploads').delete().in('storage_path', paths)
     return { ok: true }
@@ -1707,18 +1859,18 @@ async function cancelDraftWithCleanup(
   if (!cleanup.ok) {
     return [
       flexMenu({
-        altText: '取消未完成',
+        altText: '����������',
         eyebrow: FLOW_LABELS[draft.flow_type],
-        title: '刪除未完成',
-        body: cleanup.message || '部分資料未能清除，請再試一次取消',
+        title: '�R��������',
+        body: cleanup.message || '������ƥ���M���A�ЦA�դ@������',
         buttons: [
           {
-            label: draft.flow_type === 'photo_upload' ? '再試取消上傳' : '再試取消',
+            label: draft.flow_type === 'photo_upload' ? '�A�ը����W��' : '�A�ը���',
             data:
               draft.flow_type === 'photo_upload' ? 'a=photo_cancel' : 'a=cancel',
             style: 'primary',
           },
-          { label: '繼續操作', data: 'a=resume', style: 'secondary' },
+          { label: '�~��ާ@', data: 'a=resume', style: 'secondary' },
         ],
       }),
     ]
@@ -1727,19 +1879,19 @@ async function cancelDraftWithCleanup(
   if (draft.flow_type === 'photo_upload') {
     return [
       flexMenu({
-        altText: '已取消並刪除照片',
-        eyebrow: '上傳照片',
-        title: '已取消並刪除照片',
-        body: '此批次照片資料與雲端檔案已清除，可再從圖文選單重新開始',
+        altText: '�w�����çR���Ӥ�',
+        eyebrow: '�W�ǷӤ�',
+        title: '�w�����çR���Ӥ�',
+        body: '���妸�Ӥ���ƻP�����ɮפw�M���A�i�A�q�Ϥ��歫�s�}�l',
       }),
     ]
   }
   return [
     flexMenu({
-      altText: '已取消目前操作',
-      eyebrow: '操作取消',
-      title: '已取消',
-      body: '可再從圖文選單開始新功能',
+      altText: '�w�����ثe�ާ@',
+      eyebrow: '�ާ@����',
+      title: '�w����',
+      body: '�i�A�q�Ϥ���}�l�s�\��',
     }),
   ]
 }
@@ -1751,22 +1903,22 @@ async function storeLineImage(
   messageId: string,
   meta: { siteId: string | null; photoType: string; batchId: string },
 ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
-  if (!admin) return { ok: false, error: '收圖失敗：伺服器尚未設定資料庫。' }
-  if (!messageId) return { ok: false, error: '收圖失敗：缺少訊息編號。' }
+  if (!admin) return { ok: false, error: '���ϥ��ѡG���A���|���]�w��Ʈw�C' }
+  if (!messageId) return { ok: false, error: '���ϥ��ѡG�ʤְT���s���C' }
 
   try {
     const contentRes = await fetch(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
       headers: { Authorization: `Bearer ${lineToken}` },
     })
     if (!contentRes.ok) {
-      return { ok: false, error: '收圖失敗：無法向 LINE 下載照片。' }
+      return { ok: false, error: '���ϥ��ѡG�L�k�V LINE �U���Ӥ��C' }
     }
 
     const contentType = contentRes.headers.get('content-type') || 'image/jpeg'
     const bytes = new Uint8Array(await contentRes.arrayBuffer())
-    if (bytes.byteLength === 0) return { ok: false, error: '收圖失敗：檔案是空的。' }
+    if (bytes.byteLength === 0) return { ok: false, error: '���ϥ��ѡG�ɮ׬O�Ū��C' }
     if (bytes.byteLength > 15 * 1024 * 1024) {
-      return { ok: false, error: '收圖失敗：檔案超過 15MB。' }
+      return { ok: false, error: '���ϥ��ѡG�ɮ׶W�L 15MB�C' }
     }
 
     const ext = contentType.includes('png')
@@ -1782,7 +1934,7 @@ async function storeLineImage(
     })
     if (uploadError) {
       console.warn('[line-webhook] storage upload failed', uploadError.message)
-      return { ok: false, error: '收圖失敗：無法存入雲端。' }
+      return { ok: false, error: '���ϥ��ѡG�L�k�s�J���ݡC' }
     }
 
     const { error: insertError } = await admin.from('photo_uploads').insert({
@@ -1800,12 +1952,12 @@ async function storeLineImage(
     })
     if (insertError) {
       console.warn('[line-webhook] insert failed', insertError.message)
-      return { ok: false, error: '收圖失敗：寫入資料庫失敗。草稿仍保留，可再傳一次。' }
+      return { ok: false, error: '���ϥ��ѡG�g�J��Ʈw���ѡC��Z���O�d�A�i�A�Ǥ@���C' }
     }
     return { ok: true, path }
   } catch (err) {
     console.warn('[line-webhook] image threw', String(err).slice(0, 200))
-    return { ok: false, error: '收圖失敗：系統例外，請稍後再試。' }
+    return { ok: false, error: '���ϥ��ѡG�t�Ψҥ~�A�еy��A�աC' }
   }
 }
 
@@ -1823,14 +1975,14 @@ function parseMenuIntent(
 ): FlowType | 'cancel' | 'resume' | 'open_app' | null {
   const t = text.trim()
   if (!t) return null
-  if (/^(取消操作|取消流程|取消)$/.test(t)) return 'cancel'
-  if (/^(繼續操作|繼續)$/.test(t)) return 'resume'
-  if (/進入工地|工程系統|工程管家主頁|^主頁$/.test(t)) return 'open_app'
-  if (/上傳照片|傳送照片|傳照片|施工照片/.test(t)) return 'photo_upload'
-  if (/待辦事項|我的待辦|^待辦$/.test(t)) return 'todos'
-  if (/出勤打卡|上下班|上班打卡|下班打卡|切換工地/.test(t)) return 'attendance'
-  if (/紀錄地點|記錄地點|到點打卡|足跡/.test(t)) return 'location'
-  if (/^記帳$|支出|收款|採購申請|材料採購|^採購$|支出／收款|支出\/收款/.test(t))
+  if (/^(�����ާ@|�����y�{|����)$/.test(t)) return 'cancel'
+  if (/^(�~��ާ@|�~��)$/.test(t)) return 'resume'
+  if (/�i�J�u�a|�u�{�t��|�u�{�ޮa�D��|^�D��$/.test(t)) return 'open_app'
+  if (/�W�ǷӤ�|�ǰe�Ӥ�|�ǷӤ�|�I�u�Ӥ�/.test(t)) return 'photo_upload'
+  if (/�ݿ�ƶ�|�ڪ��ݿ�|^�ݿ�$/.test(t)) return 'todos'
+  if (/�X�ԥ��d|�W�U�Z|�W�Z���d|�U�Z���d|�����u�a/.test(t)) return 'attendance'
+  if (/�����a�I|�O���a�I|���I���d|����/.test(t)) return 'location'
+  if (/^�O�b$|��X|����|���ʥӽ�|���Ʊ���|^����$|��X������|��X\/����/.test(t))
     return 'purchase'
   return null
 }
@@ -1863,7 +2015,7 @@ type FlexButton = {
   style?: 'primary' | 'secondary'
 }
 
-/** Single-card Flex menu (same visual language as 待辦). */
+/** Single-card Flex menu (same visual language as �ݿ�). */
 function flexMenu(input: {
   altText: string
   eyebrow: string
@@ -1918,7 +2070,7 @@ function actionBubble(input: {
       contents: [
         {
           type: 'text',
-          text: input.eyebrow.slice(0, 20) || '操作',
+          text: input.eyebrow.slice(0, 20) || '�ާ@',
           size: 'xs',
           color: theme.accent,
         },
@@ -1965,12 +2117,12 @@ function siteCarousel(input: {
       flexMenu({
         altText: input.altText,
         eyebrow: input.eyebrow,
-        title: '沒有可用工地',
-        body: '請先到工程管家建立工地。',
+        title: '�S���i�Τu�a',
+        body: '�Х���u�{�ޮa�إߤu�a�C',
         profile: input.profile,
         buttons: input.extraButtons?.length
           ? input.extraButtons
-          : [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+          : [{ label: '����', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
@@ -1983,7 +2135,7 @@ function siteCarousel(input: {
       profile: input.profile,
       buttons: [
         {
-          label: '選擇',
+          label: '���',
           data: `${input.actionPrefix}${s.id}`,
           style: 'primary',
         },
@@ -1995,8 +2147,8 @@ function siteCarousel(input: {
     bubbles.push(
       actionBubble({
         eyebrow: input.eyebrow,
-        title: '其他選項',
-        body: '不指定工地或取消',
+        title: '��L�ﶵ',
+        body: '�����w�u�a�Ψ���',
         profile: input.profile,
         buttons: input.extraButtons,
       }),
@@ -2062,13 +2214,13 @@ function taipeiDayEndIso(iso: string): string {
 function extractBindCode(text: string): string | null {
   const normalized = text
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/[：:]/g, ' ')
+    .replace(/[�G:]/g, ' ')
     .trim()
-  const withKeyword = normalized.match(/(?:綁定|bind)\s*([A-Za-z0-9]{6})\b/i)
+  const withKeyword = normalized.match(/(?:�j�w|bind)\s*([A-Za-z0-9]{6})\b/i)
   if (withKeyword?.[1]) return withKeyword[1].toUpperCase()
   const bare = normalized.match(/^([A-Za-z0-9]{6})$/i)
   if (bare?.[1]) return bare[1].toUpperCase()
-  const loose = normalized.match(/(?:綁定|bind)[^A-Za-z0-9]*([A-Za-z0-9]{6})/i)
+  const loose = normalized.match(/(?:�j�w|bind)[^A-Za-z0-9]*([A-Za-z0-9]{6})/i)
   if (loose?.[1]) return loose[1].toUpperCase()
   return null
 }
@@ -2078,8 +2230,8 @@ async function handleBind(
   code: string,
   lineUserId: string,
 ): Promise<string> {
-  if (!admin) return '綁定失敗：伺服器尚未設定資料庫金鑰。'
-  if (!lineUserId) return '綁定失敗：讀不到你的 LINE User ID。'
+  if (!admin) return '�j�w���ѡG���A���|���]�w��Ʈw���_�C'
+  if (!lineUserId) return '�j�w���ѡGŪ����A�� LINE User ID�C'
 
   const { data, error } = await admin.rpc('consume_line_bind_code', {
     p_code: code,
@@ -2087,7 +2239,7 @@ async function handleBind(
   })
   if (error) {
     console.warn('[line-webhook] consume failed', error.message)
-    return `綁定失敗：系統錯誤。代碼 ${code}`
+    return `�j�w���ѡG�t�ο��~�C�N�X ${code}`
   }
 
   const result = (typeof data === 'string' ? JSON.parse(data) : data) as {
@@ -2099,16 +2251,16 @@ async function handleBind(
   if (!result?.ok) {
     const err = result?.error ?? 'unknown'
     if (err === 'code_not_found_or_expired') {
-      return `綁定失敗：代碼 ${code} 無效或已過期。請回系統重新產生。`
+      return `�j�w���ѡG�N�X ${code} �L�ĩΤw�L���C�Ц^�t�έ��s���͡C`
     }
-    return `綁定失敗（${err}）。代碼 ${code}`
+    return `�j�w���ѡ]${err}�^�C�N�X ${code}`
   }
 
-  const name = result.name ? `，${result.name}` : ''
-  return `綁定成功${name}！可用圖文選單操作上傳照片與待辦。`
+  const name = result.name ? `�A${result.name}` : ''
+  return `�j�w���\${name}�I�i�ιϤ���ާ@�W�ǷӤ��P�ݿ�C`
 }
 
-// ----- Location footprints (到點打卡／足跡) -----
+// ----- Location footprints (���I���d������) -----
 
 /**
  * Prefer dedicated LIFF apps (Endpoint = exact page) to avoid double redirect.
@@ -2142,27 +2294,27 @@ function expenseLiffUri(): string {
 function handoffAttendanceToLiff(): LineMessage[] {
   return [
     flexMenu({
-      altText: '出勤打卡',
-      eyebrow: '出勤',
-      title: '出勤打卡',
-      body: '開啟後即可一鍵上下班。',
+      altText: '�X�ԥ��d',
+      eyebrow: '�X��',
+      title: '�X�ԥ��d',
+      body: '�}�ҫ�Y�i�@��W�U�Z�C',
       buttons: [
-        { label: '開啟出勤', uri: attendanceLiffUri(), style: 'primary' },
+        { label: '�}�ҥX��', uri: attendanceLiffUri(), style: 'primary' },
       ],
     }),
   ]
 }
 
-/** Prefer LIFF GPS page — opens and starts locating immediately. */
+/** Prefer LIFF GPS page �X opens and starts locating immediately. */
 function handoffLocationToLiff(): LineMessage[] {
   return [
     flexMenu({
-      altText: '紀錄地點',
-      eyebrow: '地點',
-      title: '紀錄地點',
-      body: '開啟後會自動定位。',
+      altText: '�����a�I',
+      eyebrow: '�a�I',
+      title: '�����a�I',
+      body: '�}�ҫ�|�۰ʩw��C',
       buttons: [
-        { label: '開啟定位', uri: locationLiffUri(), style: 'primary' },
+        { label: '�}�ҩw��', uri: locationLiffUri(), style: 'primary' },
       ],
     }),
   ]
@@ -2172,12 +2324,12 @@ function handoffLocationToLiff(): LineMessage[] {
 function handoffExpenseToLiff(): LineMessage[] {
   return [
     flexMenu({
-      altText: '記帳',
-      eyebrow: '記帳',
-      title: '記帳',
-      body: '一頁填金額送出，不用一步步輸入。',
+      altText: '�O�b',
+      eyebrow: '�O�b',
+      title: '�O�b',
+      body: '�@������B�e�X�A���Τ@�B�B��J�C',
       buttons: [
-        { label: '開啟記帳', uri: expenseLiffUri(), style: 'primary' },
+        { label: '�}�ҰO�b', uri: expenseLiffUri(), style: 'primary' },
       ],
     }),
   ]
@@ -2195,14 +2347,14 @@ async function handoffLocationToWeb(
 async function promptLocationMethod(_draft: DraftRow): Promise<LineMessage[]> {
   return [
     flexMenu({
-      altText: '要如何紀錄目前位置？',
-      eyebrow: '紀錄地點',
-      title: '要如何紀錄目前位置？',
-      body: '外面跑動時可隨手留下足跡；不會自動上下班。選「分享目前位置」後，到網站允許定位即可。',
+      altText: '�n�p������ثe��m�H',
+      eyebrow: '�����a�I',
+      title: '�n�p������ثe��m�H',
+      body: '�~���]�ʮɥi�H��d�U����F���|�۰ʤW�U�Z�C��u���ɥثe��m�v��A��������\�w��Y�i�C',
       buttons: [
-        { label: '分享目前位置', data: 'a=loc_share', style: 'primary' },
-        { label: '選擇工地', data: 'a=loc_site', style: 'secondary' },
-        { label: '取消', data: 'a=cancel', style: 'secondary' },
+        { label: '���ɥثe��m', data: 'a=loc_share', style: 'primary' },
+        { label: '��ܤu�a', data: 'a=loc_site', style: 'secondary' },
+        { label: '����', data: 'a=cancel', style: 'secondary' },
       ],
     }),
   ]
@@ -2214,15 +2366,15 @@ async function handleLocationText(
   draft: DraftRow,
   text: string,
 ): Promise<LineMessage[]> {
-  if (/分享|目前位置|定位/.test(text)) {
+  if (/����|�ثe��m|�w��/.test(text)) {
     return handoffLocationToWeb(admin, draft)
   }
-  if (/選擇工地|工地/.test(text)) {
+  if (/��ܤu�a|�u�a/.test(text)) {
     return promptLocationSites(admin, profile, draft)
   }
-  if (/取消/.test(text)) {
+  if (/����/.test(text)) {
     await finalizeDraft(admin, draft.id, 'cancelled')
-    return [textMsg('已取消地點紀錄。')]
+    return [textMsg('�w�����a�I�����C')]
   }
   return promptLocationMethod(draft)
 }
@@ -2239,7 +2391,7 @@ async function handleLocationMessage(
 ): Promise<LineMessage[]> {
   const profile = await requireProfile(admin, lineUserId)
   if ('error' in profile) return [textMsg(profile.error)]
-  if (!admin) return [textMsg('伺服器尚未設定資料庫。')]
+  if (!admin) return [textMsg('���A���|���]�w��Ʈw�C')]
 
   const gate = await prepareActiveDraft(admin, profile)
   if (gate.messages && (gate.age === 'paused' || gate.age === 'expired')) {
@@ -2258,13 +2410,13 @@ async function handleLocationMessage(
     !Number.isFinite(loc.longitude)
   ) {
     return [
-      textMsg('讀不到有效座標，請改選工地或再分享一次位置。'),
+      textMsg('Ū���즳�Įy�СA�Ч��u�a�ΦA���ɤ@����m�C'),
       ...(await promptLocationMethod(draft)),
     ]
   }
 
   const open = await getOpenAttendance(admin, profile.id)
-  const label = loc.title || loc.address || '目前位置'
+  const label = loc.title || loc.address || '�ثe��m'
   const now = new Date().toISOString()
   const { error } = await admin.from('location_checkins').insert({
     organization_id: profile.organization_id,
@@ -2280,16 +2432,16 @@ async function handleLocationMessage(
   })
   if (error) {
     console.warn('[line-webhook] location insert failed', error.message)
-    return [textMsg('地點紀錄失敗，請稍後再試。')]
+    return [textMsg('�a�I�������ѡA�еy��A�աC')]
   }
 
   await finalizeDraft(admin, draft.id, 'completed')
   return [
     flexMenu({
-      altText: '地點紀錄完成',
-      eyebrow: '紀錄地點',
-      title: '地點紀錄完成',
-      body: `時間：${formatTaipei(now)}\n位置／工地：${label}`,
+      altText: '�a�I��������',
+      eyebrow: '�����a�I',
+      title: '�a�I��������',
+      body: `�ɶ��G${formatTaipei(now)}\n��m���u�a�G${label}`,
     }),
   ]
 }
@@ -2307,23 +2459,23 @@ async function promptLocationSites(
   if (sites.length === 0) {
     return [
       flexMenu({
-        altText: '沒有可用工地',
-        eyebrow: '紀錄地點',
-        title: '沒有可用工地',
-        body: '請改用「分享目前位置」，或先到網站建立工地。',
+        altText: '�S���i�Τu�a',
+        eyebrow: '�����a�I',
+        title: '�S���i�Τu�a',
+        body: '�Ч�Ρu���ɥثe��m�v�A�Υ�������إߤu�a�C',
         buttons: [
-          { label: '分享目前位置', data: 'a=loc_share', style: 'primary' },
-          { label: '取消', data: 'a=cancel', style: 'secondary' },
+          { label: '���ɥثe��m', data: 'a=loc_share', style: 'primary' },
+          { label: '����', data: 'a=cancel', style: 'secondary' },
         ],
       }),
     ]
   }
   return siteCarousel({
-    altText: '請選擇工地',
-    eyebrow: '紀錄地點',
+    altText: '�п�ܤu�a',
+    eyebrow: '�����a�I',
     sites,
     actionPrefix: 'a=loc_site_pick&id=',
-    extraButtons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+    extraButtons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
   })
 }
 
@@ -2335,7 +2487,7 @@ async function saveLocationBySite(
 ): Promise<LineMessage[]> {
   const sites = await listSites(admin, profile.organization_id)
   const site = sites.find((s) => s.id === siteId)
-  if (!site) return [textMsg('找不到該工地，請重新選擇。')]
+  if (!site) return [textMsg('�䤣��Ӥu�a�A�Э��s��ܡC')]
 
   const open = await getOpenAttendance(admin, profile.id)
   const now = new Date().toISOString()
@@ -2353,16 +2505,16 @@ async function saveLocationBySite(
   })
   if (error) {
     console.warn('[line-webhook] location site insert failed', error.message)
-    return [textMsg('地點紀錄失敗，請稍後再試。')]
+    return [textMsg('�a�I�������ѡA�еy��A�աC')]
   }
 
   await finalizeDraft(admin, draft.id, 'completed')
   return [
     flexMenu({
-      altText: '地點紀錄完成',
-      eyebrow: '紀錄地點',
-      title: '地點紀錄完成',
-      body: `時間：${formatTaipei(now)}\n位置／工地：${site.name}`,
+      altText: '�a�I��������',
+      eyebrow: '�����a�I',
+      title: '�a�I��������',
+      body: `�ɶ��G${formatTaipei(now)}\n��m���u�a�G${site.name}`,
     }),
   ]
 }
@@ -2395,7 +2547,7 @@ async function getOpenAttendance(
       .update({
         status: 'clocked_out',
         clock_out_at: taipeiDayEndIso(data.clock_in_at),
-        note: `${data.note ? `${data.note} ` : ''}[跨日自動下班]`,
+        note: `${data.note ? `${data.note} ` : ''}[���۰ʤU�Z]`,
       })
       .eq('id', data.id)
       .eq('user_id', userId)
@@ -2426,19 +2578,19 @@ async function promptAttendanceMenu(
   if (open) {
     const siteLabel = open.site_id
       ? (await listSites(admin, profile.organization_id)).find((s) => s.id === open.site_id)
-          ?.name || '未知工地'
-      : '尚未登記工地'
+          ?.name || '�����u�a'
+      : '�|���n�O�u�a'
     return [
       flexMenu({
-        altText: '出勤打卡：上班中',
+        altText: '�X�ԥ��d�G�W�Z��',
         profile,
-        eyebrow: '出勤打卡',
-        title: '目前上班中',
-        body: `上班時間：${formatTaipei(open.clock_in_at)}\n目前工地：${siteLabel}\n切換工地會新增一筆到訪紀錄`,
+        eyebrow: '�X�ԥ��d',
+        title: '�ثe�W�Z��',
+        body: `�W�Z�ɶ��G${formatTaipei(open.clock_in_at)}\n�ثe�u�a�G${siteLabel}\n�����u�a�|�s�W�@����X����`,
         buttons: [
-          { label: '下班打卡', data: 'a=att_out', style: 'primary' },
-          { label: '切換工地', data: 'a=att_site', style: 'secondary' },
-          { label: '取消', data: 'a=cancel', style: 'secondary' },
+          { label: '�U�Z���d', data: 'a=att_out', style: 'primary' },
+          { label: '�����u�a', data: 'a=att_site', style: 'secondary' },
+          { label: '����', data: 'a=cancel', style: 'secondary' },
         ],
       }),
     ]
@@ -2446,14 +2598,14 @@ async function promptAttendanceMenu(
 
   return [
     flexMenu({
-      altText: '出勤打卡：未上班',
+      altText: '�X�ԥ��d�G���W�Z',
       profile,
-      eyebrow: '出勤打卡',
-      title: '目前未上班',
-      body: '請選擇要進行的操作',
+      eyebrow: '�X�ԥ��d',
+      title: '�ثe���W�Z',
+      body: '�п�ܭn�i�檺�ާ@',
       buttons: [
-        { label: '一鍵上班', data: 'a=att_in', style: 'primary' },
-        { label: '取消', data: 'a=cancel', style: 'secondary' },
+        { label: '�@��W�Z', data: 'a=att_in', style: 'primary' },
+        { label: '����', data: 'a=cancel', style: 'secondary' },
       ],
     }),
   ]
@@ -2465,9 +2617,9 @@ async function handleAttendanceText(
   draft: DraftRow,
   text: string,
 ): Promise<LineMessage[]> {
-  if (/一鍵上班|上班/.test(text)) return clockInLine(admin, profile, draft)
-  if (/下班/.test(text)) return clockOutLine(admin, profile, draft)
-  if (/切換工地|補登工地/.test(text)) {
+  if (/�@��W�Z|�W�Z/.test(text)) return clockInLine(admin, profile, draft)
+  if (/�U�Z/.test(text)) return clockOutLine(admin, profile, draft)
+  if (/�����u�a|�ɵn�u�a/.test(text)) {
     return promptAttendanceSite(admin, profile, draft)
   }
   const num = Number(text)
@@ -2491,7 +2643,7 @@ async function clockInLine(
   const open = await getOpenAttendance(admin, profile.id)
   if (open) {
     return [
-      textMsg('你已在上班中，請先下班或切換工地。'),
+      textMsg('�A�w�b�W�Z���A�Х��U�Z�Τ����u�a�C'),
       ...(await promptAttendanceMenu(admin, profile, draft)),
     ]
   }
@@ -2509,10 +2661,10 @@ async function clockInLine(
     .single()
   if (error) {
     console.warn('[line-webhook] clock in failed', error.message)
-    return [textMsg('上班打卡失敗，請稍後再試。草稿仍保留。')]
+    return [textMsg('�W�Z���d���ѡA�еy��A�աC��Z���O�d�C')]
   }
 
-  // Clock-in itself finishes the draft — site pick is optional and must not block other LINE features.
+  // Clock-in itself finishes the draft �X site pick is optional and must not block other LINE features.
   await finalizeDraft(admin, draft.id, 'completed')
 
   const timeLabel = formatTaipeiTime(String(data.clock_in_at))
@@ -2520,19 +2672,19 @@ async function clockInLine(
   if (sites.length === 0) {
     return [
       textMsg(
-        `上班打卡完成｜${timeLabel}\n目前沒有可選工地，可稍後到網站建立後再切換。`,
+        `�W�Z���d�����U${timeLabel}\n�ثe�S���i��u�a�A�i�y�������إ߫�A�����C`,
       ),
     ]
   }
 
   return [
     textMsg(
-      `上班打卡完成｜${timeLabel}\n如要登記目前工地，請直接選擇：`,
+      `�W�Z���d�����U${timeLabel}\n�p�n�n�O�ثe�u�a�A�Ъ�����ܡG`,
     ),
     ...siteCarousel({
-      altText: '選擇目前工地',
+      altText: '��ܥثe�u�a',
       profile,
-      eyebrow: '出勤打卡',
+      eyebrow: '�X�ԥ��d',
       sites,
       actionPrefix: 'a=att_site_pick&id=',
     }),
@@ -2547,7 +2699,7 @@ async function clockOutLine(
   const open = await getOpenAttendance(admin, profile.id)
   if (!open) {
     await finalizeDraft(admin, draft.id, 'cancelled')
-    return [textMsg('目前沒有進行中的班次。')]
+    return [textMsg('�ثe�S���i�椤���Z���C')]
   }
 
   const now = new Date().toISOString()
@@ -2558,17 +2710,17 @@ async function clockOutLine(
     .eq('user_id', profile.id)
   if (error) {
     console.warn('[line-webhook] clock out failed', error.message)
-    return [textMsg('下班打卡失敗，請稍後再試。')]
+    return [textMsg('�U�Z���d���ѡA�еy��A�աC')]
   }
 
   await finalizeDraft(admin, draft.id, 'completed')
   return [
     flexMenu({
-      altText: '下班打卡完成',
+      altText: '�U�Z���d����',
       profile,
-      eyebrow: '出勤打卡',
-      title: '下班打卡完成',
-      body: `時間：${formatTaipei(now)}\n今天的出勤紀錄已保存。`,
+      eyebrow: '�X�ԥ��d',
+      title: '�U�Z���d����',
+      body: `�ɶ��G${formatTaipei(now)}\n���Ѫ��X�Ԭ����w�O�s�C`,
     }),
   ]
 }
@@ -2582,12 +2734,12 @@ async function promptAttendanceSite(
   if (!open) {
     return [
       flexMenu({
-        altText: '請先上班',
+        altText: '�Х��W�Z',
         profile,
-        eyebrow: '出勤打卡',
-        title: '請先上班',
-        body: '選擇工地前需先完成上班打卡',
-        buttons: [{ label: '回出勤選單', data: 'a=resume', style: 'primary' }],
+        eyebrow: '�X�ԥ��d',
+        title: '�Х��W�Z',
+        body: '��ܤu�a�e�ݥ������W�Z���d',
+        buttons: [{ label: '�^�X�Կ��', data: 'a=resume', style: 'primary' }],
       }),
     ]
   }
@@ -2599,12 +2751,12 @@ async function promptAttendanceSite(
   })
 
   return siteCarousel({
-    altText: '請選擇工地',
+    altText: '�п�ܤu�a',
     profile,
-    eyebrow: '切換工地',
+    eyebrow: '�����u�a',
     sites,
     actionPrefix: 'a=att_site_pick&id=',
-    extraButtons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+    extraButtons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
   })
 }
 
@@ -2615,18 +2767,18 @@ async function assignAttendanceSite(
   siteId: string,
 ): Promise<LineMessage[]> {
   const open = await getOpenAttendance(admin, profile.id)
-  if (!open) return [textMsg('請先上班再選擇工地。')]
+  if (!open) return [textMsg('�Х��W�Z�A��ܤu�a�C')]
 
   const sites = await listSites(admin, profile.organization_id)
   const site = sites.find((s) => s.id === siteId)
   if (!site) {
     return [
-      textMsg('找不到工地。'),
+      textMsg('�䤣��u�a�C'),
       ...(draft
         ? await promptAttendanceSite(admin, profile, draft)
         : siteCarousel({
-            altText: '請選擇工地',
-            eyebrow: '出勤打卡',
+            altText: '�п�ܤu�a',
+            eyebrow: '�X�ԥ��d',
             sites,
             actionPrefix: 'a=att_site_pick&id=',
           })),
@@ -2641,7 +2793,7 @@ async function assignAttendanceSite(
     .eq('user_id', profile.id)
   if (error) {
     console.warn('[line-webhook] assign site failed', error.message)
-    return [textMsg('更新工地失敗，請稍後再試。')]
+    return [textMsg('��s�u�a���ѡA�еy��A�աC')]
   }
 
   // Append a visit record every time (never only overwrite attendance.site_id).
@@ -2658,7 +2810,7 @@ async function assignAttendanceSite(
     console.warn('[line-webhook] attendance visit insert failed', visitError.message)
     return [
       textMsg(
-        `工地欄位已更新為「${site.name}」，但到訪紀錄寫入失敗，請再選一次或到網站補登。`,
+        `�u�a���w��s���u${site.name}�v�A����X�����g�J���ѡA�ЦA��@���Ψ�����ɵn�C`,
       ),
     ]
   }
@@ -2666,28 +2818,28 @@ async function assignAttendanceSite(
   if (draft) await finalizeDraft(admin, draft.id, 'completed')
   return [
     flexMenu({
-      altText: `已登記工地：${site.name}`,
+      altText: `�w�n�O�u�a�G${site.name}`,
       profile,
-      eyebrow: '出勤打卡',
-      title: '已登記工地到訪',
-      body: `工地：${site.name}\n時間：${formatTaipei(now)}\n（每次切換都會新增一筆到訪紀錄）`,
+      eyebrow: '�X�ԥ��d',
+      title: '�w�n�O�u�a��X',
+      body: `�u�a�G${site.name}\n�ɶ��G${formatTaipei(now)}\n�]�C���������|�s�W�@����X�����^`,
     }),
   ]
 }
 
-// ----- V1.0: field cash (expense / receipt) — flow_type remains "purchase" for menu/DB -----
+// ----- V1.0: field cash (expense / receipt) �X flow_type remains "purchase" for menu/DB -----
 
 function promptCashKind(): LineMessage[] {
   return [
     flexMenu({
-      altText: '記帳',
-      eyebrow: '記帳',
-      title: '選擇回報類型',
-      body: '寫入現場支出或收款回報（非舊採購單）。未達老闆設定門檻的小額支出可自動確認。',
+      altText: '�O�b',
+      eyebrow: '�O�b',
+      title: '��ܦ^������',
+      body: '�g�J�{����X�Φ��ڦ^���]�D�±��ʳ�^�C���F����]�w���e���p�B��X�i�۰ʽT�{�C',
       buttons: [
-        { label: '支出回報', data: 'a=cash_kind&k=expense', style: 'primary' },
-        { label: '收款回報', data: 'a=cash_kind&k=receipt', style: 'secondary' },
-        { label: '取消', data: 'a=cancel', style: 'secondary' },
+        { label: '��X�^��', data: 'a=cash_kind&k=expense', style: 'primary' },
+        { label: '���ڦ^��', data: 'a=cash_kind&k=receipt', style: 'secondary' },
+        { label: '����', data: 'a=cancel', style: 'secondary' },
       ],
     }),
   ]
@@ -2700,7 +2852,7 @@ async function selectCashKind(
   kind: string,
 ): Promise<LineMessage[]> {
   if (kind !== 'expense' && kind !== 'receipt') {
-    return [textMsg('類型無效。'), ...promptCashKind()]
+    return [textMsg('�����L�ġC'), ...promptCashKind()]
   }
   await touchDraft(admin, draft.id, {
     current_step: 'select_site',
@@ -2720,34 +2872,34 @@ async function promptCashSiteFor(
 ): Promise<LineMessage[]> {
   const sites = await listSitesForProfile(admin, profile)
   const miscBtn = {
-    label: '雜項（加油／餐飲等）',
+    label: '�����]�[�o���\�����^',
     data: 'a=cash_misc',
     style: 'primary' as const,
   }
   if (sites.length === 0) {
     return [
       flexMenu({
-        altText: '選擇歸屬',
+        altText: '����k��',
         profile,
-        eyebrow: '記帳',
-        title: '沒有可選工地',
-        body: '可改走雜項（加油、買飯、飲料、臨時支援），或請老闆在網站指派工地權限。',
+        eyebrow: '�O�b',
+        title: '�S���i��u�a',
+        body: '�i�飼�����]�[�o�B�R���B���ơB�{�ɤ䴩�^�A�νЦ���b���������u�a�v���C',
         buttons: [
           miscBtn,
-          { label: '取消', data: 'a=cancel', style: 'secondary' },
+          { label: '����', data: 'a=cancel', style: 'secondary' },
         ],
       }),
     ]
   }
   return siteCarousel({
-    altText: '選擇工地或雜項',
+    altText: '��ܤu�a������',
     profile,
-    eyebrow: '記帳',
+    eyebrow: '�O�b',
     sites: sites.slice(0, 9),
     actionPrefix: 'a=cash_site&id=',
     extraButtons: [
       miscBtn,
-      { label: '取消', data: 'a=cancel', style: 'secondary' },
+      { label: '����', data: 'a=cancel', style: 'secondary' },
     ],
   })
 }
@@ -2763,7 +2915,7 @@ async function selectCashMisc(
     ...draft.draft_payload,
     misc: true,
     siteId: null,
-    siteName: '雜項（無工地）',
+    siteName: '�����]�L�u�a�^',
     locationText: null,
   }
   if (kind === 'expense') {
@@ -2773,11 +2925,11 @@ async function selectCashMisc(
     })
     return [
       flexMenu({
-        altText: '請輸入雜項項目',
-        eyebrow: '支出回報',
-        title: '雜項：輸入項目',
-        body: '例如：加油／買飯／飲料／臨時支援\n直接以文字回覆',
-        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        altText: '�п�J��������',
+        eyebrow: '��X�^��',
+        title: '�����G��J����',
+        body: '�Ҧp�G�[�o���R�������ơ��{�ɤ䴩\n�����H��r�^��',
+        buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
@@ -2793,16 +2945,16 @@ function promptCashLocation(
   payload?: Record<string, unknown>,
 ): LineMessage[] {
   const p = payload || draft.draft_payload || {}
-  const kindLabel = p.kind === 'receipt' ? '收款回報' : '支出回報'
+  const kindLabel = p.kind === 'receipt' ? '���ڦ^��' : '��X�^��'
   return [
     flexMenu({
-      altText: '請輸入地點（可跳過）',
+      altText: '�п�J�a�I�]�i���L�^',
       eyebrow: kindLabel,
-      title: '雜項：地點（可選）',
-      body: '可輸入地點文字（例如：中油忠孝站），或回覆「跳過」',
+      title: '�����G�a�I�]�i��^',
+      body: '�i��J�a�I��r�]�Ҧp�G���o�������^�A�Φ^�Сu���L�v',
       buttons: [
-        { label: '跳過', data: 'a=cash_loc_skip', style: 'primary' },
-        { label: '取消', data: 'a=cancel', style: 'secondary' },
+        { label: '���L', data: 'a=cash_loc_skip', style: 'primary' },
+        { label: '����', data: 'a=cancel', style: 'secondary' },
       ],
     }),
   ]
@@ -2823,11 +2975,11 @@ async function skipCashLocation(
     })
     return [
       flexMenu({
-        altText: '請輸入金額',
-        eyebrow: '支出回報',
-        title: '請輸入金額',
-        body: `項目：${payload.item || '—'}\n請以文字回覆數字（新台幣，例如 800）`,
-        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        altText: '�п�J���B',
+        eyebrow: '��X�^��',
+        title: '�п�J���B',
+        body: `���ءG${payload.item || '�X'}\n�ХH��r�^�мƦr�]�s�x���A�Ҧp 800�^`,
+        buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
@@ -2837,11 +2989,11 @@ async function skipCashLocation(
   })
   return [
     flexMenu({
-      altText: '請輸入收款金額',
-      eyebrow: '收款回報',
-      title: '請輸入金額',
-      body: '可選：先傳來源說明文字；或直接輸入數字金額（例如 5000）',
-      buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      altText: '�п�J���ڪ��B',
+      eyebrow: '���ڦ^��',
+      title: '�п�J���B',
+      body: '�i��G���Ǩӷ�������r�F�Ϊ�����J�Ʀr���B�]�Ҧp 5000�^',
+      buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
     }),
   ]
 }
@@ -2856,7 +3008,7 @@ async function selectCashSite(
   const site = sites.find((s) => s.id === siteId)
   if (!site) {
     return [
-      textMsg('找不到工地或無權限。'),
+      textMsg('�䤣��u�a�εL�v���C'),
       ...(await promptCashSiteFor(admin, profile, draft)),
     ]
   }
@@ -2875,11 +3027,11 @@ async function selectCashSite(
     })
     return [
       flexMenu({
-        altText: '請輸入支出項目',
-        eyebrow: '支出回報',
-        title: '請輸入支出項目',
-        body: `工地：${site.name}\n直接以文字回覆項目名稱（例如：五金材料）`,
-        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        altText: '�п�J��X����',
+        eyebrow: '��X�^��',
+        title: '�п�J��X����',
+        body: `�u�a�G${site.name}\n�����H��r�^�ж��ئW�١]�Ҧp�G�������ơ^`,
+        buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
@@ -2889,11 +3041,11 @@ async function selectCashSite(
   })
   return [
     flexMenu({
-      altText: '請輸入收款金額',
-      eyebrow: '收款回報',
-      title: '請輸入金額',
-      body: `工地：${site.name}\n可選：先傳來源說明文字；或直接輸入數字金額（例如 5000）`,
-      buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+      altText: '�п�J���ڪ��B',
+      eyebrow: '���ڦ^��',
+      title: '�п�J���B',
+      body: `�u�a�G${site.name}\n�i��G���Ǩӷ�������r�F�Ϊ�����J�Ʀr���B�]�Ҧp 5000�^`,
+      buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
     }),
   ]
 }
@@ -2908,13 +3060,13 @@ async function handlePurchaseText(
   const payload = draft.draft_payload || {}
 
   if (step === 'select_kind' || step === 'select_mode') {
-    if (/支出/.test(text)) return selectCashKind(admin, profile, draft, 'expense')
-    if (/收款/.test(text)) return selectCashKind(admin, profile, draft, 'receipt')
+    if (/��X/.test(text)) return selectCashKind(admin, profile, draft, 'expense')
+    if (/����/.test(text)) return selectCashKind(admin, profile, draft, 'receipt')
     return promptCashKind()
   }
 
   if (step === 'select_site') {
-    if (/雜項|加油|買飯|飲料|臨時支援|無工地/.test(text)) {
+    if (/����|�[�o|�R��|����|�{�ɤ䴩|�L�u�a/.test(text)) {
       return selectCashMisc(admin, profile, draft)
     }
     const num = Number(text)
@@ -2931,11 +3083,11 @@ async function handlePurchaseText(
     if (item.length < 2) {
       return [
         flexMenu({
-          altText: '項目太短',
-          eyebrow: '支出回報',
-          title: '項目太短',
-          body: '請再輸入一次（至少 2 字）',
-          buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+          altText: '���ؤӵu',
+          eyebrow: '��X�^��',
+          title: '���ؤӵu',
+          body: '�ЦA��J�@���]�ܤ� 2 �r�^',
+          buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
         }),
       ]
     }
@@ -2956,17 +3108,17 @@ async function handlePurchaseText(
     })
     return [
       flexMenu({
-        altText: '請輸入金額',
-        eyebrow: '支出回報',
-        title: '請輸入金額',
-        body: `項目：${item}\n請以文字回覆數字（新台幣，例如 800）`,
-        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        altText: '�п�J���B',
+        eyebrow: '��X�^��',
+        title: '�п�J���B',
+        body: `���ءG${item}\n�ХH��r�^�мƦr�]�s�x���A�Ҧp 800�^`,
+        buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
 
   if (step === 'enter_location') {
-    if (/^(跳過|不用|無)$/.test(text.trim())) {
+    if (/^(���L|����|�L)$/.test(text.trim())) {
       return skipCashLocation(admin, profile, draft)
     }
     const locationText = text.trim()
@@ -2979,27 +3131,27 @@ async function handlePurchaseText(
     if (payload.kind === 'expense') {
       return [
         flexMenu({
-          altText: '請輸入金額',
-          eyebrow: '支出回報',
-          title: '請輸入金額',
-          body: `項目：${payload.item || '—'}\n地點：${locationText}\n請以文字回覆數字（例如 800）`,
-          buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+          altText: '�п�J���B',
+          eyebrow: '��X�^��',
+          title: '�п�J���B',
+          body: `���ءG${payload.item || '�X'}\n�a�I�G${locationText}\n�ХH��r�^�мƦr�]�Ҧp 800�^`,
+          buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
         }),
       ]
     }
     return [
       flexMenu({
-        altText: '請輸入收款金額',
-        eyebrow: '收款回報',
-        title: '請輸入金額',
-        body: `地點：${locationText}\n可選：先傳來源說明；或直接輸入數字（例如 5000）`,
-        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        altText: '�п�J���ڪ��B',
+        eyebrow: '���ڦ^��',
+        title: '�п�J���B',
+        body: `�a�I�G${locationText}\n�i��G���Ǩӷ������F�Ϊ�����J�Ʀr�]�Ҧp 5000�^`,
+        buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
 
   if (step === 'enter_amount') {
-    const asAmount = Number(String(text).replace(/[,，元$NTD\s]/gi, ''))
+    const asAmount = Number(String(text).replace(/[,�A��$NTD\s]/gi, ''))
     if (Number.isFinite(asAmount) && asAmount > 0) {
       const amount = Math.round(asAmount * 100) / 100
       await touchDraft(admin, draft.id, {
@@ -3019,41 +3171,41 @@ async function handlePurchaseText(
       })
       return [
         flexMenu({
-          altText: '請輸入收款金額',
-          eyebrow: '收款回報',
-          title: '請輸入金額',
-          body: `來源：${text.trim()}\n請以文字回覆數字（例如 5000）`,
-          buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+          altText: '�п�J���ڪ��B',
+          eyebrow: '���ڦ^��',
+          title: '�п�J���B',
+          body: `�ӷ��G${text.trim()}\n�ХH��r�^�мƦr�]�Ҧp 5000�^`,
+          buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
         }),
       ]
     }
     return [
       flexMenu({
-        altText: '金額無效',
-        eyebrow: '記帳',
-        title: '金額無效',
-        body: '請輸入大於 0 的數字（例如 800）',
-        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        altText: '���B�L��',
+        eyebrow: '�O�b',
+        title: '���B�L��',
+        body: '�п�J�j�� 0 ���Ʀr�]�Ҧp 800�^',
+        buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
 
   if (step === 'attach_receipt') {
-    if (/跳過|不用|無收據/.test(text)) return promptCashConfirm(admin, draft)
-    if (/確認|送出|是/.test(text)) return submitFieldCash(admin, profile, draft)
+    if (/���L|����|�L����/.test(text)) return promptCashConfirm(admin, draft)
+    if (/�T�{|�e�X|�O/.test(text)) return submitFieldCash(admin, profile, draft)
     return promptAttachReceipt(draft)
   }
 
   if (step === 'confirm') {
-    if (/確認|送出|是/.test(text)) return submitFieldCash(admin, profile, draft)
-    if (/取消/.test(text)) {
+    if (/�T�{|�e�X|�O/.test(text)) return submitFieldCash(admin, profile, draft)
+    if (/����/.test(text)) {
       await finalizeDraft(admin, draft.id, 'cancelled')
       return [
         flexMenu({
-          altText: '已取消',
-          eyebrow: '記帳',
-          title: '已取消',
-          body: '可再從圖文選單重新回報',
+          altText: '�w����',
+          eyebrow: '�O�b',
+          title: '�w����',
+          body: '�i�A�q�Ϥ��歫�s�^��',
         }),
       ]
     }
@@ -3068,13 +3220,13 @@ function promptAttachReceipt(draft: DraftRow): LineMessage[] {
   const count = Number(p.receiptCount ?? 0)
   return [
     flexMenu({
-      altText: '上傳收據照片（可選）',
-      eyebrow: p.kind === 'receipt' ? '收款回報' : '支出回報',
-      title: '上傳收據／憑證（可選）',
-      body: `金額：NT$${Number(p.amount || 0).toLocaleString()}\n已收：${count} 張\n可直接傳圖；或跳過後確認送出`,
+      altText: '�W�Ǧ��ڷӤ��]�i��^',
+      eyebrow: p.kind === 'receipt' ? '���ڦ^��' : '��X�^��',
+      title: '�W�Ǧ��ڡ����ҡ]�i��^',
+      body: `���B�GNT$${Number(p.amount || 0).toLocaleString()}\n�w���G${count} �i\n�i�����ǹϡF�θ��L��T�{�e�X`,
       buttons: [
-        { label: '跳過，去確認', data: 'a=cash_receipt_skip', style: 'primary' },
-        { label: '取消', data: 'a=cancel', style: 'secondary' },
+        { label: '���L�A�h�T�{', data: 'a=cash_receipt_skip', style: 'primary' },
+        { label: '����', data: 'a=cancel', style: 'secondary' },
       ],
     }),
   ]
@@ -3091,12 +3243,12 @@ async function handleCashReceiptImage(
   const payload = draft.draft_payload || {}
   if (step !== 'attach_receipt' && step !== 'confirm') {
     return [
-      textMsg('請先完成類型、工地與金額，再到「上傳收據」步驟再傳圖。'),
+      textMsg('�Х����������B�u�a�P���B�A�A��u�W�Ǧ��ڡv�B�J�A�ǹϡC'),
       ...(await resumePurchase(admin!, profile, draft)),
     ]
   }
   if (!payload.misc && !payload.siteId) {
-    return [textMsg('缺少工地，請重新開始。')]
+    return [textMsg('�ʤ֤u�a�A�Э��s�}�l�C')]
   }
   const batchId = String(payload.batchId || crypto.randomUUID())
   const result = await storeLineImage(admin, lineToken, profile, messageId, {
@@ -3123,13 +3275,13 @@ async function handleCashReceiptImage(
   })
   return [
     flexMenu({
-      altText: `已加入第 ${count} 張收據`,
-      eyebrow: '記帳',
-      title: `已加入第 ${count} 張收據`,
-      body: '可繼續傳圖，或跳過／確認送出',
+      altText: `�w�[�J�� ${count} �i����`,
+      eyebrow: '�O�b',
+      title: `�w�[�J�� ${count} �i����`,
+      body: '�i�~��ǹϡA�θ��L���T�{�e�X',
       buttons: [
-        { label: '去確認送出', data: 'a=cash_receipt_skip', style: 'primary' },
-        { label: '取消', data: 'a=cancel', style: 'secondary' },
+        { label: '�h�T�{�e�X', data: 'a=cash_receipt_skip', style: 'primary' },
+        { label: '����', data: 'a=cancel', style: 'secondary' },
       ],
     }),
   ]
@@ -3144,21 +3296,21 @@ async function promptCashConfirm(
     current_step: 'confirm',
     draft_payload: p,
   })
-  const kindLabel = p.kind === 'receipt' ? '收款' : '支出'
-  const locLine = p.locationText ? `\n地點：${p.locationText}` : ''
+  const kindLabel = p.kind === 'receipt' ? '����' : '��X'
+  const locLine = p.locationText ? `\n�a�I�G${p.locationText}` : ''
   return [
     flexMenu({
-      altText: `請確認${kindLabel}`,
-      eyebrow: '記帳',
-      title: `請確認${kindLabel}`,
-      body: `類型：${kindLabel}\n歸屬：${p.siteName || '—'}${locLine}\n${
-        p.kind === 'expense' ? `項目：${p.item || '—'}` : `來源：${p.sourceNote || '—'}`
-      }\n金額：NT$${Number(p.amount || 0).toLocaleString()}\n收據：${
+      altText: `�нT�{${kindLabel}`,
+      eyebrow: '�O�b',
+      title: `�нT�{${kindLabel}`,
+      body: `�����G${kindLabel}\n�k�ݡG${p.siteName || '�X'}${locLine}\n${
+        p.kind === 'expense' ? `���ءG${p.item || '�X'}` : `�ӷ��G${p.sourceNote || '�X'}`
+      }\n���B�GNT$${Number(p.amount || 0).toLocaleString()}\n���ڡG${
         Number(p.receiptCount ?? 0)
-      } 張`,
+      } �i`,
       buttons: [
-        { label: '確認送出', data: 'a=cash_confirm', style: 'primary' },
-        { label: '取消', data: 'a=cancel', style: 'secondary' },
+        { label: '�T�{�e�X', data: 'a=cash_confirm', style: 'primary' },
+        { label: '����', data: 'a=cancel', style: 'secondary' },
       ],
     }),
   ]
@@ -3175,13 +3327,13 @@ async function resumePurchase(
   if (step === 'enter_item') {
     return [
       flexMenu({
-        altText: '請輸入支出項目',
-        eyebrow: '支出回報',
-        title: '請輸入支出項目',
+        altText: '�п�J��X����',
+        eyebrow: '��X�^��',
+        title: '�п�J��X����',
         body: draft.draft_payload?.misc
-          ? '例如：加油／買飯／飲料／臨時支援'
-          : '直接以文字回覆項目名稱',
-        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+          ? '�Ҧp�G�[�o���R�������ơ��{�ɤ䴩'
+          : '�����H��r�^�ж��ئW��',
+        buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
@@ -3189,11 +3341,11 @@ async function resumePurchase(
   if (step === 'enter_amount') {
     return [
       flexMenu({
-        altText: '請輸入金額',
-        eyebrow: '記帳',
-        title: '請輸入金額',
-        body: '直接以文字回覆數字（新台幣）',
-        buttons: [{ label: '取消', data: 'a=cancel', style: 'secondary' }],
+        altText: '�п�J���B',
+        eyebrow: '�O�b',
+        title: '�п�J���B',
+        body: '�����H��r�^�мƦr�]�s�x���^',
+        buttons: [{ label: '����', data: 'a=cancel', style: 'secondary' }],
       }),
     ]
   }
@@ -3215,7 +3367,7 @@ async function listSitesForProfile(
     .eq('user_id', profile.id)
     .eq('organization_id', profile.organization_id)
   if (error) {
-    // Table not applied yet / query failed → bootstrap open access
+    // Table not applied yet / query failed �� bootstrap open access
     console.warn('[line-webhook] site_members failed; show all sites', error.message)
     return all
   }
@@ -3246,16 +3398,16 @@ async function submitFieldCash(
   const isMisc = Boolean(p.misc) || !p.siteId
   const siteId = isMisc ? null : String(p.siteId || '')
   const siteName = isMisc
-    ? '雜項（無工地）'
+    ? '�����]�L�u�a�^'
     : String(p.siteName || '')
   const locationText = p.locationText ? String(p.locationText).trim() || null : null
   const amount = Number(p.amount ?? NaN)
   if (kind !== 'expense' && kind !== 'receipt') {
-    return [textMsg('類型缺失，請重新開始。')]
+    return [textMsg('�����ʥ��A�Э��s�}�l�C')]
   }
-  if (!isMisc && (!siteId || !siteName)) return [textMsg('請先選擇工地或雜項。')]
+  if (!isMisc && (!siteId || !siteName)) return [textMsg('�Х���ܤu�a�������C')]
   if (!Number.isFinite(amount) || amount <= 0) {
-    return [textMsg('金額無效，請重新開始。')]
+    return [textMsg('���B�L�ġA�Э��s�}�l�C')]
   }
 
   const receiptPhotoPath = p.receiptPhotoPath
@@ -3275,11 +3427,11 @@ async function submitFieldCash(
   }
 
   const expensesUri = `${appBaseUrl()}/expenses`
-  const placeLabel = locationText ? `${siteName}（${locationText}）` : siteName
+  const placeLabel = locationText ? `${siteName}�]${locationText}�^` : siteName
 
   if (kind === 'expense') {
     const item = String(p.item || '').trim()
-    if (item.length < 2) return [textMsg('支出項目缺失，請重新開始。')]
+    if (item.length < 2) return [textMsg('��X���دʥ��A�Э��s�}�l�C')]
     const needsReview = amount >= threshold
     const now = new Date().toISOString()
     const { data, error } = await admin
@@ -3300,13 +3452,13 @@ async function submitFieldCash(
         reviewed_at: needsReview ? null : now,
         review_note: needsReview
           ? null
-          : `小額免審（門檻 NT$${threshold.toLocaleString()}）`,
+          : `�p�B�K�f�]���e NT$${threshold.toLocaleString()}�^`,
       })
       .select('id, status, amount, item')
       .single()
     if (error) {
       console.warn('[line-webhook] expense insert failed', error.message)
-      return [textMsg('建立支出回報失敗，請稍後再試「確認送出」。')]
+      return [textMsg('�إߤ�X�^�����ѡA�еy��A�աu�T�{�e�X�v�C')]
     }
     if (needsReview) {
       const { data: bosses } = await admin
@@ -3320,8 +3472,8 @@ async function submitFieldCash(
           organization_id: profile.organization_id,
           user_id: b.id,
           kind: 'todo',
-          title: `支出待審核：${item}`,
-          detail: `NT$${amount.toLocaleString()} · ${placeLabel}（LINE）`,
+          title: `��X�ݼf�֡G${item}`,
+          detail: `NT$${amount.toLocaleString()} �P ${placeLabel}�]LINE�^`,
           status: 'open',
           unread: true,
           href: '/expenses',
@@ -3331,11 +3483,11 @@ async function submitFieldCash(
     await finalizeDraft(admin, draft.id, 'completed')
     return [
       flexMenu({
-        altText: needsReview ? '已送出支出（待審核）' : '已建立支出',
-        eyebrow: '支出回報',
-        title: needsReview ? '已送出（待審核）' : '已建立（小額免審）',
-        body: `「${data.item}」\n金額 NT$${Number(data.amount).toLocaleString()}\n歸屬：${placeLabel}\n狀態：${data.status}`,
-        buttons: [{ label: '查看收支', uri: expensesUri, style: 'primary' }],
+        altText: needsReview ? '�w�e�X��X�]�ݼf�֡^' : '�w�إߤ�X',
+        eyebrow: '��X�^��',
+        title: needsReview ? '�w�e�X�]�ݼf�֡^' : '�w�إߡ]�p�B�K�f�^',
+        body: `�u${data.item}�v\n���B NT$${Number(data.amount).toLocaleString()}\n�k�ݡG${placeLabel}\n���A�G${data.status}`,
+        buttons: [{ label: '�d�ݦ���', uri: expensesUri, style: 'primary' }],
       }),
     ]
   }
@@ -3358,7 +3510,7 @@ async function submitFieldCash(
     .single()
   if (error) {
     console.warn('[line-webhook] receipt insert failed', error.message)
-    return [textMsg('建立收款回報失敗，請稍後再試「確認送出」。')]
+    return [textMsg('�إߦ��ڦ^�����ѡA�еy��A�աu�T�{�e�X�v�C')]
   }
   const { data: bosses } = await admin
     .from('profiles')
@@ -3371,8 +3523,8 @@ async function submitFieldCash(
       organization_id: profile.organization_id,
       user_id: b.id,
       kind: 'todo',
-      title: `收款待確認：NT$${amount.toLocaleString()}`,
-      detail: `${placeLabel}（LINE）`,
+      title: `���ګݽT�{�GNT$${amount.toLocaleString()}`,
+      detail: `${placeLabel}�]LINE�^`,
       status: 'open',
       unread: true,
       href: '/expenses',
@@ -3381,11 +3533,11 @@ async function submitFieldCash(
   await finalizeDraft(admin, draft.id, 'completed')
   return [
     flexMenu({
-      altText: '已送出收款（待確認）',
-      eyebrow: '收款回報',
-      title: '已送出（待老闆確認）',
-      body: `金額 NT$${Number(data.amount).toLocaleString()}\n狀態：${data.status}`,
-      buttons: [{ label: '查看收支', uri: expensesUri, style: 'primary' }],
+      altText: '�w�e�X���ڡ]�ݽT�{�^',
+      eyebrow: '���ڦ^��',
+      title: '�w�e�X�]�ݦ���T�{�^',
+      body: `���B NT$${Number(data.amount).toLocaleString()}\n���A�G${data.status}`,
+      buttons: [{ label: '�d�ݦ���', uri: expensesUri, style: 'primary' }],
     }),
   ]
 }
@@ -3441,3 +3593,4 @@ function json(payload: unknown, status = 200) {
     headers: { 'Content-Type': 'application/json' },
   })
 }
+

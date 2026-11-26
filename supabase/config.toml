@@ -1,5 +1,11 @@
-# Supabase CLI project link (public project ref only — no secrets)
+# Supabase CLI project link (public project ref only �X no secrets)
 project_id = "rhpzvqvkmllbdtkpouwn"
+
+[functions.line-webhook]
+# LINE calls this endpoint without a Supabase JWT; the function verifies
+# x-line-signature before processing the payload.
+verify_jwt = false
 
 [functions.line-push]
 verify_jwt = true
+
