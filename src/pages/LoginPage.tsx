@@ -5,6 +5,7 @@ import {
   peekPostLoginRedirect,
 } from '@/components/RequireAuth'
 import { PRODUCT, ROLES } from '@/domain/rules'
+import { isBossLike } from '@/domain/roleGroups'
 import { useUser } from '@/hooks/useUser'
 import { isSupabaseConfigured } from '@/lib/supabase'
 
@@ -116,7 +117,7 @@ export function LoginPage() {
                 <button
                   key={accountOption.id}
                   type="button"
-                  className="account-option"
+                  className={`account-option${isBossLike(accountOption) ? ' is-admin' : ''}`}
                   disabled={isLoggingIn}
                   onClick={() => void loginAs(accountOption.id)}
                 >

@@ -1,18 +1,30 @@
 :root {
-  --bg: #e8edf2;
-  --bg-elevated: #ffffff;
-  --ink: #0f1a22;
-  --ink-muted: #4a5c6a;
-  --steel: #0f3d55;
-  --steel-deep: #082636;
-  --amber: #f5a623;
-  --amber-hot: #ffb84d;
-  --amber-soft: #ffe3a8;
-  --line: rgba(15, 26, 34, 0.16);
-  --danger: #c62828;
-  --ok: #1b7a45;
-  --shadow: 0 14px 32px rgba(8, 38, 54, 0.14);
-  --radius: 16px;
+  /* Brand: staff / general surfaces */
+  --bg: #172c3c;
+  --bg-elevated: #254657;
+  --bg-deep: #102432;
+  --ink: #ffffff;
+  --ink-muted: rgba(255, 255, 255, 0.68);
+  --accent: #9cd9d2;
+  --accent-ink: #172c3c;
+
+  /* Functional status colors */
+  --status-success: #276c60;
+  --status-danger: #995043;
+  --status-warning: #b89552;
+  --status-disabled: #64748b;
+
+  /* Backward-compatible aliases used throughout the app */
+  --steel: #254657;
+  --steel-deep: #172c3c;
+  --amber: var(--accent);
+  --amber-hot: var(--accent);
+  --amber-soft: color-mix(in srgb, var(--accent) 18%, var(--bg-elevated));
+  --danger: var(--status-danger);
+  --ok: var(--status-success);
+  --line: rgba(255, 255, 255, 0.14);
+  --shadow: 0 16px 34px rgba(4, 16, 24, 0.28);
+  --radius: 15px;
   --font-sans: 'Noto Sans TC', 'Barlow', system-ui, sans-serif;
   --font-display: 'Barlow', 'Noto Sans TC', system-ui, sans-serif;
   color: var(--ink);
@@ -21,6 +33,18 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+
+[data-ui-tone='admin'] {
+  --bg: #222c38;
+  --bg-elevated: #354353;
+  --bg-deep: #18212b;
+  --accent: #e5c58c;
+  --accent-ink: #222c38;
+  --steel: #354353;
+  --steel-deep: #222c38;
+  --line: rgba(229, 197, 140, 0.18);
+  --shadow: 0 16px 34px rgba(10, 15, 21, 0.32);
 }
 
 * {
@@ -36,10 +60,7 @@ body,
 body {
   margin: 0;
   min-width: 320px;
-  background:
-    radial-gradient(1100px 520px at 8% -12%, rgba(245, 166, 35, 0.22), transparent 55%),
-    radial-gradient(900px 480px at 100% 0%, rgba(15, 61, 85, 0.18), transparent 52%),
-    linear-gradient(180deg, #f2f5f8 0%, var(--bg) 42%, #dce4eb 100%);
+  background: var(--bg);
 }
 
 a {
@@ -59,10 +80,20 @@ button {
 }
 
 .app-shell {
+  position: relative;
+  isolation: isolate;
   width: min(720px, 100%);
   margin: 0 auto;
   min-height: 100dvh;
   padding: 20px 16px 96px;
+}
+
+.app-shell::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--bg);
 }
 
 .topbar {
@@ -83,7 +114,7 @@ button {
   font-family: var(--font-display);
   font-size: 1.35rem;
   letter-spacing: 0.04em;
-  color: var(--steel);
+  color: var(--accent);
 }
 
 .brand span {
@@ -92,7 +123,7 @@ button {
 }
 
 .panel {
-  background: color-mix(in srgb, var(--bg-elevated) 96%, white);
+  background: var(--bg-elevated);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -102,23 +133,17 @@ button {
 .hero-panel {
   position: relative;
   overflow: hidden;
-  background:
-    linear-gradient(145deg, rgba(15, 61, 85, 0.98), rgba(8, 38, 54, 0.94)),
-    repeating-linear-gradient(
-      -45deg,
-      rgba(255, 255, 255, 0.03) 0 8px,
-      transparent 8px 16px
-    );
-  color: #f4f7fa;
-  border: none;
+  background: var(--bg-elevated);
+  color: var(--ink);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
 .hero-panel::after {
   content: '';
   position: absolute;
-  inset: auto -20% -40% 40%;
-  height: 180px;
-  background: radial-gradient(circle, rgba(245, 166, 35, 0.4), transparent 70%);
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--accent);
   pointer-events: none;
 }
 
@@ -132,7 +157,7 @@ button {
 }
 
 .hero-panel .muted {
-  color: rgba(244, 247, 250, 0.72);
+  color: var(--ink-muted);
 }
 
 .hero-status {
@@ -141,9 +166,9 @@ button {
   gap: 8px;
   padding: 14px 16px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.96);
+  background: color-mix(in srgb, var(--bg-deep) 82%, transparent);
   color: var(--ink);
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  border: 1px solid var(--line);
 }
 
 .hero-status strong {
@@ -207,9 +232,9 @@ button {
 }
 
 .btn-secondary {
-  background: #fff;
-  border-color: color-mix(in srgb, var(--steel) 35%, var(--line));
-  color: var(--steel);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--line));
+  color: var(--accent);
   box-shadow: none;
 }
 
@@ -224,30 +249,30 @@ button {
 }
 
 .btn-primary {
-  background: linear-gradient(180deg, var(--amber-hot), var(--amber));
-  color: var(--steel-deep);
-  border-color: color-mix(in srgb, var(--amber) 55%, #8a5a00);
-  box-shadow: 0 10px 22px rgba(245, 166, 35, 0.38);
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 .btn-steel {
-  background: linear-gradient(180deg, #184f6c, var(--steel));
-  color: #fff;
-  border-color: color-mix(in srgb, var(--steel) 70%, black);
-  box-shadow: 0 10px 22px rgba(15, 61, 85, 0.32);
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .btn-ghost {
-  background: #fff;
-  border-color: color-mix(in srgb, var(--steel) 28%, var(--line));
-  color: var(--steel);
+  background: transparent;
+  border-color: var(--line);
+  color: var(--ink);
   box-shadow: none;
 }
 
 .btn-danger {
-  background: color-mix(in srgb, var(--danger) 14%, white);
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 45%, white);
+  background: color-mix(in srgb, var(--danger) 24%, var(--bg-elevated));
+  color: #fff;
+  border-color: color-mix(in srgb, var(--danger) 64%, var(--line));
   box-shadow: none;
   font-weight: 800;
 }
@@ -268,15 +293,16 @@ button {
 }
 
 .clock-btn.in {
-  background: linear-gradient(135deg, #ffc145, #f5a623);
-  color: var(--steel-deep);
-  box-shadow: 0 16px 30px rgba(245, 166, 35, 0.42);
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 16px 30px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .clock-btn.out {
-  background: linear-gradient(135deg, #2a6a87, #0f3d55);
-  color: #fff;
-  box-shadow: 0 16px 30px rgba(15, 61, 85, 0.4);
+  background: var(--bg-deep);
+  color: var(--ink);
+  border: 2px solid var(--accent);
+  box-shadow: 0 16px 30px rgba(4, 16, 24, 0.34);
 }
 
 .field {
@@ -296,10 +322,22 @@ button {
 .field textarea {
   width: 100%;
   border: 1.5px solid var(--line);
-  background: #fff;
+  background: var(--bg-deep);
   border-radius: 12px;
   padding: 12px 14px;
   color: var(--ink);
+}
+
+.field input::placeholder,
+.field textarea::placeholder {
+  color: color-mix(in srgb, var(--ink-muted) 82%, transparent);
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 48%, transparent);
+  border-color: var(--accent);
 }
 
 .badge {
@@ -310,18 +348,18 @@ button {
   padding: 4px 10px;
   font-size: 0.75rem;
   font-weight: 800;
-  background: var(--amber-soft);
-  color: var(--steel-deep);
+  background: var(--status-warning);
+  color: #fff;
 }
 
 .badge.steel {
-  background: color-mix(in srgb, var(--steel) 16%, white);
-  color: var(--steel);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-deep));
+  color: var(--accent);
 }
 
 .badge.ok {
-  background: color-mix(in srgb, var(--ok) 18%, white);
-  color: var(--ok);
+  background: var(--ok);
+  color: #fff;
 }
 
 .site-link {
@@ -329,14 +367,14 @@ button {
   padding: 14px;
   border-radius: 14px;
   border: 1.5px solid var(--line);
-  background: #fff;
+  background: color-mix(in srgb, var(--bg-deep) 58%, var(--bg-elevated));
   transition:
     border-color 160ms ease,
     transform 160ms ease;
 }
 
 .site-link:hover {
-  border-color: color-mix(in srgb, var(--amber) 55%, var(--line));
+  border-color: var(--accent);
   transform: translateY(-1px);
 }
 
@@ -365,9 +403,9 @@ button {
   text-align: center;
   font-weight: 800;
   border-radius: 16px;
-  background: #fff;
+  background: color-mix(in srgb, var(--bg-deep) 58%, var(--bg-elevated));
   border: 1.5px solid var(--line);
-  color: var(--steel);
+  color: var(--ink);
   transition:
     transform 160ms ease,
     border-color 160ms ease,
@@ -376,8 +414,8 @@ button {
 
 .shortcut-tile:hover {
   transform: translateY(-1px);
-  border-color: var(--amber);
-  background: color-mix(in srgb, var(--amber-soft) 55%, white);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated));
 }
 
 .bottom-nav {
@@ -391,7 +429,7 @@ button {
   gap: 6px;
   padding: 8px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.94);
+  background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
   border: 1.5px solid var(--line);
   backdrop-filter: blur(10px);
   box-shadow: var(--shadow);
@@ -407,8 +445,8 @@ button {
 }
 
 .bottom-nav a.active {
-  background: var(--steel);
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .login-page {
@@ -439,13 +477,23 @@ button {
   width: 100%;
   text-align: left;
   border: 1.5px solid var(--line);
-  background: #fff;
+  background: color-mix(in srgb, var(--bg-deep) 58%, var(--bg-elevated));
   border-radius: 14px;
   padding: 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  color: var(--ink);
+}
+
+.account-option.is-admin {
+  border-color: color-mix(in srgb, #e5c58c 56%, var(--line));
+}
+
+.account-option.is-admin .badge {
+  background: #e5c58c;
+  color: #222c38;
 }
 
 .account-option strong {
@@ -483,19 +531,19 @@ button {
   height: 8px;
   border-radius: 50%;
   background: var(--ok);
-  box-shadow: 0 0 0 0 rgba(27, 122, 69, 0.5);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 50%, transparent);
   animation: pulse 1.6s infinite;
 }
 
 @keyframes pulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(27, 122, 69, 0.45);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 45%, transparent);
   }
   70% {
-    box-shadow: 0 0 0 10px rgba(27, 122, 69, 0);
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--ok) 0%, transparent);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(27, 122, 69, 0);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 0%, transparent);
   }
 }
 
@@ -539,8 +587,8 @@ button {
 
 .attendance-cal-day.selected {
   border-color: transparent;
-  background: color-mix(in srgb, var(--steel) 14%, white);
-  color: var(--steel-deep);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-elevated));
+  color: var(--accent);
   font-weight: 700;
 }
 
@@ -588,7 +636,7 @@ button {
 }
 
 .attendance-day-site.is-missing {
-  color: color-mix(in srgb, var(--amber-hot) 80%, var(--ink));
+  color: var(--status-warning);
   font-weight: 600;
 }
 
@@ -610,13 +658,21 @@ button {
 
 /* LINE LIFF / in-app pages */
 .liff-shell {
+  position: relative;
+  isolation: isolate;
   min-height: 100dvh;
   max-width: 480px;
   margin: 0 auto;
   padding: 12px 14px 28px;
-  background:
-    radial-gradient(120% 80% at 10% -10%, rgba(255, 193, 69, 0.18), transparent 55%),
-    linear-gradient(180deg, #f3f6f8 0%, #e8eef2 100%);
+  background: var(--bg);
+}
+
+.liff-shell::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--bg);
 }
 
 .liff-top {
