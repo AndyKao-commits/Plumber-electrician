@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { clearPostLoginRedirect } from '@/components/RequireAuth'
 import { FEATURE_FLAGS, PRODUCT, ROLES } from '@/domain/rules'
+import { isBossLike } from '@/domain/roleGroups'
 import { useNotices } from '@/hooks/useNotices'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { useUser } from '@/hooks/useUser'
@@ -11,6 +12,7 @@ export function AppShell() {
   const { unreadCount } = useNotices(user?.id)
   const { online, pendingCount, flush, flushing } = useOfflineQueue()
   const showOffline = FEATURE_FLAGS.offlineFirst && user && (!online || pendingCount > 0)
+  const uiTone = isBossLike(user) ? 'admin' : 'staff'
 
   async function onLogout() {
     clearPostLoginRedirect()
@@ -23,7 +25,7 @@ export function AppShell() {
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-ui-tone={uiTone}>
       <header className="topbar">
         <div className="brand">
           <strong>{PRODUCT.name}</strong>
